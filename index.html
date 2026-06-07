@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Window Runner</title>
+  <title>Window Runner - Production Release</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,106 +11,131 @@
     <canvas id="gameCanvas" width="960" height="540"></canvas>
     
     <!-- Main Menu -->
-    <div id="menuScreen" class="screen active">
-      <div class="menu-content">
-        <h1>Window Runner</h1>
-        <p>Help your fingers escape the car window!</p>
-        <button id="playBtn" class="btn-primary">Play</button>
-        <button id="statsBtn" class="btn-secondary">Stats</button>
-        <button id="settingsBtn" class="btn-secondary">Settings</button>
+    <div id="mainMenu" class="screen active">
+      <div class="menuBox">
+        <h1>WINDOW RUNNER</h1>
+        <p class="subtitle">Keep those fingers running</p>
+        <button id="playButton" class="btn btn-primary">PLAY</button>
+        <button id="howToButton" class="btn btn-secondary">HOW TO PLAY</button>
+        <button id="settingsButton" class="btn btn-secondary">SETTINGS</button>
+        <button id="statsButton" class="btn btn-secondary">STATS</button>
+      </div>
+    </div>
+
+    <!-- How To Play -->
+    <div id="howToScreen" class="screen">
+      <div class="menuBox">
+        <h2>HOW TO PLAY</h2>
+        <div class="instructions">
+          <p><strong>DESKTOP:</strong></p>
+          <p>SPACE - Jump</p>
+          <p>DOWN ARROW - Slide</p>
+          <p>SPACE x2 - Double Jump</p>
+          
+          <p><strong>MOBILE:</strong></p>
+          <p>TAP - Jump</p>
+          <p>SWIPE DOWN - Slide</p>
+          <p>TAP x2 - Double Jump</p>
+          
+          <p>Avoid obstacles. Collect coins. Unlock cosmetics!</p>
+        </div>
+        <button id="backFromHow" class="btn btn-secondary">BACK</button>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settingsScreen" class="screen">
+      <div class="menuBox">
+        <h2>SETTINGS</h2>
+        <div class="settings-group">
+          <label>
+            <input type="checkbox" id="soundToggle" checked>
+            <span>Sound Effects</span>
+          </label>
+          <label>
+            <input type="checkbox" id="musicToggle" checked>
+            <span>Music</span>
+          </label>
+          <label>
+            <input type="checkbox" id="reduceMotionToggle">
+            <span>Reduce Motion</span>
+          </label>
+        </div>
+        <button id="backFromSettings" class="btn btn-secondary">BACK</button>
       </div>
     </div>
 
     <!-- Stats Screen -->
     <div id="statsScreen" class="screen">
-      <div class="stats-content">
-        <h2>Your Stats</h2>
-        <div class="stat-item">
-          <span>High Score:</span>
-          <span id="statHighScore">0</span>
+      <div class="menuBox">
+        <h2>STATS</h2>
+        <div class="stats-display">
+          <div class="stat-item">
+            <span class="stat-label">HIGH SCORE</span>
+            <span class="stat-value" id="displayHighScore">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">TOTAL COINS</span>
+            <span class="stat-value" id="displayTotalCoins">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">GAMES PLAYED</span>
+            <span class="stat-value" id="displayGamesPlayed">0</span>
+          </div>
         </div>
-        <div class="stat-item">
-          <span>Total Coins:</span>
-          <span id="statTotalCoins">0</span>
-        </div>
-        <div class="stat-item">
-          <span>Games Played:</span>
-          <span id="statGamesPlayed">0</span>
-        </div>
-        <button id="backFromStatsBtn" class="btn-secondary">Back</button>
+        <button id="clearStats" class="btn btn-danger">CLEAR DATA</button>
+        <button id="backFromStats" class="btn btn-secondary">BACK</button>
       </div>
     </div>
 
-    <!-- Settings Screen -->
-    <div id="settingsScreen" class="screen">
-      <div class="settings-content">
-        <h2>Settings</h2>
-        <div class="setting-item">
-          <label>Volume</label>
-          <input id="volumeSlider" type="range" min="0" max="100" value="70">
-          <span id="volumeValue">70%</span>
-        </div>
-        <div class="setting-item">
-          <label for="reduceMotionCheckbox">Reduce Motion</label>
-          <input id="reduceMotionCheckbox" type="checkbox">
-        </div>
-        <div class="setting-item">
-          <label for="colorblindCheckbox">Colorblind Mode</label>
-          <input id="colorblindCheckbox" type="checkbox">
-        </div>
-        <div class="cosmetics">
-          <h3>Finger Skins</h3>
-          <div id="fingerSkinsList" class="skins-list"></div>
-        </div>
-        <button id="backFromSettingsBtn" class="btn-secondary">Back</button>
-      </div>
-    </div>
-
-    <!-- Pause Screen -->
-    <div id="pauseScreen" class="screen">
-      <div class="pause-content">
-        <h2>Paused</h2>
-        <p id="pauseScore">Score: 0</p>
-        <button id="resumeBtn" class="btn-primary">Resume</button>
-        <button id="menuFromPauseBtn" class="btn-secondary">Menu</button>
+    <!-- Pause Menu -->
+    <div id="pauseMenu" class="screen">
+      <div class="menuBox">
+        <h2>PAUSED</h2>
+        <button id="resumeButton" class="btn btn-primary">RESUME</button>
+        <button id="quitButton" class="btn btn-secondary">QUIT TO MENU</button>
       </div>
     </div>
 
     <!-- Game Over Screen -->
     <div id="gameOverScreen" class="screen">
-      <div class="gameover-content">
-        <h2>Game Over</h2>
-        <div class="result-item">
-          <span>Distance:</span>
-          <span id="resultDistance">0</span>
+      <div class="menuBox">
+        <h2>GAME OVER</h2>
+        <div class="game-over-stats">
+          <div class="stat-item">
+            <span class="stat-label">DISTANCE</span>
+            <span class="stat-value" id="finalDistance">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">COINS</span>
+            <span class="stat-value" id="finalCoins">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">SCORE</span>
+            <span class="stat-value" id="finalScore">0</span>
+          </div>
         </div>
-        <div class="result-item">
-          <span>Coins Collected:</span>
-          <span id="resultCoins">0</span>
-        </div>
-        <div class="result-item">
-          <span>Score:</span>
-          <span id="resultScore">0</span>
-        </div>
-        <div id="newHighScoreBanner" class="new-high-score" style="display:none;">
-          ⭐ NEW HIGH SCORE! ⭐
-        </div>
-        <button id="retryBtn" class="btn-primary">Retry</button>
-        <button id="menuFromGameoverBtn" class="btn-secondary">Menu</button>
+        <p id="newHighScoreMessage" class="new-high-score" style="display: none;">NEW HIGH SCORE!</p>
+        <button id="retryButton" class="btn btn-primary">RETRY</button>
+        <button id="menuButton" class="btn btn-secondary">MENU</button>
       </div>
     </div>
 
-    <!-- HUD (in-game) -->
+    <!-- HUD (In-Game) -->
     <div id="hud" class="hud">
-      <div class="hud-item">Score: <span id="hudScore">0</span></div>
-      <div class="hud-item">Coins: <span id="hudCoins">0</span></div>
-      <div class="hud-item">Distance: <span id="hudDistance">0</span>m</div>
-      <button id="pauseBtn" class="btn-pause">⏸</button>
-    </div>
-
-    <!-- Controls Hint -->
-    <div id="controlsHint" class="controls-hint">
-      <p id="hintText">Space/Tap to Jump • Down/Swipe to Slide</p>
+      <div class="hud-left">
+        <div class="hud-item">
+          <span class="hud-label">DISTANCE</span>
+          <span class="hud-value" id="hudDistance">0</span>
+        </div>
+        <div class="hud-item">
+          <span class="hud-label">COINS</span>
+          <span class="hud-value" id="hudCoins">0</span>
+        </div>
+      </div>
+      <div class="hud-right">
+        <button id="pauseButton" class="btn-pause">⏸</button>
+      </div>
     </div>
   </div>
 
