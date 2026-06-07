@@ -535,6 +535,8 @@ function spawnObstacle() {
 function update() {
   if (gameState !== GameState.PLAYING) return;
 
+  if (!player) return;
+
   player.update();
 
   currentSpeed = Math.min(CONFIG.BASE_SPEED + gameDistance * 0.001, CONFIG.MAX_SPEED);
@@ -615,7 +617,9 @@ function draw() {
   obstacles.forEach((obs) => obs.draw(ctx));
   particles.forEach((p) => p.draw(ctx));
 
-  player.draw(ctx);
+  if (player) {
+    player.draw(ctx);
+  }
 
   ctx.restore();
 }
