@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Window Runner V3 Architecture Demo</title>
+<style>
+body{margin:0;background:#111;color:white;font-family:Arial}
+canvas{display:block;margin:auto;background:#87CEEB}
+#menu{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column}
+button{padding:12px 20px;font-size:18px}
+</style>
+</head>
+<body>
+<div id="menu">
+<h1>Window Runner V3</h1>
+<p>Production Architecture Demo</p>
+<button id="start">Start Game</button>
+</div>
+<canvas id="game" width="960" height="540"></canvas>
+
+<script>
+class StateMachine{
+ constructor(){this.state="menu";}
+ set(s){this.state=s;}
+}
+const sm=new StateMachine();
+
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const menu=document.getElementById("menu");
+
+const game={score:0,speed:6,obstacles:[]};
+const player={x:100,y:400,w:32,h:60,vy:0,onGround:true};
+
+document.getElementById("start").onclick=()=>{
+ menu.style.display="none";
+ sm.set("play");
+};
+
+function jump(){
+ if(sm.state!=="play") return;
+ if(player.onGround){
+   player.vy=-12;
+   player.onGround=false;
+ }
+}
+
+addEventListener("keydown",e=>{
+ if(e.code==="Space") jump();
+});
+
+function update(){
+ if(sm.state!=="play") return;
+
+ game.score++;
+ player.vy+=0.6;
+ player.y+=player.vy;
+
+ if(player.y>=400){
+   player.y=400;
+   player.vy=0;
+   player.onGround=true;
+ }
+}
+
+function draw(){
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ ctx.fillStyle="#444";
+ ctx.fillRect(0,460,canvas.width,80);
+
+ ctx.fillStyle="#f1c27d";
+ ctx.fillRect(player.x,player.y+15,player.w,45);
+ ctx.fillRect(player.x+2,player.y,10,18);
+ ctx.fillRect(player.x+18,player.y,10,18);
+
+ ctx.fillStyle="#000";
+ ctx.fillText("Score: "+Math.floor(game.score/10),20,30);
+}
+
+function loop(){
+ update();
+ draw();
+ requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
