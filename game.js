@@ -13,7 +13,7 @@ const CONFIG = {
   DOUBLE_JUMP_POWER: 11,
   BASE_SPEED: 6,
   MAX_SPEED: 12,
-  SPAWN_RATE: 0.04,
+  SPAWN_RATE: 0.05,
   PARTICLE_LIFE: 30,
 };
 
@@ -173,6 +173,7 @@ class Player {
     this.lastJumpTime = 0;
     this.animationFrame = 0;
     this.screenShake = 0;
+    this.doubleJumpGlow = 0;
   }
 
   jump() {
@@ -186,6 +187,7 @@ class Player {
     } else if (this.canDoubleJump && !this.sliding) {
       this.vy = -CONFIG.DOUBLE_JUMP_POWER;
       this.canDoubleJump = false;
+      this.doubleJumpGlow = 15;
       AudioEngine.jump();
       return true;
     }
@@ -211,6 +213,7 @@ class Player {
         this.createLandingDust();
       }
       this.onGround = true;
+      this.doubleJumpGlow = 8;
     }
 
     if (this.sliding) {
@@ -218,6 +221,10 @@ class Player {
       if (this.slideTimer <= 0) {
         this.sliding = false;
       }
+    }
+
+    if (this.doubleJumpGlow > 0) {
+      this.doubleJumpGlow--;
     }
 
     this.animationFrame++;
@@ -254,6 +261,14 @@ class Player {
       ctx.fillStyle = '#000';
       ctx.fillRect(this.x + 6, y + 8, eyeSize, eyeSize);
       ctx.fillRect(this.x + 18, y + 8, eyeSize, eyeSize);
+    }
+
+    if (this.doubleJumpGlow > 0 && this.onGround && !this.sliding) {
+      const glowAlpha = this.doubleJumpGlow / 8;
+      ctx.fillStyle = `rgba(0, 212, 255, ${glowAlpha * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(this.x + this.width / 2, this.y + this.height / 2, 25, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -422,8 +437,8 @@ class Coin {
     this.bobOffset = 0;
   }
 
-  update() {
-    this.x -= CONFIG.BASE_SPEED;
+  update(speed) {
+    this.x -= speed;
     this.rotation += 0.1;
     this.bobOffset = Math.sin(this.rotation) * 3;
   }
@@ -535,14 +550,13 @@ function update() {
   });
 
   coins.forEach((coin) => {
-    coin.update();
+    coin.update(currentSpeed);
 
     if (!coin.collected && checkCollision(player.getHitbox(), coin.getHitbox())) {
       coin.collected = true;
       gameCoins += 1;
       SaveData.totalCoins++;
       AudioEngine.coin();
-      screenShakeAmount = 3;
     }
   });
 
@@ -627,6 +641,7 @@ function checkCollision(rect1, rect2) {
 function endGame() {
   gameState = GameState.GAME_OVER;
   AudioEngine.crash();
+  screenShakeAmount = 5;
 
   if (gameScore > SaveData.highScore) {
     SaveData.highScore = gameScore;
@@ -728,6 +743,7 @@ document.getElementById('resumeButton').addEventListener('click', () => {
   AudioEngine.menuClick();
   gameState = GameState.PLAYING;
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
+  document.getElementById('hud').classList.remove('hidden');
 });
 
 document.getElementById('quitButton').addEventListener('click', () => {
@@ -791,38 +807,6 @@ document.addEventListener('keyup', (e) => {
   }
 });
 
-canvas.addEventListener('touchstart', (e) => {
-  if (gameState !== GameState.PLAYING) return;
-
-  e.preventDefault();
-  const now = Date.now();
-
-  if (now - inputState.lastTapTime < 300) {
-    inputState.tapCount++;
-    if (inputState.tapCount === 2) {
-      player.jump();
-      inputState.tapCount = 0;
-    }
-  } else {
-    inputState.tapCount = 1;
-    player.jump();
-  }
-
-  inputState.lastTapTime = now;
-});
-
-canvas.addEventListener('touchmove', (e) => {
-  if (gameState !== GameState.PLAYING) return;
-
-  e.preventDefault();
-  if (e.touches.length > 0) {
-    const touch = e.touches[0];
-    if (touch.clientY > canvas.getBoundingClientRect().top + canvas.clientHeight * 0.6) {
-      player.slide();
-    }
-  }
-});
-
 // ==================== INITIALIZATION ====================
 window.addEventListener('DOMContentLoaded', () => {
   canvas = document.getElementById('gameCanvas');
@@ -830,6 +814,39 @@ window.addEventListener('DOMContentLoaded', () => {
 
   canvas.width = CONFIG.CANVAS_WIDTH;
   canvas.height = CONFIG.CANVAS_HEIGHT;
+
+  // Touch input handlers - attached after canvas is defined
+  canvas.addEventListener('touchstart', (e) => {
+    if (gameState !== GameState.PLAYING) return;
+
+    e.preventDefault();
+    const now = Date.now();
+
+    if (now - inputState.lastTapTime < 450) {
+      inputState.tapCount++;
+      if (inputState.tapCount === 2) {
+        player.jump();
+        inputState.tapCount = 0;
+      }
+    } else {
+      inputState.tapCount = 1;
+      player.jump();
+    }
+
+    inputState.lastTapTime = now;
+  });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (gameState !== GameState.PLAYING) return;
+
+    e.preventDefault();
+    if (e.touches.length > 0) {
+      const touch = e.touches[0];
+      if (touch.clientY > canvas.getBoundingClientRect().top + canvas.clientHeight * 0.6) {
+        player.slide();
+      }
+    }
+  });
 
   AudioEngine.init();
   switchScreen('mainMenu');
