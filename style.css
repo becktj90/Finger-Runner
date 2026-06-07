@@ -105,6 +105,11 @@ h2 {
   text-transform: uppercase;
 }
 
+.btn:focus {
+  outline: 2px solid #00d4ff;
+  outline-offset: 2px;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, #00d4ff 0%, #0099ff 100%);
   color: #000;
@@ -160,6 +165,11 @@ h2 {
   box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
 }
 
+.btn-pause:focus {
+  outline: 2px solid #00d4ff;
+  outline-offset: 2px;
+}
+
 /* Instructions */
 .instructions {
   text-align: left;
@@ -194,6 +204,13 @@ h2 {
   margin: 12px 0;
   cursor: pointer;
   font-size: 16px;
+}
+
+.settings-group label:focus-within {
+  outline: 2px solid #00d4ff;
+  outline-offset: 2px;
+  border-radius: 4px;
+  padding: 2px;
 }
 
 .settings-group input[type="checkbox"] {
