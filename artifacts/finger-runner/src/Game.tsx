@@ -18,9 +18,9 @@ interface Particle {
   color: string;
 }
 
-const GRAVITY = 0.52;
-const JUMP_FORCE = -13.5;
-const BASE_SPEED = 4.5;
+const GRAVITY = 0.42;
+const JUMP_FORCE = -12.5;
+const BASE_SPEED = 3.5;
 
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -55,8 +55,6 @@ export default function Game() {
   const rafRef = useRef<number>(0);
   const [screen, setScreen] = useState<"start" | "playing" | "dead">("start");
   const [musicOn, setMusicOn] = useState(true);
-  const screenRef = useRef(screen);
-  screenRef.current = screen;
 
   const initAudio = () => {
     const a = audioRef.current;
@@ -205,7 +203,8 @@ export default function Game() {
 
   const spawnObstacle = (width: number, height: number) => {
     const st = stateRef.current;
-    const gapSize = Math.max(155, 235 - Math.floor(st.score / 7));
+    // Wider gap = easier
+    const gapSize = Math.max(200, 310 - Math.floor(st.score / 10));
     const minTop = 75;
     const maxTop = height - gapSize - 155;
     const topHeight = minTop + Math.random() * (maxTop - minTop);
@@ -278,6 +277,7 @@ export default function Game() {
     st.playerY = canvas.height * 0.42;
     st.velocity = JUMP_FORCE * 0.55;
     st.spawnTimer = 0;
+    st.time = 0;
     setScreen("playing");
     stopMusic();
     if (audioRef.current.enabled) {
@@ -329,64 +329,124 @@ export default function Game() {
     }
   };
 
-  const drawFinger = (ctx: CanvasRenderingContext2D, playerY: number, time: number, height: number) => {
-    const bob = Math.sin(time * 0.18) * 2.8;
-    const px = 168;
-    const py = playerY + bob;
+  // Draw a running "finger person" - two fingers alternating like legs
+  const drawFinger = (
+    ctx: CanvasRenderingContext2D,
+    playerY: number,
+    time: number,
+    height: number,
+    gameRunning: boolean,
+  ) => {
+    const cx = 178; // center x of the hand
 
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    // Running stride cycle — only animate when running
+    const strideSpeed = gameRunning ? 0.22 : 0.06;
+    const strideAmp = gameRunning ? 28 : 6;
+    const stride = Math.sin(time * strideSpeed);
+
+    // Body bob: whole hand bobs up/down with stride
+    const bodyBob = gameRunning ? Math.abs(Math.sin(time * strideSpeed)) * -4 : Math.sin(time * 0.06) * 2;
+    const py = playerY + bodyBob;
+
+    // Shadow
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
     ctx.beginPath();
-    ctx.ellipse(px + 8, height - 78, 38, 9, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, height - 78, 36, 8, 0, 0, Math.PI * 2);
     ctx.fill();
 
+    // Palm / knuckle base
+    ctx.fillStyle = "#e8a070";
+    ctx.beginPath();
+    ctx.roundRect(cx - 22, py + 20, 44, 28, 10);
+    ctx.fill();
+    // Palm shading
+    ctx.fillStyle = "#d48a60";
+    ctx.beginPath();
+    ctx.roundRect(cx - 22, py + 36, 44, 12, [0, 0, 10, 10]);
+    ctx.fill();
+
+    // Wrist / arm connecting down to car window
     ctx.strokeStyle = "#e0b38a";
-    ctx.lineWidth = 24;
+    ctx.lineWidth = 28;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(px - 10, py + 52);
-    ctx.lineTo(px - 18, py + 8);
+    ctx.moveTo(cx, py + 40);
+    ctx.lineTo(cx, height - 80);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(px + 14, py + 52);
-    ctx.lineTo(px + 22, py + 10);
-    ctx.stroke();
-
-    ctx.lineWidth = 16;
+    // Wrist highlight
     ctx.strokeStyle = "#f0c090";
+    ctx.lineWidth = 12;
     ctx.beginPath();
-    ctx.moveTo(px - 16, py + 42);
-    ctx.quadraticCurveTo(px - 26, py - 18, px - 12, py - 55);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(px + 16, py + 42);
-    ctx.quadraticCurveTo(px + 30, py - 12, px + 24, py - 58);
+    ctx.moveTo(cx - 4, py + 42);
+    ctx.lineTo(cx - 4, height - 82);
     ctx.stroke();
 
-    ctx.fillStyle = "#e89a70";
-    ctx.beginPath();
-    ctx.arc(px - 12, py - 55, 12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 24, py - 58, 12, 0, Math.PI * 2);
-    ctx.fill();
+    // Helper to draw one finger leg
+    const drawLeg = (
+      offsetX: number,
+      swingAngle: number, // radians, forward = negative
+      color: string,
+      tipColor: string,
+      nailColor: string,
+    ) => {
+      const fingerLen = 62;
+      const kx = cx + offsetX;
+      const ky = py + 22; // knuckle start
 
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(px - 13, py - 59, 5.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 23, py - 63, 5.5, 0, Math.PI * 2);
-    ctx.fill();
+      // Angle: swing around base
+      const tipX = kx + Math.sin(swingAngle) * fingerLen;
+      const tipY = ky - Math.cos(swingAngle) * fingerLen;
 
-    ctx.strokeStyle = "#d48a60";
-    ctx.lineWidth = 2.5;
+      // Mid point for curve
+      const midX = kx + Math.sin(swingAngle * 0.5) * fingerLen * 0.55;
+      const midY = ky - Math.cos(swingAngle * 0.5) * fingerLen * 0.55;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 15;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(kx, ky);
+      ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+      ctx.stroke();
+
+      // Fingertip ball
+      ctx.fillStyle = tipColor;
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 11, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Nail
+      ctx.fillStyle = nailColor;
+      ctx.beginPath();
+      ctx.ellipse(tipX, tipY - 5, 5, 4, Math.sin(swingAngle) * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Knuckle bump at base
+      ctx.fillStyle = "#d48a60";
+      ctx.beginPath();
+      ctx.arc(kx, ky, 8, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    // Left finger (index): forward when stride > 0
+    const leftAngle = -stride * 0.52; // swings forward (negative) and back
+    // Right finger (middle): opposite phase
+    const rightAngle = stride * 0.52;
+
+    drawLeg(-11, leftAngle, "#f0c090", "#e89a70", "#fff8f5");
+    drawLeg(+13, rightAngle, "#ebb080", "#dd9060", "#fff8f5");
+
+    // Knuckle line details on palm
+    ctx.strokeStyle = "#c07840";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(px - 18, py - 22);
-    ctx.lineTo(px - 6, py - 22);
+    ctx.moveTo(cx - 18, py + 28);
+    ctx.lineTo(cx - 6, py + 26);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(px + 18, py - 26);
-    ctx.lineTo(px + 30, py - 26);
+    ctx.moveTo(cx + 6, py + 28);
+    ctx.lineTo(cx + 18, py + 26);
     ctx.stroke();
   };
 
@@ -454,9 +514,6 @@ export default function Game() {
     };
     document.addEventListener("keydown", onKey);
 
-    const onPointer = () => jump();
-    canvas.addEventListener("pointerdown", onPointer);
-
     const loop = () => {
       const st = stateRef.current;
       const width = canvas.width;
@@ -472,23 +529,31 @@ export default function Game() {
         if (st.playerY < 35) { st.playerY = 35; st.velocity = 1.8; }
 
         st.spawnTimer++;
-        const spawnRate = Math.max(42, 58 - Math.floor(st.score / 12));
+        // Slower spawn rate = easier
+        const spawnRate = Math.max(55, 75 - Math.floor(st.score / 15));
         if (st.spawnTimer > spawnRate) {
           spawnObstacle(width, height);
           st.spawnTimer = 0;
         }
 
+        let didCrash = false;
         for (let i = st.obstacles.length - 1; i >= 0; i--) {
           const o = st.obstacles[i];
-          o.x -= BASE_SPEED + st.score * 0.0075;
-          const fingerLeft = 135, fingerRight = 205;
-          const fingerTop = st.playerY - 55, fingerBottom = st.playerY + 48;
-          if (o.x < fingerRight && o.x + 82 > fingerLeft) {
+          // Slower speed scaling = easier
+          o.x -= BASE_SPEED + st.score * 0.005;
+
+          const fingerLeft = 150;
+          const fingerRight = 210;
+          const fingerTop = st.playerY - 60;
+          const fingerBottom = st.playerY + 45;
+
+          if (!didCrash && o.x < fingerRight && o.x + 82 > fingerLeft) {
             if (fingerTop < o.top || fingerBottom > o.top + o.gap) {
               crash();
-              return;
+              didCrash = true;
             }
           }
+
           if (!o.passed && o.x + 82 < fingerLeft) o.passed = true;
           if (o.x < -120) st.obstacles.splice(i, 1);
         }
@@ -501,8 +566,12 @@ export default function Game() {
           p.life--;
           if (p.life <= 0) st.particles.splice(i, 1);
         }
+      } else {
+        // Still tick time for idle animation
+        st.time++;
       }
 
+      // --- Draw ---
       drawBackground(ctx, width, height, st.time);
       for (const o of st.obstacles) drawObstacle(ctx, o, height);
 
@@ -514,8 +583,9 @@ export default function Game() {
       }
       ctx.globalAlpha = 1;
 
-      drawFinger(ctx, st.playerY, st.time, height);
+      drawFinger(ctx, st.playerY, st.time, height, st.gameRunning);
 
+      // HUD
       ctx.shadowColor = "rgba(0,0,0,0.7)";
       ctx.shadowBlur = 6;
       ctx.fillStyle = "#fff";
@@ -526,6 +596,34 @@ export default function Game() {
       ctx.fillText("BEST " + st.bestScore, 40, 118);
       ctx.shadowBlur = 0;
 
+      // Game over panel — drawn on canvas so it persists and loops properly
+      if (!st.gameRunning && st.score > 0) {
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        ctx.beginPath();
+        ctx.roundRect(width / 2 - 240, height / 2 - 135, 480, 270, 18);
+        ctx.fill();
+
+        ctx.fillStyle = "#ff6b6b";
+        ctx.textAlign = "center";
+        ctx.font = "bold 48px Arial";
+        ctx.fillText("CRASHED!", width / 2, height / 2 - 58);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 30px Arial";
+        ctx.fillText("Distance: " + Math.floor(st.score), width / 2, height / 2 - 12);
+
+        if (Math.floor(st.score) >= st.bestScore && st.score > 5) {
+          ctx.fillStyle = "#ffd700";
+          ctx.font = "bold 26px Arial";
+          ctx.fillText("★ NEW RECORD! ★", width / 2, height / 2 + 30);
+        }
+
+        ctx.fillStyle = "#ddd";
+        ctx.font = "22px Arial";
+        ctx.fillText("Tap anywhere or press SPACE to try again", width / 2, height / 2 + 100);
+      }
+
+      // Always schedule next frame — this was the freeze bug
       rafRef.current = requestAnimationFrame(loop);
     };
 
@@ -539,7 +637,6 @@ export default function Game() {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", resize);
       document.removeEventListener("keydown", onKey);
-      canvas.removeEventListener("pointerdown", onPointer);
       stopMusic();
     };
   }, []);
@@ -548,6 +645,17 @@ export default function Game() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     startGame(canvas);
+  };
+
+  const handleCanvasClick = () => {
+    const st = stateRef.current;
+    if (!st.gameRunning && st.score > 0) {
+      // Dead state — restart
+      const canvas = canvasRef.current;
+      if (canvas) startGame(canvas);
+    } else if (st.gameRunning) {
+      jump();
+    }
   };
 
   const handleToggleMusic = () => {
@@ -561,31 +669,28 @@ export default function Game() {
     }
   };
 
-  const handleCanvasPointer = () => {
-    const st = stateRef.current;
-    if (!st.gameRunning) {
-      if (screen === "dead") {
-        const canvas = canvasRef.current;
-        if (canvas) startGame(canvas);
-      }
-    }
-  };
-
   return (
-    <div style={{ position: "relative", width: "100vw", height: "100vh", overflow: "hidden", background: "#87CEEB", touchAction: "none" }}>
+    <div
+      style={{
+        position: "relative", width: "100vw", height: "100vh",
+        overflow: "hidden", background: "#87CEEB", touchAction: "none",
+      }}
+    >
       <canvas
         ref={canvasRef}
         style={{ display: "block" }}
-        onPointerDown={handleCanvasPointer}
+        onPointerDown={handleCanvasClick}
       />
 
       {screen === "start" && (
-        <div style={{
-          position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-          alignItems: "center", justifyContent: "center", color: "white",
-          textShadow: "0 2px 4px rgba(0,0,0,0.6)", zIndex: 10,
-          background: "rgba(0,0,0,0.45)", fontFamily: "Arial, sans-serif",
-        }}>
+        <div
+          style={{
+            position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", color: "white",
+            textShadow: "0 2px 4px rgba(0,0,0,0.6)", zIndex: 10,
+            background: "rgba(0,0,0,0.45)", fontFamily: "Arial, sans-serif",
+          }}
+        >
           <h1 style={{ fontSize: "3.8rem", margin: "0 0 12px 0", color: "#ffd700", textShadow: "0 4px 8px rgba(0,0,0,0.5)" }}>
             👆 FINGER RUNNER
           </h1>
@@ -598,23 +703,14 @@ export default function Game() {
               marginTop: 28, padding: "16px 48px", fontSize: "1.55rem",
               background: "#ff4757", color: "white", border: "none",
               borderRadius: 60, cursor: "pointer", boxShadow: "0 8px 0 #c2363e",
-              transition: "all 0.1s",
+              transition: "all 0.1s", fontFamily: "Arial, sans-serif",
             }}
-            onMouseDown={e => (e.currentTarget.style.transform = "translateY(4px)", e.currentTarget.style.boxShadow = "0 4px 0 #c2363e")}
-            onMouseUp={e => (e.currentTarget.style.transform = "", e.currentTarget.style.boxShadow = "0 8px 0 #c2363e")}
+            onMouseDown={e => { e.currentTarget.style.transform = "translateY(4px)"; e.currentTarget.style.boxShadow = "0 4px 0 #c2363e"; }}
+            onMouseUp={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = "0 8px 0 #c2363e"; }}
           >
             START RUNNING
           </button>
         </div>
-      )}
-
-      {screen === "dead" && (
-        <div
-          style={{
-            position: "absolute", inset: 0, zIndex: 10, cursor: "pointer",
-          }}
-          onClick={() => { const c = canvasRef.current; if (c) startGame(c); }}
-        />
       )}
 
       <button
