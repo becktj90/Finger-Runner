@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from "react";
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox";
 type Theme = "suburb"|"city"|"highway"|"mountain"|"night";
-type HatId = "none"|"tophat"|"cap"|"crown"|"cowboy"|"viking";
+type HatId = "none"|"tophat"|"cap"|"crown"|"cowboy"|"viking"|"beanie"|"party"|"wizard"|"propeller"|"halo";
 
 interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"; rot?: number; rotV?: number; }
 interface BloodPuddle { x: number; y: number; rx: number; ry: number; life: number; maxLife: number; }
+interface Coin { x: number; y: number; phase: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const GRAVITY = 0.72;
@@ -20,6 +21,7 @@ const JUMP_BUFFER_FRAMES = 8;        // remember a jump pressed just before land
 const BASE_SPEED = 2.0;
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
+const COIN_R = 13;
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -37,13 +39,19 @@ const LEVELS = [
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
 // ── Hat catalogue ─────────────────────────────────────────────────────────────
-const HATS: { id: HatId; name: string; emoji: string; unlockLevel: number }[] = [
+const HATS: { id: HatId; name: string; emoji: string; unlockLevel: number; cost?: number }[] = [
   { id:"none",   name:"Bare Knuckle",  emoji:"🤚", unlockLevel:0 },
   { id:"tophat", name:"Top Hat",       emoji:"🎩", unlockLevel:2 },
   { id:"cap",    name:"Baseball Cap",  emoji:"🧢", unlockLevel:3 },
   { id:"crown",  name:"Gold Crown",    emoji:"👑", unlockLevel:5 },
   { id:"cowboy", name:"Cowboy Hat",    emoji:"🤠", unlockLevel:6 },
   { id:"viking", name:"Viking Helmet", emoji:"⚔️",  unlockLevel:8 },
+  // Coin-purchasable outfits (unlockLevel:0, gated on coin purchase)
+  { id:"beanie",    name:"Cozy Beanie",   emoji:"🧶", unlockLevel:0, cost:25 },
+  { id:"party",     name:"Party Hat",     emoji:"🎉", unlockLevel:0, cost:50 },
+  { id:"wizard",    name:"Wizard Hat",    emoji:"🧙", unlockLevel:0, cost:90 },
+  { id:"propeller", name:"Propeller Cap", emoji:"🚁", unlockLevel:0, cost:140 },
+  { id:"halo",      name:"Angel Halo",    emoji:"😇", unlockLevel:0, cost:200 },
 ];
 
 // ── Storyline & dialog ────────────────────────────────────────────────────────
@@ -80,6 +88,19 @@ function getMaxLevel(): number { return parseInt(localStorage.getItem("fingerRun
 function setMaxLevel(n: number) { localStorage.setItem("fingerRunnerMaxLevel", String(n)); }
 function getEquippedHat(): HatId { return (localStorage.getItem("fingerRunnerHat") || "none") as HatId; }
 function setEquippedHat(id: HatId) { localStorage.setItem("fingerRunnerHat", id); }
+function getCoins(): number { return parseInt(localStorage.getItem("fingerRunnerCoins") || "0"); }
+function setCoinsLS(n: number) { localStorage.setItem("fingerRunnerCoins", String(Math.max(0, Math.floor(n)))); }
+function getOwnedOutfits(): HatId[] {
+  try { const v = JSON.parse(localStorage.getItem("fingerRunnerOutfits") || "[]"); return Array.isArray(v) ? (v as HatId[]) : []; }
+  catch { return []; }
+}
+function setOwnedOutfits(ids: HatId[]) { localStorage.setItem("fingerRunnerOutfits", JSON.stringify(ids)); }
+// A hat is available if it's a level unlock the player has reached, or a coin
+// outfit they've purchased. Coin outfits use unlockLevel:0 + a cost.
+function isHatUnlocked(hat: { id: HatId; unlockLevel: number; cost?: number }, owned: HatId[]): boolean {
+  if (hat.cost == null) return hat.unlockLevel <= getMaxLevel();
+  return owned.includes(hat.id);
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Game() {
@@ -105,6 +126,9 @@ export default function Game() {
     obstacles: [] as Obstacle[],
     particles: [] as Particle[],
     bloodPuddles: [] as BloodPuddle[],
+    coins: [] as Coin[],
+    coinSpawnTimer: 0,
+    coinBalance: getCoins(),
     crashFlash: 0,
     dialog: null as { text: string; life: number; maxLife: number } | null,
     dialogCooldown: 200,
@@ -122,6 +146,8 @@ export default function Game() {
   const [currentLevel, setCurrentLevel] = useState(1);
   const [maxLevel, setMaxLevelState] = useState(getMaxLevel());
   const [equippedHat, setEquippedHatState] = useState<HatId>(getEquippedHat());
+  const [coinBalance, setCoinBalanceState] = useState(getCoins());
+  const [ownedOutfits, setOwnedState] = useState<HatId[]>(getOwnedOutfits());
   const [completedLevel, setCompletedLevel] = useState(0);
   const [unlockedHat, setUnlockedHat] = useState<typeof HATS[0] | null>(null);
 
@@ -230,6 +256,17 @@ export default function Game() {
       osc.connect(g); g.connect(ctx.destination); osc.start(t + i * 0.12); osc.stop(t + i * 0.12 + 0.3);
     });
   };
+  const playCoinSound = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    [988, 1319].forEach((freq, i) => {
+      const osc = ctx.createOscillator(); const g = ctx.createGain();
+      osc.type = "square"; osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.12, t + i * 0.06); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.12);
+      osc.connect(g); g.connect(ctx.destination); osc.start(t + i * 0.06); osc.stop(t + i * 0.06 + 0.14);
+    });
+  };
 
   // ── Obstacles ──────────────────────────────────────────────────────────────
   const OBSTACLE_TYPES: { type: ObstacleType; w: number; h: number }[] = [
@@ -312,6 +349,7 @@ export default function Game() {
       localStorage.setItem("fingerRunnerBest", String(st.bestScore));
     }
     stopMusic();
+    setCoinBalanceState(st.coinBalance);
     setTimeout(() => { if (!stateRef.current.gameRunning && audioRef.current.enabled) startMusic(false); }, 600);
     setScreen("dead");
   };
@@ -323,6 +361,7 @@ export default function Game() {
     st.levelComplete = true;
     playLevelUpSound();
     stopMusic();
+    setCoinBalanceState(st.coinBalance);
     const lvl = st.currentLevel;
     const newMax = Math.max(getMaxLevel(), lvl + 1);
     setMaxLevel(newMax); setMaxLevelState(newMax);
@@ -390,6 +429,8 @@ export default function Game() {
     st.obstacles = [];
     st.particles = [];
     st.bloodPuddles = [];
+    st.coins = [];
+    st.coinSpawnTimer = 0;
     st.crashFlash = 0;
     st.playerY = groundY;
     st.velocity = 0;
@@ -829,6 +870,95 @@ export default function Game() {
       ctx.fillStyle = "#d4c0a0";
       ctx.beginPath(); ctx.ellipse(-28, -66, 4, 3, 0.3, 0, Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.ellipse(28, -66, 4, 3, -0.3, 0, Math.PI*2); ctx.fill();
+
+    } else if (hatId === "beanie") {
+      // Knit dome
+      ctx.fillStyle = "#e8567a";
+      ctx.beginPath(); ctx.ellipse(0, -26, 21, 16, 0, Math.PI, 0); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(-21, -27, 42, 7, [0,0,3,3]); ctx.fill();
+      // Folded brim
+      ctx.fillStyle = "#c93f63"; ctx.beginPath(); ctx.roundRect(-23, -29, 46, 10, 5); ctx.fill();
+      // Knit lines
+      ctx.strokeStyle = "rgba(255,255,255,0.20)"; ctx.lineWidth = 1.5;
+      for (let kx = -14; kx <= 14; kx += 7) { ctx.beginPath(); ctx.moveTo(kx, -27); ctx.lineTo(kx, -41); ctx.stroke(); }
+      // Pom-pom
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, -45, 6, 0, Math.PI*2); ctx.fill();
+
+    } else if (hatId === "party") {
+      // Cone
+      ctx.fillStyle = "#ff5ea8";
+      ctx.beginPath(); ctx.moveTo(-16, -26); ctx.lineTo(0, -66); ctx.lineTo(16, -26); ctx.closePath(); ctx.fill();
+      // Zigzag stripes
+      ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 3; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(-12, -34); ctx.lineTo(12, -34); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-9, -44); ctx.lineTo(9, -44); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-6, -54); ctx.lineTo(6, -54); ctx.stroke();
+      // Dots
+      ctx.fillStyle = "#fff";
+      [[-6,-30],[5,-40],[-2,-50]].forEach(([dx,dy]) => { ctx.beginPath(); ctx.arc(dx, dy, 2, 0, Math.PI*2); ctx.fill(); });
+      // Pom-pom top
+      ctx.fillStyle = "#4ee0ff"; ctx.beginPath(); ctx.arc(0, -66, 5, 0, Math.PI*2); ctx.fill();
+
+    } else if (hatId === "wizard") {
+      // Brim
+      ctx.fillStyle = "#3b2a73"; ctx.beginPath(); ctx.ellipse(0, -26, 27, 8, 0, 0, Math.PI*2); ctx.fill();
+      // Curved cone
+      ctx.fillStyle = "#4b3699";
+      ctx.beginPath(); ctx.moveTo(-18, -28); ctx.quadraticCurveTo(-6, -56, 4, -72);
+      ctx.quadraticCurveTo(12, -52, 18, -28); ctx.closePath(); ctx.fill();
+      // Band
+      ctx.fillStyle = "#ffd700"; ctx.fillRect(-17, -33, 35, 5);
+      // Stars (small diamonds)
+      ctx.fillStyle = "#ffe066";
+      [[-4,-42,3],[6,-54,2.4],[-8,-50,2]].forEach(([sx,sy,sr]) => {
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI/4);
+        ctx.fillRect(-sr, -sr, sr*2, sr*2); ctx.restore();
+      });
+
+    } else if (hatId === "propeller") {
+      // Dome
+      ctx.fillStyle = "#2d98da";
+      ctx.beginPath(); ctx.ellipse(0, -27, 20, 15, 0, Math.PI, 0); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(-20, -27, 40, 7, [0,0,3,3]); ctx.fill();
+      // Colored panels
+      ctx.fillStyle = "#f7b731"; ctx.beginPath(); ctx.moveTo(0, -42); ctx.lineTo(-20, -23); ctx.lineTo(-7, -23); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#eb3b5a"; ctx.beginPath(); ctx.moveTo(0, -42); ctx.lineTo(20, -23); ctx.lineTo(7, -23); ctx.closePath(); ctx.fill();
+      // Propeller blades
+      ctx.save(); ctx.translate(0, -46);
+      ctx.fillStyle = "#eb3b5a"; ctx.beginPath(); ctx.ellipse(-13, 0, 13, 4, 0.25, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#20bf6b"; ctx.beginPath(); ctx.ellipse(13, 0, 13, 4, -0.25, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#f7b731"; ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+
+    } else if (hatId === "halo") {
+      // Glowing floating ring
+      ctx.save();
+      ctx.strokeStyle = "#ffe066"; ctx.lineWidth = 5;
+      ctx.shadowColor = "rgba(255,224,102,0.9)"; ctx.shadowBlur = 14;
+      ctx.beginPath(); ctx.ellipse(0, -46, 16, 6, 0, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  };
+
+  // ── Collectible coin ───────────────────────────────────────────────────────
+  const drawCoin = (ctx: CanvasRenderingContext2D, c: Coin, time: number) => {
+    const bob = Math.sin(time * 0.12 + c.phase) * 3;
+    // Spinning illusion — width oscillates to fake a flipping coin
+    const w = COIN_R * Math.abs(Math.cos(time * 0.09 + c.phase)) + 3;
+    ctx.save();
+    ctx.translate(c.x, c.y + bob);
+    ctx.shadowColor = "rgba(255,200,40,0.85)"; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#e0a700";
+    ctx.beginPath(); ctx.ellipse(0, 0, w, COIN_R, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#ffcf33";
+    ctx.beginPath(); ctx.ellipse(0, 0, Math.max(1.5, w - 2.5), COIN_R - 2.5, 0, 0, Math.PI*2); ctx.fill();
+    if (w > COIN_R * 0.6) {
+      ctx.fillStyle = "#c98a00"; ctx.font = "bold 15px Arial";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("★", 0, 1);
+      ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
     }
     ctx.restore();
   };
@@ -1077,6 +1207,18 @@ export default function Game() {
         const spawnRate = Math.max(lvlDef.minSpawn, 220 - Math.floor(st.levelScore / 6));
         if (st.spawnTimer > spawnRate) { spawnObstacle(width); st.spawnTimer = 0; }
 
+        // Spawn collectible coins — single coin or a short row, at a few heights
+        st.coinSpawnTimer++;
+        if (st.coinSpawnTimer > 90 + Math.random() * 70) {
+          st.coinSpawnTimer = 0;
+          const heights = [roadY - 46, roadY - 120, roadY - 196];
+          const baseY = heights[Math.floor(Math.random() * heights.length)];
+          const n = 1 + Math.floor(Math.random() * 3);
+          for (let k = 0; k < n; k++) {
+            st.coins.push({ x: width + 40 + k * 40, y: baseY, phase: Math.random() * Math.PI * 2 });
+          }
+        }
+
         // Obstacles + collision
         const fingerLeft = 168; const fingerRight = 202;
         const fingerTipY = st.playerY + FINGER_TIP_OFFSET - 8;
@@ -1093,6 +1235,27 @@ export default function Game() {
           }
           if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) o.passed = true;
           if (o.x < -150) st.obstacles.splice(i, 1);
+        }
+
+        // Coins — move, collect on overlap with the finger
+        const coinTop = st.playerY - 18;
+        const coinBottom = st.playerY + FINGER_TIP_OFFSET;
+        for (let i = st.coins.length - 1; i >= 0; i--) {
+          const c = st.coins[i];
+          c.x -= speed;
+          if (c.x + COIN_R > 156 && c.x - COIN_R < 214 && c.y + COIN_R > coinTop && c.y - COIN_R < coinBottom) {
+            st.coinBalance++;
+            setCoinsLS(st.coinBalance);
+            playCoinSound();
+            for (let s = 0; s < 8; s++) {
+              const a = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 3;
+              st.particles.push({ x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.2,
+                life: 22 + Math.random() * 12, size: 3 + Math.random() * 4, color: "#ffe27a", shape: "circle" });
+            }
+            st.coins.splice(i, 1);
+            continue;
+          }
+          if (c.x < -40) st.coins.splice(i, 1);
         }
 
         // Particles
@@ -1160,6 +1323,9 @@ export default function Game() {
 
       for (const o of st.obstacles) drawObstacle(ctx, o, height);
 
+      // Collectible coins
+      for (const c of st.coins) drawCoin(ctx, c, st.time);
+
       // Particles — drawn by shape
       ctx.shadowBlur = 0;
       for (const p of st.particles) {
@@ -1214,6 +1380,11 @@ export default function Game() {
       ctx.fillText(String(Math.floor(st.levelScore)), 38, 74);
       ctx.font = "bold 20px Arial";
       ctx.fillText("BEST " + st.bestScore, 40, 102);
+
+      // Coin counter (top-right, under the music toggle)
+      ctx.textAlign = "right"; ctx.fillStyle = "#ffcf33"; ctx.font = "bold 26px Arial";
+      ctx.fillText("🪙 " + st.coinBalance, width - 24, 92);
+      ctx.textAlign = "left";
 
       // Level pill
       const lvlText = `LVL ${st.currentLevel}`;
@@ -1287,6 +1458,22 @@ export default function Game() {
   const handleEquipHat = (id: HatId) => {
     setEquippedHat(id); setEquippedHatState(id);
   };
+  const handleBuyOutfit = (hat: typeof HATS[number]) => {
+    const cost = hat.cost ?? 0;
+    if (getCoins() < cost || getOwnedOutfits().includes(hat.id)) return;
+    const newBal = getCoins() - cost;
+    setCoinsLS(newBal); setCoinBalanceState(newBal);
+    stateRef.current.coinBalance = newBal;
+    const owned = getOwnedOutfits();
+    owned.push(hat.id); setOwnedOutfits(owned); setOwnedState([...owned]);
+    // Auto-equip the freshly bought outfit
+    setEquippedHat(hat.id); setEquippedHatState(hat.id);
+  };
+  const openWardrobe = () => {
+    setCoinBalanceState(getCoins());
+    setOwnedState(getOwnedOutfits());
+    setScreen("wardrobe");
+  };
 
   // ── Shared button style helpers ────────────────────────────────────────────
   const btnPress = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -1321,7 +1508,7 @@ export default function Game() {
           </p>
           <p style={{ fontSize:"1.3rem", margin:"4px 0" }}>Tap / hold SPACE to jump • double-tap for a double jump • Clear 8 levels</p>
           <p style={{ fontSize:"1.1rem", margin:"4px 0", color:"#aef" }}>
-            {HATS.filter(h=>h.unlockLevel<=getMaxLevel()&&h.id!=="none").map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked • reach new levels to earn more!
+            {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked • collect 🪙 coins for more!
           </p>
           <div style={{ display:"flex", gap:16, marginTop:28 }}>
             <button onClick={() => startLevel(1)}
@@ -1330,7 +1517,7 @@ export default function Game() {
                 borderRadius:60, cursor:"pointer", boxShadow:"0 8px 0 #c2363e", fontFamily:font, fontWeight:"bold" }}>
               START RUNNING
             </button>
-            <button onClick={() => setScreen("wardrobe")}
+            <button onClick={openWardrobe}
               onMouseDown={btnPress} onMouseUp={btnRelease}
               style={{ padding:"16px 28px", fontSize:"1.4rem", background:"#7c4dff", color:"#fff", border:"none",
                 borderRadius:60, cursor:"pointer", boxShadow:"0 8px 0 #5a2fd0", fontFamily:font, fontWeight:"bold" }}>
@@ -1363,31 +1550,49 @@ export default function Game() {
         <div style={{ ...overlay, background:"rgba(10,10,30,0.92)", color:"#fff" }}>
           <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:24, padding:"32px 40px", maxWidth:540, width:"90%", boxShadow:"0 8px 40px rgba(0,0,0,0.6)" }}>
             <h2 style={{ fontSize:"2rem", margin:"0 0 6px 0", color:"#ffd700", textAlign:"center", fontFamily:font }}>👕 WARDROBE</h2>
-            <p style={{ color:"#aaa", textAlign:"center", margin:"0 0 24px 0", fontFamily:font }}>Unlock hats by reaching new levels</p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <p style={{ color:"#aaa", textAlign:"center", margin:"0 0 12px 0", fontFamily:font }}>Earn outfits by leveling up — or buy them with 🪙 coins</p>
+            <div style={{ textAlign:"center", margin:"0 0 20px 0" }}>
+              <span style={{ display:"inline-block", background:"rgba(255,207,51,0.15)", border:"2px solid #ffcf33",
+                borderRadius:30, padding:"6px 18px", fontSize:"1.2rem", fontWeight:"bold", color:"#ffcf33", fontFamily:font }}>
+                🪙 {coinBalance} coins
+              </span>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, maxHeight:"50vh", overflowY:"auto" }}>
               {HATS.map(hat => {
-                const unlocked = hat.unlockLevel <= getMaxLevel();
+                const owned = isHatUnlocked(hat, ownedOutfits);
+                const isCoin = hat.cost != null;
                 const equipped = equippedHat === hat.id;
+                const affordable = coinBalance >= (hat.cost ?? 0);
+                const subtitle = isCoin
+                  ? (owned ? "Owned" : `Buy: 🪙 ${hat.cost}`)
+                  : (hat.unlockLevel === 0 ? "Always available" : `Unlock: Level ${hat.unlockLevel}`);
                 return (
                   <div key={hat.id}
                     style={{ background: equipped ? "rgba(124,77,255,0.3)" : "rgba(255,255,255,0.06)",
-                      border: `2px solid ${equipped ? "#7c4dff" : unlocked ? "#555" : "#333"}`,
+                      border: `2px solid ${equipped ? "#7c4dff" : owned ? "#555" : "#333"}`,
                       borderRadius:14, padding:"14px 16px", display:"flex", alignItems:"center", gap:12,
-                      opacity: unlocked ? 1 : 0.5 }}>
+                      opacity: owned ? 1 : 0.7 }}>
                     <span style={{ fontSize:"2rem" }}>{hat.emoji}</span>
-                    <div style={{ flex:1 }}>
+                    <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ fontWeight:"bold", fontSize:"1rem", fontFamily:font }}>{hat.name}</div>
-                      <div style={{ fontSize:"0.8rem", color:"#aaa", fontFamily:font }}>
-                        {hat.unlockLevel === 0 ? "Always available" : `Unlock: Level ${hat.unlockLevel}`}
-                      </div>
+                      <div style={{ fontSize:"0.8rem", color:"#aaa", fontFamily:font }}>{subtitle}</div>
                     </div>
-                    {unlocked ? (
+                    {owned ? (
                       <button onClick={() => handleEquipHat(hat.id)}
                         onMouseDown={btnPress} onMouseUp={btnRelease}
                         style={{ padding:"6px 14px", fontSize:"0.85rem", fontWeight:"bold",
                           background: equipped ? "#7c4dff" : "#333", color:"#fff",
                           border:"none", borderRadius:20, cursor:"pointer", fontFamily:font }}>
                         {equipped ? "✓ ON" : "EQUIP"}
+                      </button>
+                    ) : isCoin ? (
+                      <button onClick={() => affordable && handleBuyOutfit(hat)}
+                        onMouseDown={affordable ? btnPress : undefined} onMouseUp={affordable ? btnRelease : undefined}
+                        disabled={!affordable}
+                        style={{ padding:"6px 14px", fontSize:"0.85rem", fontWeight:"bold",
+                          background: affordable ? "#ffcf33" : "#333", color: affordable ? "#222" : "#777",
+                          border:"none", borderRadius:20, cursor: affordable ? "pointer" : "not-allowed", fontFamily:font }}>
+                        🪙 {hat.cost}
                       </button>
                     ) : (
                       <span style={{ fontSize:"0.8rem", color:"#666", fontFamily:font }}>🔒 Lv {hat.unlockLevel}</span>
