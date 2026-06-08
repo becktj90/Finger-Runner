@@ -195,6 +195,7 @@ export class Game {
     this.score = 0;
     this.runTime = 0;
     this.capturedBy = null;
+    this.captureFaction = null;
     this.headlines = [];
     this.updateBands(true);
     this.loadSector(1);
@@ -1032,5 +1033,8 @@ export class Game {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
     this.input.destroy();
+    this.ui.destroy();
+    this.audio.destroy();
+    this.canvas.remove();
   }
 }

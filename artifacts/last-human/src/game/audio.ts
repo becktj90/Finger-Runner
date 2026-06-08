@@ -135,4 +135,18 @@ export class AudioSystem {
     o.start();
     o.stop(c.currentTime + 1.35);
   }
+
+  destroy() {
+    if (this.ctx) {
+      try {
+        void this.ctx.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.ctx = null;
+    this.master = null;
+    this.droneGain = null;
+    this.started = false;
+  }
 }

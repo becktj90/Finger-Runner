@@ -1,0 +1,1 @@
+- [Vanilla canvas in react-vite artifact](vanilla-canvas-artifact.md) — mounting a framework-free canvas game inside the react-vite scaffold; CSS/entry gotchas.

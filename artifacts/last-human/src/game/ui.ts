@@ -98,6 +98,14 @@ export class UI {
     if (this.boostBtn) this.boostBtn.style.display = visible ? "flex" : "none";
   }
 
+  destroy() {
+    this.overlay.remove();
+    if (this.boostBtn) {
+      this.boostBtn.remove();
+      this.boostBtn = null;
+    }
+  }
+
   hideOverlay() {
     this.overlay.style.display = "none";
     this.overlay.innerHTML = "";
