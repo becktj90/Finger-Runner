@@ -10,8 +10,13 @@ interface Particle { x: number; y: number; vx: number; vy: number; life: number;
 interface BloodPuddle { x: number; y: number; rx: number; ry: number; life: number; maxLife: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const GRAVITY = 0.70;
-const JUMP_FORCE = -20;
+const GRAVITY = 0.72;
+const JUMP_FORCE = -18.5;
+const LOW_JUMP_GRAVITY_MULT = 2.6;   // extra gravity when jump released early → variable jump height
+const FALL_GRAVITY_MULT = 1.3;       // snappier descent for better game feel
+const MAX_FALL = 24;
+const COYOTE_FRAMES = 7;             // grace frames to still jump after leaving the ground
+const JUMP_BUFFER_FRAMES = 8;        // remember a jump pressed just before landing
 const BASE_SPEED = 2.0;
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
@@ -41,7 +46,36 @@ const HATS: { id: HatId; name: string; emoji: string; unlockLevel: number }[] = 
   { id:"viking", name:"Viking Helmet", emoji:"⚔️",  unlockLevel:8 },
 ];
 
+// ── Storyline & dialog ────────────────────────────────────────────────────────
+const STORY_INTRO =
+  "Trapped in a boring sedan on the world's longest road trip, two restless fingers — Lefty & Middy — spot a cracked-open window and make a break for it. Eight wild stretches of road stand between them and freedom.";
+
+const LEVEL_STORY: Record<number, string> = {
+  1: "Day one of freedom — the open suburb awaits!",
+  2: "So many shoppers, so many feet to dodge…",
+  3: "Downtown! Keep it together, knuckles.",
+  4: "Rush hour. Everyone's in a hurry but us!",
+  5: "Merging onto the highway — hold onto your nails!",
+  6: "Pedal to the metal… er, finger to the asphalt!",
+  7: "Mountain air! Don't look down, Middy.",
+  8: "One last sprint under the stars. Almost home!",
+};
+
+const RUN_QUIPS = [
+  "Wheee!", "Freedom tastes like asphalt!", "Can't catch us!", "Run, Middy, run!",
+  "My nails look fabulous today.", "Is it leg day? It's always leg day.",
+  "We were BORN to run!", "Two fingers, one dream.", "Don't look back!",
+  "This is the way.", "Knuckle down!", "Living on the edge!", "So bouncy!",
+];
+const JUMP_QUIPS = ["Hup!", "Boing!", "Up we go!", "Weeee!", "Air time!", "Springy!"];
+const CRASH_QUIPS = [
+  "Should've moisturized.", "Finger down! I repeat, finger down!",
+  "Well, that'll leave a callus.", "Ow. OW. OWWW.", "Tell my thumb I love it…",
+  "That's gonna need a band-aid.", "I regret everything.", "Cramp! It was a cramp!",
+];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 function getMaxLevel(): number { return parseInt(localStorage.getItem("fingerRunnerMaxLevel") || "1"); }
 function setMaxLevel(n: number) { localStorage.setItem("fingerRunnerMaxLevel", String(n)); }
 function getEquippedHat(): HatId { return (localStorage.getItem("fingerRunnerHat") || "none") as HatId; }
@@ -63,10 +97,17 @@ export default function Game() {
     spawnTimer: 0,
     onGround: true,
     jumpsUsed: 0,
+    jumpHeld: false,
+    coyoteTimer: 0,
+    jumpBuffer: 0,
+    landImpact: 0,
+    shake: 0,
     obstacles: [] as Obstacle[],
     particles: [] as Particle[],
     bloodPuddles: [] as BloodPuddle[],
     crashFlash: 0,
+    dialog: null as { text: string; life: number; maxLife: number } | null,
+    dialogCooldown: 200,
   });
   const audioRef = useRef<{
     ctx: AudioContext | null; enabled: boolean;
@@ -261,6 +302,9 @@ export default function Game() {
     const roadY = canvas ? canvas.height - ROAD_SURFACE_OFFSET : 400;
     st.gameRunning = false;
     st.crashFlash = 28;
+    st.shake = 18;
+    st.jumpHeld = false;
+    showDialog(pick(CRASH_QUIPS), 200);
     playCrashSound();
     createCrashExplosion(185, st.playerY + 30, roadY);
     if (st.totalScore > st.bestScore) {
@@ -290,20 +334,49 @@ export default function Game() {
     setTimeout(() => setScreen("levelComplete"), 300);
   };
 
+  const showDialog = (text: string, frames = 150) => {
+    stateRef.current.dialog = { text, life: frames, maxLife: frames };
+  };
+
+  const spawnDust = (count: number, spread: number) => {
+    const st = stateRef.current;
+    for (let i = 0; i < count; i++) {
+      st.particles.push({
+        x: 170 + Math.random() * 30, y: st.playerY + FINGER_TIP_OFFSET - 4,
+        vx: (Math.random() - 0.5) * spread, vy: -1.5 - Math.random() * 2.5,
+        life: 20 + Math.random() * 12, size: 4 + Math.random() * 5,
+        color: "#cbb79a", shape: "circle",
+      });
+    }
+  };
+
+  const doJump = (isDouble: boolean) => {
+    const st = stateRef.current;
+    st.jumpsUsed += 1;
+    st.velocity = isDouble ? JUMP_FORCE * 0.9 : JUMP_FORCE;
+    st.onGround = false;
+    st.coyoteTimer = 0;
+    st.landImpact = 0;
+    playJumpSound();
+    spawnDust(isDouble ? 6 : 9, 6);
+    if (Math.random() < 0.18) showDialog(pick(JUMP_QUIPS), 70);
+  };
+
   const jump = () => {
     initAudio();
     const st = stateRef.current;
     if (!st.gameRunning) return;
-    if (!st.onGround && st.jumpsUsed >= 2) return;
-    st.jumpsUsed = (st.jumpsUsed || 0) + 1;
-    st.velocity = JUMP_FORCE;
-    st.onGround = false;
-    playJumpSound();
-    for (let i = 0; i < 8; i++) {
-      st.particles.push({ x: 175+Math.random()*30, y: st.playerY+80,
-        vx: (Math.random()-0.5)*5, vy: -2+Math.random()*2, life:22, size:4+Math.random()*4, color:"#d4916a" });
+    st.jumpHeld = true;
+    if (st.onGround || st.coyoteTimer > 0) {
+      doJump(false);
+    } else if (st.jumpsUsed < 2) {
+      doJump(true);
+    } else {
+      st.jumpBuffer = JUMP_BUFFER_FRAMES; // remember it; fires the instant we land
     }
   };
+
+  const releaseJump = () => { stateRef.current.jumpHeld = false; };
 
   const startLevel = (levelNum: number) => {
     initAudio();
@@ -322,8 +395,15 @@ export default function Game() {
     st.velocity = 0;
     st.onGround = true;
     st.jumpsUsed = 0;
+    st.jumpHeld = false;
+    st.coyoteTimer = 0;
+    st.jumpBuffer = 0;
+    st.landImpact = 0;
+    st.shake = 0;
     st.spawnTimer = 0;
     st.time = 0;
+    st.dialog = { text: LEVEL_STORY[levelNum] || pick(RUN_QUIPS), life: 200, maxLife: 200 };
+    st.dialogCooldown = 320;
     setCurrentLevel(levelNum);
     setScreen("playing");
     stopMusic();
@@ -331,6 +411,18 @@ export default function Game() {
   };
 
   // ── Background themes ──────────────────────────────────────────────────────
+  const drawCloud = (ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) => {
+    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+    ctx.fillStyle = "rgba(255,255,255,0.88)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.arc(20, 4, 22, 0, Math.PI * 2);
+    ctx.arc(44, 2, 16, 0, Math.PI * 2);
+    ctx.arc(22, -12, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+
   const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: number, time: number, theme: Theme) => {
     // Sky gradient per theme
     const grad = ctx.createLinearGradient(0, 0, 0, height);
@@ -347,6 +439,17 @@ export default function Game() {
     }
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
+
+    // Parallax clouds (daytime themes) — slow far drift for depth
+    if (theme !== "night") {
+      const span = width + 260;
+      for (let c = 0; c < 5; c++) {
+        const scale = 0.7 + (c % 3) * 0.45;
+        const cx2 = ((c * 360 - time * (0.25 + scale * 0.18)) % span + span) % span - 130;
+        const cy2 = 48 + (c % 3) * 52 + (c % 2) * 14;
+        drawCloud(ctx, cx2, cy2, scale);
+      }
+    }
 
     if (theme === "night") {
       // Stars
@@ -731,74 +834,161 @@ export default function Game() {
   };
 
   // ── Character drawing ──────────────────────────────────────────────────────
-  const drawFinger = (ctx: CanvasRenderingContext2D, playerY: number, time: number, _height: number, gameRunning: boolean, hatId: HatId) => {
+  // Skin / nail palette (shared across body + legs)
+  const SKIN    = "#f2b079";
+  const SKIN_D  = "#d88a4e";
+  const SKIN_DD = "#b86c34";
+  const SKIN_HI = "#ffd6a8";
+  const NAIL    = "#fdeee2";
+  const NAIL_D  = "#e6c2a8";
+
+  // A single anatomically-readable finger used as a leg: proximal + distal
+  // phalanges, a bulging knuckle joint with a crease, a fingertip pad and nail.
+  const drawFingerLeg = (
+    ctx: CanvasRenderingContext2D, hipX: number, hipY: number, swing: number, front: boolean,
+  ) => {
+    const seg1 = 30, seg2 = 30;
+    const kneeX = hipX + Math.sin(swing) * seg1;
+    const kneeY = hipY + Math.cos(swing) * seg1;
+    const bend  = swing * 0.5 + (swing > 0 ? 0.34 : -0.12);
+    const tipX  = kneeX + Math.sin(bend) * seg2;
+    const tipY  = kneeY + Math.cos(bend) * seg2;
+    const sk  = front ? SKIN : SKIN_D;
+    const skd = front ? SKIN_D : SKIN_DD;
+
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    // proximal phalange (fat upper segment)
+    ctx.strokeStyle = skd; ctx.lineWidth = 22; ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
+    ctx.strokeStyle = sk;  ctx.lineWidth = 17; ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
+    // knuckle joint bulge
+    ctx.fillStyle = skd; ctx.beginPath(); ctx.arc(kneeX, kneeY, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = sk;  ctx.beginPath(); ctx.arc(kneeX, kneeY, 8.5, 0, Math.PI * 2); ctx.fill();
+    // knuckle crease across the joint
+    const ka = Math.atan2(kneeY - hipY, kneeX - hipX) + Math.PI / 2;
+    ctx.strokeStyle = "rgba(150,80,40,0.40)"; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(kneeX + Math.cos(ka) * 7, kneeY + Math.sin(ka) * 7);
+    ctx.lineTo(kneeX - Math.cos(ka) * 7, kneeY - Math.sin(ka) * 7);
+    ctx.stroke();
+    // distal phalange (tapering lower segment)
+    ctx.strokeStyle = skd; ctx.lineWidth = 18; ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(tipX, tipY); ctx.stroke();
+    ctx.strokeStyle = sk;  ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(tipX, tipY); ctx.stroke();
+    // fingertip pad
+    ctx.fillStyle = skd; ctx.beginPath(); ctx.arc(tipX, tipY, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = sk;  ctx.beginPath(); ctx.arc(tipX, tipY, 7, 0, Math.PI * 2); ctx.fill();
+    // fingernail, oriented along the finger
+    const nd = Math.atan2(tipY - kneeY, tipX - kneeX);
+    ctx.save(); ctx.translate(tipX, tipY); ctx.rotate(nd - Math.PI / 2);
+    ctx.fillStyle = NAIL_D; ctx.beginPath(); ctx.roundRect(-5.5, -10, 11, 11, 4); ctx.fill();
+    ctx.fillStyle = NAIL;   ctx.beginPath(); ctx.roundRect(-4.5, -9, 9, 8.5, 3); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.beginPath(); ctx.roundRect(-3.5, -8.5, 3, 6, 2); ctx.fill();
+    ctx.restore();
+  };
+
+  const drawFinger = (
+    ctx: CanvasRenderingContext2D, playerY: number, time: number, _height: number,
+    gameRunning: boolean, hatId: HatId, stretchX = 1, stretchY = 1,
+  ) => {
     const cx = 185;
     const strideSpeed = gameRunning ? 0.26 : 0.05;
     const stride = Math.sin(time * strideSpeed);
     const bodyBob = gameRunning ? Math.abs(stride) * -6 : Math.sin(time * 0.05) * 2;
     const palmY = playerY + bodyBob;
+    const footY = playerY + FINGER_TIP_OFFSET;
 
-    ctx.fillStyle = "rgba(0,0,0,0.16)";
-    ctx.beginPath(); ctx.ellipse(cx, palmY + 115, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
+    // Ground shadow (drawn unscaled, shrinks as the hand rises for fake depth)
+    const lift = Math.max(0, footY - (palmY + 64));
+    const shScale = Math.max(0.5, 1 - lift * 0.004);
+    ctx.fillStyle = `rgba(0,0,0,${0.20 * shScale})`;
+    ctx.beginPath(); ctx.ellipse(cx, footY + 6, 34 * shScale, 7 * shScale, 0, 0, Math.PI * 2); ctx.fill();
 
-    const drawFingerLeg = (baseX: number, baseY: number, swing: number, skin: string, dark: string) => {
-      const seg1=34; const seg2=28;
-      const j1x=baseX+Math.sin(swing)*seg1; const j1y=baseY+Math.cos(swing)*seg1;
-      const bendOut=swing*0.55+(swing>0?0.28:-0.28);
-      const tipX=j1x+Math.sin(bendOut)*seg2; const tipY=j1y+Math.cos(bendOut)*seg2;
-      ctx.lineCap="round";
-      ctx.strokeStyle=dark;ctx.lineWidth=19;ctx.beginPath();ctx.moveTo(baseX,baseY+1);ctx.lineTo(j1x+1,j1y+1);ctx.stroke();
-      ctx.strokeStyle=skin;ctx.lineWidth=17;ctx.beginPath();ctx.moveTo(baseX,baseY);ctx.lineTo(j1x,j1y);ctx.stroke();
-      ctx.strokeStyle=dark;ctx.lineWidth=16;ctx.beginPath();ctx.moveTo(j1x+1,j1y+1);ctx.lineTo(tipX+1,tipY+1);ctx.stroke();
-      ctx.strokeStyle=skin;ctx.lineWidth=14;ctx.beginPath();ctx.moveTo(j1x,j1y);ctx.lineTo(tipX,tipY);ctx.stroke();
-      ctx.fillStyle=dark;ctx.beginPath();ctx.arc(j1x,j1y,9.5,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle=skin;ctx.beginPath();ctx.arc(j1x,j1y,7.5,0,Math.PI*2);ctx.fill();
-      const kAngle=Math.atan2(j1y-baseY,j1x-baseX)+Math.PI/2;
-      ctx.strokeStyle=dark;ctx.lineWidth=1.8;
-      ctx.beginPath();ctx.moveTo(j1x+Math.cos(kAngle)*6,j1y+Math.sin(kAngle)*6);ctx.lineTo(j1x-Math.cos(kAngle)*6,j1y-Math.sin(kAngle)*6);ctx.stroke();
-      ctx.fillStyle=dark;ctx.beginPath();ctx.arc(tipX,tipY,9,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#f8c090";ctx.beginPath();ctx.arc(tipX-1,tipY-1,7,0,Math.PI*2);ctx.fill();
-      const nDir=Math.atan2(tipY-j1y,tipX-j1x);
-      ctx.save();ctx.translate(tipX,tipY);ctx.rotate(nDir-Math.PI/2);
-      ctx.fillStyle="#d9a080";ctx.beginPath();ctx.roundRect(-5,-9,10,10,3);ctx.fill();
-      ctx.fillStyle="#fdf5f0";ctx.beginPath();ctx.roundRect(-4,-8,8,7,2);ctx.fill();
-      ctx.strokeStyle="rgba(140,70,40,0.25)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-5,0);ctx.lineTo(5,0);ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle=dark;ctx.beginPath();ctx.arc(baseX,baseY,10,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle=skin;ctx.beginPath();ctx.arc(baseX-1,baseY-1,8,0,Math.PI*2);ctx.fill();
-    };
+    // Squash & stretch — scale the whole character around the foot contact point
+    ctx.save();
+    ctx.translate(cx, footY);
+    ctx.scale(stretchX, stretchY);
+    ctx.translate(-cx, -footY);
 
+    const baseY = palmY + 22;
+    const indexSwing  =  stride * 0.6;
+    const middleSwing = -stride * 0.6;
+
+    // Back leg (middle finger) first for depth
+    drawFingerLeg(ctx, cx + 11, baseY, middleSwing, false);
+
+    // ── Fist / hand body ──
     ctx.save();
     ctx.translate(cx, palmY);
-    ctx.rotate(-0.1);
-    // Palm body
-    ctx.fillStyle="#bf7040";ctx.beginPath();ctx.roundRect(-33,-26,66,54,16);ctx.fill();
-    ctx.fillStyle="#eda068";ctx.beginPath();ctx.roundRect(-31,-24,62,50,14);ctx.fill();
-    ctx.fillStyle="#cc8448";ctx.beginPath();ctx.roundRect(-29,-26,58,18,[14,14,0,0]);ctx.fill();
-    // Knuckle bumps
-    for(let k=-1;k<=1;k++){ctx.fillStyle="#b06030";ctx.beginPath();ctx.ellipse(k*19,-22,11,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#dd9858";ctx.beginPath();ctx.ellipse(k*19-1,-25,7,5,0,0,Math.PI*2);ctx.fill();}
-    // Curled ring/pinky
-    ctx.strokeStyle="#b86830";ctx.lineWidth=11;ctx.lineCap="round";
-    ctx.beginPath();ctx.arc(21,-20,12,Math.PI*1.05,Math.PI*1.95);ctx.stroke();
-    ctx.lineWidth=9;ctx.beginPath();ctx.arc(31,-17,9,Math.PI*1.1,Math.PI*1.9);ctx.stroke();
-    // Thumb
-    ctx.fillStyle="#eda068";ctx.beginPath();ctx.ellipse(-36,5,12,17,-0.22,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle="#c07840";ctx.beginPath();ctx.ellipse(-37,0,7.5,12,-0.22,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle="#d9a080";ctx.beginPath();ctx.roundRect(-42,-7,9,12,3);ctx.fill();
-    ctx.fillStyle="#fdf5f0";ctx.beginPath();ctx.roundRect(-41,-6,7,9,2);ctx.fill();
-    // Skin creases
-    ctx.strokeStyle="rgba(140,60,20,0.30)";ctx.lineWidth=1.5;ctx.lineCap="round";
-    ctx.beginPath();ctx.moveTo(-24,4);ctx.quadraticCurveTo(0,0,24,6);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(-22,14);ctx.quadraticCurveTo(0,11,21,16);ctx.stroke();
-    // Hat (drawn in palm local coords)
+    ctx.rotate(-0.06 + stride * 0.05);
+
+    // main mass (back of a relaxed fist)
+    ctx.fillStyle = SKIN_D;  ctx.beginPath(); ctx.roundRect(-34, -30, 68, 60, 20); ctx.fill();
+    ctx.fillStyle = SKIN;    ctx.beginPath(); ctx.roundRect(-32, -30, 62, 55, 18); ctx.fill();
+    // soft top highlight
+    ctx.fillStyle = SKIN_HI; ctx.beginPath(); ctx.roundRect(-30, -30, 54, 15, [16, 16, 6, 6]); ctx.fill();
+
+    // curled ring & pinky tucked along the right side
+    ctx.strokeStyle = SKIN_D; ctx.lineCap = "round"; ctx.lineWidth = 13;
+    ctx.beginPath(); ctx.arc(20, -8, 13, Math.PI * 1.15, Math.PI * 1.95); ctx.stroke();
+    ctx.lineWidth = 11; ctx.beginPath(); ctx.arc(24, 8, 11, Math.PI * 1.1, Math.PI * 1.95); ctx.stroke();
+    ctx.strokeStyle = "rgba(150,80,40,0.30)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(8, -16); ctx.lineTo(30, -12); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10, 2); ctx.lineTo(32, 6); ctx.stroke();
+
+    // thumb wrapping across the lower-left front
+    ctx.fillStyle = SKIN_D; ctx.beginPath(); ctx.ellipse(-30, 9, 13, 17, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = SKIN;   ctx.beginPath(); ctx.ellipse(-31, 6, 9.5, 13, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.save(); ctx.translate(-37, -3); ctx.rotate(-0.55);
+    ctx.fillStyle = NAIL_D; ctx.beginPath(); ctx.roundRect(-5, -7, 10, 11, 3); ctx.fill();
+    ctx.fillStyle = NAIL;   ctx.beginPath(); ctx.roundRect(-4, -6, 8, 9, 2); ctx.fill();
+    ctx.restore();
+
+    // friendly eyes (gives the hand a face for its dialog)
+    const blink = (Math.floor(time / 8) % 24 === 0) ? 0.15 : 1;
+    const lookX = gameRunning ? 2.5 : 0;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.ellipse(-10, -2, 7, 8 * blink, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(8, -2, 7, 8 * blink, 0, 0, Math.PI * 2); ctx.fill();
+    if (blink > 0.5) {
+      ctx.fillStyle = "#2a2a2a";
+      ctx.beginPath(); ctx.arc(-10 + lookX, -1, 3.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(8 + lookX, -1, 3.4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(-11 + lookX, -2.5, 1.3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7 + lookX, -2.5, 1.3, 0, Math.PI * 2); ctx.fill();
+    }
+    // determined eyebrows
+    ctx.strokeStyle = SKIN_DD; ctx.lineWidth = 2.6; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(-16, -12); ctx.lineTo(-5, -10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(16, -12); ctx.lineTo(5, -10); ctx.stroke();
+
+    // hat (drawn in palm-local coords, sits on top)
     drawHat(ctx, hatId);
     ctx.restore();
 
-    const baseY = palmY + 26;
-    const indexSwing  =  stride * 0.54;
-    const middleSwing = -stride * 0.54;
-    drawFingerLeg(cx + 12, baseY, middleSwing, "#e8a060", "#b86830");
-    drawFingerLeg(cx - 12, baseY, indexSwing,  "#f0b070", "#c87840");
+    // Front leg (index finger) on top
+    drawFingerLeg(ctx, cx - 11, baseY, indexSwing, true);
+
+    ctx.restore();
+  };
+
+  // ── Speech bubble for in-game dialog ───────────────────────────────────────
+  const drawSpeechBubble = (ctx: CanvasRenderingContext2D, x: number, y: number, text: string, alpha: number) => {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.font = "bold 16px Arial";
+    const w = Math.min(300, ctx.measureText(text).width + 28);
+    const h = 36;
+    const bx = x - w / 2, by = y - h;
+    ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 12); ctx.fill();
+    // tail pointing down to the character
+    ctx.beginPath(); ctx.moveTo(x - 9, by + h - 1); ctx.lineTo(x + 9, by + h - 1); ctx.lineTo(x - 2, by + h + 13); ctx.closePath(); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#222"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, x, by + h / 2);
+    ctx.textBaseline = "alphabetic";
+    ctx.restore();
   };
 
   // ── Main game loop ─────────────────────────────────────────────────────────
@@ -812,9 +1002,17 @@ export default function Game() {
     window.addEventListener("resize", resize);
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); jump(); }
+      if (e.code === "Space" || e.code === "ArrowUp") {
+        e.preventDefault();
+        if (e.repeat) return; // ignore OS key-repeat so holding doesn't burn the double jump
+        jump();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); releaseJump(); }
     };
     document.addEventListener("keydown", onKey);
+    document.addEventListener("keyup", onKeyUp);
 
     const loop = () => {
       const st = stateRef.current;
@@ -835,12 +1033,44 @@ export default function Game() {
           levelComplete();
         }
 
-        // Physics
-        st.velocity += GRAVITY;
+        // Physics — variable jump height + snappy fall
+        let g = GRAVITY;
+        if (st.velocity < 0 && !st.jumpHeld) g *= LOW_JUMP_GRAVITY_MULT;
+        else if (st.velocity > 0) g *= FALL_GRAVITY_MULT;
+        st.velocity += g;
+        if (st.velocity > MAX_FALL) st.velocity = MAX_FALL;
         st.playerY += st.velocity;
-        if (st.playerY >= groundY) { st.playerY = groundY; st.velocity = 0; st.onGround = true; st.jumpsUsed = 0; }
-        else { st.onGround = false; }
+
+        const wasAir = !st.onGround;
+        if (st.playerY >= groundY) {
+          if (wasAir && st.velocity > 7) {
+            st.landImpact = 10;
+            st.shake = Math.max(st.shake, 4);
+            spawnDust(7, 9);
+          }
+          st.playerY = groundY; st.velocity = 0; st.onGround = true;
+          st.jumpsUsed = 0; st.coyoteTimer = COYOTE_FRAMES;
+        } else {
+          st.onGround = false;
+          if (st.coyoteTimer > 0) st.coyoteTimer--;
+        }
         if (st.playerY < 30) { st.playerY = 30; st.velocity = 1; }
+
+        // Jump buffer — fire a remembered jump the instant we touch down
+        if (st.jumpBuffer > 0) {
+          st.jumpBuffer--;
+          if (st.onGround) { doJump(false); st.jumpBuffer = 0; }
+        }
+        if (st.landImpact > 0) st.landImpact--;
+
+        // Dialog — periodic quirky one-liners while running
+        if (st.dialog && st.dialog.life > 0) st.dialog.life--;
+        st.dialogCooldown--;
+        if (st.dialogCooldown <= 0 && (!st.dialog || st.dialog.life <= 0)) {
+          showDialog(pick(RUN_QUIPS), 130);
+          st.dialogCooldown = 260 + Math.floor(Math.random() * 220);
+        }
+        if (st.shake > 0) { st.shake *= 0.86; if (st.shake < 0.4) st.shake = 0; }
 
         // Spawn
         st.spawnTimer++;
@@ -887,6 +1117,16 @@ export default function Game() {
       } else {
         st.time++;
         if (st.crashFlash > 0) st.crashFlash--;
+        if (st.dialog && st.dialog.life > 0) st.dialog.life--;
+        if (st.shake > 0) { st.shake *= 0.86; if (st.shake < 0.4) st.shake = 0; }
+        // Particles keep animating post-crash (gore + dust settle)
+        for (let i = st.particles.length - 1; i >= 0; i--) {
+          const p = st.particles[i];
+          p.x += p.vx; p.y += p.vy; p.vy += 0.22; p.life--;
+          if (p.rot !== undefined && p.rotV !== undefined) p.rot += p.rotV;
+          if (p.shape === "circle" && p.y >= roadY - 6) { p.y = roadY - 6; p.vy = 0; p.vx *= 0.7; }
+          if (p.life <= 0) st.particles.splice(i, 1);
+        }
         // Scroll puddles even when not running (post-crash)
         const scrollSpeed2 = BASE_SPEED * getLevelDef(st.currentLevel).speedMult;
         for (let i = st.bloodPuddles.length - 1; i >= 0; i--) {
@@ -900,6 +1140,12 @@ export default function Game() {
 
       // ── Draw ────────────────────────────────────────────────────────────────
       drawBackground(ctx, width, height, st.time, theme);
+
+      // Screen shake — applied to the foreground only (background already fills the canvas)
+      ctx.save();
+      if (st.shake > 0) {
+        ctx.translate((Math.random() - 0.5) * st.shake, (Math.random() - 0.5) * st.shake);
+      }
 
       // Blood puddles (behind obstacles and character)
       for (const bp of st.bloodPuddles) {
@@ -937,7 +1183,29 @@ export default function Game() {
 
       // Read hat from localStorage each frame so it updates live
       const hat = (localStorage.getItem("fingerRunnerHat") || "none") as HatId;
-      drawFinger(ctx, st.playerY, st.time, height, st.gameRunning, hat);
+      // Squash & stretch from vertical motion / landing impact
+      let stretchY = 1, stretchX = 1;
+      if (st.gameRunning && !st.onGround) {
+        stretchY = 1 + Math.max(-0.10, Math.min(0.16, -st.velocity * 0.011));
+        stretchX = 1 - (stretchY - 1) * 0.55;
+      }
+      if (st.landImpact > 0) {
+        const k = st.landImpact / 10;
+        stretchY = 1 - 0.26 * k;
+        stretchX = 1 + 0.26 * k;
+      }
+      drawFinger(ctx, st.playerY, st.time, height, st.gameRunning, hat, stretchX, stretchY);
+
+      // Dialog speech bubble above the character
+      if (st.dialog && st.dialog.life > 0) {
+        const d = st.dialog;
+        const fadeIn = Math.min(1, (d.maxLife - d.life) / 8);
+        const fadeOut = Math.min(1, d.life / 20);
+        const bubbleY = st.playerY - 26 + Math.sin(st.time * 0.1) * 2;
+        drawSpeechBubble(ctx, 185, bubbleY, d.text, Math.min(fadeIn, fadeOut));
+      }
+
+      ctx.restore(); // end screen shake
 
       // HUD
       ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 6;
@@ -997,6 +1265,7 @@ export default function Game() {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", resize);
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keyup", onKeyUp);
       stopMusic();
     };
   }, []);
@@ -1038,7 +1307,8 @@ export default function Game() {
 
   return (
     <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#87CEEB", touchAction:"none" }}>
-      <canvas ref={canvasRef} style={{ display:"block" }} onPointerDown={handleCanvasClick} />
+      <canvas ref={canvasRef} style={{ display:"block" }} onPointerDown={handleCanvasClick}
+        onPointerUp={() => releaseJump()} onPointerLeave={() => releaseJump()} onPointerCancel={() => releaseJump()} />
 
       {/* ── Start screen ── */}
       {screen === "start" && (
@@ -1046,8 +1316,10 @@ export default function Game() {
           <div style={{ fontSize:"4rem", fontWeight:"bold", color:"#ffd700", textShadow:"0 4px 10px rgba(0,0,0,0.6)", marginBottom:8, fontFamily:font }}>
             👆 FINGER RUNNER
           </div>
-          <p style={{ fontSize:"1.3rem", margin:"4px 0" }}>Your fingers escape out the car window!</p>
-          <p style={{ fontSize:"1.3rem", margin:"4px 0" }}>Tap or SPACE to jump • Clear 8 levels</p>
+          <p style={{ fontSize:"1.05rem", margin:"10px auto 6px", maxWidth:520, lineHeight:1.5, color:"#ffe9a8", fontStyle:"italic" }}>
+            {STORY_INTRO}
+          </p>
+          <p style={{ fontSize:"1.3rem", margin:"4px 0" }}>Tap / hold SPACE to jump • double-tap for a double jump • Clear 8 levels</p>
           <p style={{ fontSize:"1.1rem", margin:"4px 0", color:"#aef" }}>
             {HATS.filter(h=>h.unlockLevel<=getMaxLevel()&&h.id!=="none").map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked • reach new levels to earn more!
           </p>
@@ -1142,8 +1414,13 @@ export default function Game() {
             border:"2px solid rgba(255,215,0,0.3)" }}>
             <div style={{ fontSize:"3rem", marginBottom:8 }}>🎉</div>
             <h2 style={{ fontSize:"2.2rem", color:"#ffd700", margin:"0 0 6px 0", fontFamily:font }}>LEVEL COMPLETE!</h2>
-            <p style={{ fontSize:"1.2rem", color:"#adf", margin:"0 0 16px 0", fontFamily:font }}>
+            <p style={{ fontSize:"1.2rem", color:"#adf", margin:"0 0 10px 0", fontFamily:font }}>
               {getLevelDef(completedLevel).name}
+            </p>
+            <p style={{ fontSize:"1rem", color:"#ffe9a8", fontStyle:"italic", margin:"0 0 16px 0", lineHeight:1.4 }}>
+              {completedLevel < LEVELS.length
+                ? (LEVEL_STORY[completedLevel + 1] || "The road rolls on…")
+                : "Lefty & Middy made it home — knuckles weary, nails chipped, hearts full."}
             </p>
             <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:12, padding:"12px 20px", marginBottom:20 }}>
               <div style={{ fontSize:"1rem", color:"#aaa", fontFamily:font }}>Distance covered</div>
