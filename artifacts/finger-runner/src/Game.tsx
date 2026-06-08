@@ -6,7 +6,8 @@ type Theme = "suburb"|"city"|"highway"|"mountain"|"night";
 type HatId = "none"|"tophat"|"cap"|"crown"|"cowboy"|"viking";
 
 interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; }
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; }
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"; rot?: number; rotV?: number; }
+interface BloodPuddle { x: number; y: number; rx: number; ry: number; life: number; maxLife: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const GRAVITY = 0.70;
@@ -64,6 +65,8 @@ export default function Game() {
     jumpsUsed: 0,
     obstacles: [] as Obstacle[],
     particles: [] as Particle[],
+    bloodPuddles: [] as BloodPuddle[],
+    crashFlash: 0,
   });
   const audioRef = useRef<{
     ctx: AudioContext | null; enabled: boolean;
@@ -146,17 +149,34 @@ export default function Game() {
   };
   const playCrashSound = () => {
     const a = audioRef.current; if (!a.enabled || !a.ctx) return;
-    const ctx = a.ctx;
-    const noise = ctx.createBufferSource(); const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.8, ctx.sampleRate);
-    const data = buffer.getChannelData(0); for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    noise.buffer = buffer; const filter = ctx.createBiquadFilter(); filter.type = "lowpass"; filter.frequency.value = 800;
-    const gain = ctx.createGain(); const t = ctx.currentTime;
-    gain.gain.setValueAtTime(0.9, t); gain.gain.linearRampToValueAtTime(0.001, t + 0.75);
-    noise.connect(filter); filter.connect(gain); gain.connect(ctx.destination); noise.start(t);
+    const ctx = a.ctx; const t = ctx.currentTime;
+    // Wet bone-crack: sharp noise burst
+    const crackBuf = ctx.createBuffer(1, ctx.sampleRate * 0.12, ctx.sampleRate);
+    const crackData = crackBuf.getChannelData(0);
+    for (let i = 0; i < crackData.length; i++) crackData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / crackData.length, 3);
+    const crack = ctx.createBufferSource(); crack.buffer = crackBuf;
+    const crackFilter = ctx.createBiquadFilter(); crackFilter.type = "highpass"; crackFilter.frequency.value = 1800;
+    const crackGain = ctx.createGain(); crackGain.gain.setValueAtTime(2.2, t); crackGain.gain.linearRampToValueAtTime(0, t + 0.12);
+    crack.connect(crackFilter); crackFilter.connect(crackGain); crackGain.connect(ctx.destination); crack.start(t);
+    // Meaty splat: low-freq noise
+    const splatBuf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+    const splatData = splatBuf.getChannelData(0);
+    for (let i = 0; i < splatData.length; i++) splatData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / splatData.length, 1.5);
+    const splat = ctx.createBufferSource(); splat.buffer = splatBuf;
+    const splatFilter = ctx.createBiquadFilter(); splatFilter.type = "lowpass"; splatFilter.frequency.value = 600;
+    const splatGain = ctx.createGain(); splatGain.gain.setValueAtTime(1.6, t + 0.04); splatGain.gain.linearRampToValueAtTime(0, t + 0.55);
+    splat.connect(splatFilter); splatFilter.connect(splatGain); splatGain.connect(ctx.destination); splat.start(t + 0.04);
+    // Thuddy sub-boom
     const boom = ctx.createOscillator(); const boomGain = ctx.createGain();
-    boom.type = "sine"; boom.frequency.value = 65; boomGain.gain.value = 1.2;
-    boomGain.gain.linearRampToValueAtTime(0.001, t + 1.1);
-    boom.connect(boomGain); boomGain.connect(ctx.destination); boom.start(t); boom.stop(t + 1.2);
+    boom.type = "sine"; boom.frequency.setValueAtTime(110, t); boom.frequency.linearRampToValueAtTime(30, t + 0.4);
+    boomGain.gain.setValueAtTime(1.4, t); boomGain.gain.linearRampToValueAtTime(0, t + 0.9);
+    boom.connect(boomGain); boomGain.connect(ctx.destination); boom.start(t); boom.stop(t + 0.95);
+    // Agonised yelp: descending oscillator
+    const yelp = ctx.createOscillator(); const yelpGain = ctx.createGain(); const yelpFilter = ctx.createBiquadFilter();
+    yelp.type = "sawtooth"; yelpFilter.type = "lowpass"; yelpFilter.frequency.value = 900;
+    yelp.frequency.setValueAtTime(520, t + 0.06); yelp.frequency.linearRampToValueAtTime(180, t + 0.45);
+    yelpGain.gain.setValueAtTime(0.5, t + 0.06); yelpGain.gain.linearRampToValueAtTime(0, t + 0.5);
+    yelp.connect(yelpFilter); yelpFilter.connect(yelpGain); yelpGain.connect(ctx.destination); yelp.start(t + 0.06); yelp.stop(t + 0.55);
   };
   const playLevelUpSound = () => {
     const a = audioRef.current; if (!a.enabled) return;
@@ -184,22 +204,65 @@ export default function Game() {
   };
 
   // ── Game events ────────────────────────────────────────────────────────────
-  const createCrashExplosion = (x: number, y: number) => {
+  const createCrashExplosion = (x: number, y: number, roadY: number) => {
     const st = stateRef.current;
-    for (let i = 0; i < 35; i++) {
-      const angle = Math.random() * Math.PI * 2; const speed = 2.2 + Math.random() * 5.5;
-      st.particles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed-1.8,
-        life: 38+Math.random()*25, size: 6+Math.random()*7,
-        color: ["#f1c27d","#c8946f","#ff6b6b","#888"][Math.floor(Math.random()*4)] });
+    const bloodColors = ["#8B0000","#CC0000","#DC143C","#B22222","#FF0000","#990000"];
+    const boneColors  = ["#FFFACD","#F5F5DC","#E8E8D0","#D8D0C0"];
+
+    // Blood droplets — fly wide, arc down
+    for (let i = 0; i < 55; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1.5 + Math.random() * 8;
+      st.particles.push({
+        x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2.5 - Math.random()*3,
+        life: 55 + Math.random()*35, size: 4 + Math.random()*9,
+        color: bloodColors[Math.floor(Math.random()*bloodColors.length)],
+        shape: "circle",
+      });
+    }
+
+    // Bone shards — fast, tumbling
+    for (let i = 0; i < 12; i++) {
+      const angle = -Math.PI/2 + (Math.random()-0.5)*Math.PI*1.4;
+      const speed = 4 + Math.random() * 7;
+      st.particles.push({
+        x, y: y - 10 + Math.random()*20,
+        vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 3,
+        life: 45 + Math.random()*25, size: 5 + Math.random()*7,
+        color: boneColors[Math.floor(Math.random()*boneColors.length)],
+        shape: "bone", rot: Math.random()*Math.PI*2, rotV: (Math.random()-0.5)*0.4,
+      });
+    }
+
+    // Skin-chunk debris
+    for (let i = 0; i < 10; i++) {
+      const angle = Math.random() * Math.PI * 2; const speed = 2 + Math.random()*5;
+      st.particles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
+        life: 35+Math.random()*20, size: 8+Math.random()*10,
+        color: ["#c8946f","#d4a07a","#b8804a"][Math.floor(Math.random()*3)], shape:"rect" });
+    }
+
+    // Blood puddle on the road
+    st.bloodPuddles.push({ x: x + (Math.random()-0.5)*60, y: roadY - 4,
+      rx: 28 + Math.random()*28, ry: 8 + Math.random()*8,
+      life: 420, maxLife: 420 });
+    // Smaller satellite puddles
+    for (let k = 0; k < 3; k++) {
+      st.bloodPuddles.push({ x: x + (Math.random()-0.5)*120, y: roadY - 3,
+        rx: 8 + Math.random()*14, ry: 3 + Math.random()*5,
+        life: 360, maxLife: 360 });
     }
   };
 
   const crash = () => {
     const st = stateRef.current;
     if (!st.gameRunning) return;
+    const canvas = canvasRef.current;
+    const roadY = canvas ? canvas.height - ROAD_SURFACE_OFFSET : 400;
     st.gameRunning = false;
+    st.crashFlash = 28;
     playCrashSound();
-    createCrashExplosion(185, st.playerY + 30);
+    createCrashExplosion(185, st.playerY + 30, roadY);
     if (st.totalScore > st.bestScore) {
       st.bestScore = Math.floor(st.totalScore);
       localStorage.setItem("fingerRunnerBest", String(st.bestScore));
@@ -253,6 +316,8 @@ export default function Game() {
     st.levelScore = 0;
     st.obstacles = [];
     st.particles = [];
+    st.bloodPuddles = [];
+    st.crashFlash = 0;
     st.playerY = groundY;
     st.velocity = 0;
     st.onGround = true;
@@ -803,22 +868,70 @@ export default function Game() {
         // Particles
         for (let i = st.particles.length - 1; i >= 0; i--) {
           const p = st.particles[i];
-          p.x += p.vx; p.y += p.vy; p.vy += 0.18; p.life--;
+          p.x += p.vx; p.y += p.vy; p.vy += 0.22; p.life--;
+          if (p.rot !== undefined && p.rotV !== undefined) p.rot += p.rotV;
+          // Blood droplets freeze on the road surface
+          if (p.shape === "circle" && p.y >= roadY - 6) { p.y = roadY - 6; p.vy = 0; p.vx *= 0.7; }
           if (p.life <= 0) st.particles.splice(i, 1);
         }
+        // Blood puddles — scroll with the world, slow fade
+        const scrollSpeed = BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001;
+        for (let i = st.bloodPuddles.length - 1; i >= 0; i--) {
+          const bp = st.bloodPuddles[i];
+          bp.x -= scrollSpeed;
+          bp.life--;
+          if (bp.life <= 0 || bp.x < -200) st.bloodPuddles.splice(i, 1);
+        }
+        // Crash flash decay
+        if (st.crashFlash > 0) st.crashFlash--;
       } else {
         st.time++;
+        if (st.crashFlash > 0) st.crashFlash--;
+        // Scroll puddles even when not running (post-crash)
+        const scrollSpeed2 = BASE_SPEED * getLevelDef(st.currentLevel).speedMult;
+        for (let i = st.bloodPuddles.length - 1; i >= 0; i--) {
+          const bp = st.bloodPuddles[i];
+          bp.x -= scrollSpeed2 * 0.2;
+          bp.life--;
+          if (bp.life <= 0 || bp.x < -200) st.bloodPuddles.splice(i, 1);
+        }
         if (!st.gameRunning) st.playerY = getGroundY(height);
       }
 
       // ── Draw ────────────────────────────────────────────────────────────────
       drawBackground(ctx, width, height, st.time, theme);
+
+      // Blood puddles (behind obstacles and character)
+      for (const bp of st.bloodPuddles) {
+        const alpha = Math.min(0.82, (bp.life / bp.maxLife) * 0.82);
+        ctx.globalAlpha = alpha;
+        const pg = ctx.createRadialGradient(bp.x, bp.y, 0, bp.x, bp.y, bp.rx);
+        pg.addColorStop(0, "#8B0000"); pg.addColorStop(0.6, "#6B0000"); pg.addColorStop(1, "rgba(50,0,0,0)");
+        ctx.fillStyle = pg;
+        ctx.beginPath(); ctx.ellipse(bp.x, bp.y, bp.rx, bp.ry, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
       for (const o of st.obstacles) drawObstacle(ctx, o, height);
 
+      // Particles — drawn by shape
       ctx.shadowBlur = 0;
       for (const p of st.particles) {
-        ctx.globalAlpha = Math.max(0.15, p.life / 45);
-        ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.size || 6, p.size || 6);
+        const alpha = Math.max(0.08, p.life / 70);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        if (p.shape === "circle") {
+          ctx.beginPath(); ctx.arc(p.x, p.y, (p.size||6)/2, 0, Math.PI*2); ctx.fill();
+        } else if (p.shape === "bone") {
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot || 0);
+          const r = (p.size||6)/2;
+          ctx.fillRect(-r, -r*0.35, r*2, r*0.7);
+          ctx.beginPath(); ctx.arc(-r, 0, r*0.5, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc( r, 0, r*0.5, 0, Math.PI*2); ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.fillRect(p.x, p.y, p.size||6, p.size||6);
+        }
       }
       ctx.globalAlpha = 1;
 
@@ -865,6 +978,13 @@ export default function Game() {
         }
         ctx.fillStyle = "#ddd"; ctx.font = "20px Arial";
         ctx.fillText("Tap or press SPACE to retry this level", width/2, height/2 + 110);
+      }
+
+      // Red screen flash on crash
+      if (st.crashFlash > 0) {
+        const flashAlpha = (st.crashFlash / 28) * 0.55;
+        ctx.fillStyle = `rgba(180,0,0,${flashAlpha})`;
+        ctx.fillRect(0, 0, width, height);
       }
 
       rafRef.current = requestAnimationFrame(loop);
