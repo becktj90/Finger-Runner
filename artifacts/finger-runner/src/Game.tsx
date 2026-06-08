@@ -18,9 +18,9 @@ interface Particle {
   color: string;
 }
 
-const GRAVITY = 0.42;
-const JUMP_FORCE = -12.5;
-const BASE_SPEED = 3.5;
+const GRAVITY = 0.38;
+const JUMP_FORCE = -11.5;
+const BASE_SPEED = 2.8;
 
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -203,8 +203,8 @@ export default function Game() {
 
   const spawnObstacle = (width: number, height: number) => {
     const st = stateRef.current;
-    // Wider gap = easier
-    const gapSize = Math.max(200, 310 - Math.floor(st.score / 10));
+    // Very wide gap for easy play, shrinks slowly
+    const gapSize = Math.max(240, 380 - Math.floor(st.score / 12));
     const minTop = 75;
     const maxTop = height - gapSize - 155;
     const topHeight = minTop + Math.random() * (maxTop - minTop);
@@ -329,7 +329,7 @@ export default function Game() {
     }
   };
 
-  // Draw a running "finger person" - two fingers alternating like legs
+  // Draw a hand viewed from the side — palm visible, two fingers as running legs pointing downward
   const drawFinger = (
     ctx: CanvasRenderingContext2D,
     playerY: number,
@@ -337,117 +337,191 @@ export default function Game() {
     height: number,
     gameRunning: boolean,
   ) => {
-    const cx = 178; // center x of the hand
+    const cx = 185;
 
-    // Running stride cycle — only animate when running
-    const strideSpeed = gameRunning ? 0.22 : 0.06;
-    const strideAmp = gameRunning ? 28 : 6;
-    const stride = Math.sin(time * strideSpeed);
+    const strideSpeed = gameRunning ? 0.24 : 0.05;
+    const stride = Math.sin(time * strideSpeed); // -1 to 1
+    const bodyBob = gameRunning ? Math.abs(stride) * -5 : Math.sin(time * 0.05) * 2;
+    const palmY = playerY + bodyBob;
 
-    // Body bob: whole hand bobs up/down with stride
-    const bodyBob = gameRunning ? Math.abs(Math.sin(time * strideSpeed)) * -4 : Math.sin(time * 0.06) * 2;
-    const py = playerY + bodyBob;
-
-    // Shadow
-    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    // Shadow on road
+    ctx.fillStyle = "rgba(0,0,0,0.20)";
     ctx.beginPath();
-    ctx.ellipse(cx, height - 78, 36, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, height - 78, 38, 8, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Palm / knuckle base
-    ctx.fillStyle = "#e8a070";
-    ctx.beginPath();
-    ctx.roundRect(cx - 22, py + 20, 44, 28, 10);
-    ctx.fill();
-    // Palm shading
-    ctx.fillStyle = "#d48a60";
-    ctx.beginPath();
-    ctx.roundRect(cx - 22, py + 36, 44, 12, [0, 0, 10, 10]);
-    ctx.fill();
-
-    // Wrist / arm connecting down to car window
-    ctx.strokeStyle = "#e0b38a";
-    ctx.lineWidth = 28;
+    // Wrist/arm connecting palm down to car window
+    ctx.strokeStyle = "#d4916a";
+    ctx.lineWidth = 26;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(cx, py + 40);
-    ctx.lineTo(cx, height - 80);
+    ctx.moveTo(cx + 4, palmY + 28);
+    ctx.bezierCurveTo(cx + 6, palmY + 60, cx + 2, height - 110, cx, height - 80);
     ctx.stroke();
-    // Wrist highlight
-    ctx.strokeStyle = "#f0c090";
+    ctx.strokeStyle = "#eab082";
     ctx.lineWidth = 12;
     ctx.beginPath();
-    ctx.moveTo(cx - 4, py + 42);
-    ctx.lineTo(cx - 4, height - 82);
+    ctx.moveTo(cx, palmY + 30);
+    ctx.bezierCurveTo(cx + 2, palmY + 58, cx - 2, height - 112, cx - 3, height - 82);
     ctx.stroke();
 
-    // Helper to draw one finger leg
-    const drawLeg = (
-      offsetX: number,
-      swingAngle: number, // radians, forward = negative
-      color: string,
-      tipColor: string,
-      nailColor: string,
+    // ---- Palm (body of the hand-man, viewed from the side) ----
+    // Main palm block — wider than tall, slightly tilted
+    ctx.save();
+    ctx.translate(cx, palmY);
+    ctx.rotate(-0.12); // slight forward lean
+
+    // Back-of-hand (top surface)
+    ctx.fillStyle = "#c8784a";
+    ctx.beginPath();
+    ctx.roundRect(-30, -22, 60, 50, 14);
+    ctx.fill();
+
+    // Palm face (lighter)
+    ctx.fillStyle = "#e8a070";
+    ctx.beginPath();
+    ctx.roundRect(-28, -20, 56, 46, 12);
+    ctx.fill();
+
+    // Knuckle ridge across top
+    ctx.fillStyle = "#d48a58";
+    ctx.beginPath();
+    ctx.roundRect(-26, -22, 52, 14, [12, 12, 0, 0]);
+    ctx.fill();
+
+    // Knuckle bumps (3 visible knuckles)
+    for (let k = -1; k <= 1; k++) {
+      ctx.fillStyle = "#c87848";
+      ctx.beginPath();
+      ctx.ellipse(k * 17, -18, 9, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#dda060";
+      ctx.beginPath();
+      ctx.ellipse(k * 17 - 1, -21, 5, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Curled fingers on back (ring + pinky shown as small arcs peeking above)
+    ctx.strokeStyle = "#c87848";
+    ctx.lineWidth = 9;
+    ctx.lineCap = "round";
+    // Ring finger curl
+    ctx.beginPath();
+    ctx.arc(18, -16, 10, Math.PI * 1.1, Math.PI * 1.9, false);
+    ctx.stroke();
+    // Pinky curl
+    ctx.beginPath();
+    ctx.arc(28, -14, 8, Math.PI * 1.1, Math.PI * 1.85, false);
+    ctx.stroke();
+
+    // Thumb stub on the left side
+    ctx.fillStyle = "#e8a070";
+    ctx.beginPath();
+    ctx.ellipse(-32, 8, 10, 14, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#d48a58";
+    ctx.beginPath();
+    ctx.ellipse(-33, 4, 6, 10, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // Thumbnail
+    ctx.fillStyle = "#fff8f0";
+    ctx.beginPath();
+    ctx.ellipse(-33, 2, 4, 6, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Skin crease lines on palm
+    ctx.strokeStyle = "rgba(180,100,60,0.4)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-20, 5);
+    ctx.quadraticCurveTo(0, 2, 20, 8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-18, 15);
+    ctx.quadraticCurveTo(0, 12, 18, 16);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // ---- Finger Legs (index + middle, extending downward from bottom of palm) ----
+    const legLen = 58;
+    const baseY = palmY + 26;
+
+    // stride > 0 → index forward (right), middle back (left)
+    // stride < 0 → index back, middle forward
+    const indexSwing = stride * 0.48;   // angle from vertical (+ = forward/right)
+    const middleSwing = -stride * 0.48; // opposite phase
+
+    const drawFingerLeg = (
+      baseX: number,
+      swing: number,
+      mainCol: string,
+      darkCol: string,
+      nailCol: string,
     ) => {
-      const fingerLen = 62;
-      const kx = cx + offsetX;
-      const ky = py + 22; // knuckle start
+      const tipX = baseX + Math.sin(swing) * legLen;
+      const tipY = baseY + Math.cos(swing) * legLen;
+      // Mid-knuckle
+      const mk = 0.55;
+      const midX = baseX + Math.sin(swing * mk) * legLen * mk;
+      const midY = baseY + Math.cos(swing * mk) * legLen * mk;
 
-      // Angle: swing around base
-      const tipX = kx + Math.sin(swingAngle) * fingerLen;
-      const tipY = ky - Math.cos(swingAngle) * fingerLen;
-
-      // Mid point for curve
-      const midX = kx + Math.sin(swingAngle * 0.5) * fingerLen * 0.55;
-      const midY = ky - Math.cos(swingAngle * 0.5) * fingerLen * 0.55;
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 15;
+      // Finger shaft
+      ctx.strokeStyle = mainCol;
+      ctx.lineWidth = 16;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.beginPath();
-      ctx.moveTo(kx, ky);
+      ctx.moveTo(baseX, baseY);
       ctx.quadraticCurveTo(midX, midY, tipX, tipY);
       ctx.stroke();
 
-      // Fingertip ball
-      ctx.fillStyle = tipColor;
+      // Knuckle bump at mid-finger
+      ctx.fillStyle = darkCol;
       ctx.beginPath();
-      ctx.arc(tipX, tipY, 11, 0, Math.PI * 2);
+      ctx.arc(midX, midY, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = mainCol;
+      ctx.beginPath();
+      ctx.arc(midX, midY, 6, 0, Math.PI * 2);
       ctx.fill();
 
-      // Nail
-      ctx.fillStyle = nailColor;
+      // Fingertip pad
+      ctx.fillStyle = darkCol;
       ctx.beginPath();
-      ctx.ellipse(tipX, tipY - 5, 5, 4, Math.sin(swingAngle) * 0.3, 0, Math.PI * 2);
+      ctx.arc(tipX, tipY, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f5b890";
+      ctx.beginPath();
+      ctx.arc(tipX - 1, tipY - 1, 7, 0, Math.PI * 2);
       ctx.fill();
 
-      // Knuckle bump at base
-      ctx.fillStyle = "#d48a60";
+      // Nail — perpendicular to finger direction
+      const nailAngle = Math.atan2(tipY - midY, tipX - midX) - Math.PI / 2;
+      ctx.fillStyle = nailCol;
+      ctx.save();
+      ctx.translate(tipX, tipY - 4);
+      ctx.rotate(nailAngle);
       ctx.beginPath();
-      ctx.arc(kx, ky, 8, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, 5, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Knuckle bump at base (where finger meets palm)
+      ctx.fillStyle = "#c87848";
+      ctx.beginPath();
+      ctx.arc(baseX, baseY, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#e8a070";
+      ctx.beginPath();
+      ctx.arc(baseX - 1, baseY - 1, 6, 0, Math.PI * 2);
       ctx.fill();
     };
 
-    // Left finger (index): forward when stride > 0
-    const leftAngle = -stride * 0.52; // swings forward (negative) and back
-    // Right finger (middle): opposite phase
-    const rightAngle = stride * 0.52;
-
-    drawLeg(-11, leftAngle, "#f0c090", "#e89a70", "#fff8f5");
-    drawLeg(+13, rightAngle, "#ebb080", "#dd9060", "#fff8f5");
-
-    // Knuckle line details on palm
-    ctx.strokeStyle = "#c07840";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx - 18, py + 28);
-    ctx.lineTo(cx - 6, py + 26);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx + 6, py + 28);
-    ctx.lineTo(cx + 18, py + 26);
-    ctx.stroke();
+    // Index finger (left base, forward phase)
+    drawFingerLeg(cx - 10, indexSwing, "#f0b880", "#d48a58", "#fff0e8");
+    // Middle finger (right base, opposite phase)
+    drawFingerLeg(cx + 10, middleSwing, "#e8a870", "#c87848", "#fff0e8");
   };
 
   const drawObstacle = (ctx: CanvasRenderingContext2D, o: Obstacle, height: number) => {
@@ -529,8 +603,8 @@ export default function Game() {
         if (st.playerY < 35) { st.playerY = 35; st.velocity = 1.8; }
 
         st.spawnTimer++;
-        // Slower spawn rate = easier
-        const spawnRate = Math.max(55, 75 - Math.floor(st.score / 15));
+        // Longer gap between obstacles = easier
+        const spawnRate = Math.max(70, 95 - Math.floor(st.score / 18));
         if (st.spawnTimer > spawnRate) {
           spawnObstacle(width, height);
           st.spawnTimer = 0;
