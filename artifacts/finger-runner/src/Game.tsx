@@ -22,9 +22,9 @@ interface Particle {
   color: string;
 }
 
-const GRAVITY = 0.92;
-const JUMP_FORCE = -17.5;
-const BASE_SPEED = 3.0;
+const GRAVITY = 0.88;
+const JUMP_FORCE = -18.5;
+const BASE_SPEED = 2.0;
 
 // playerY is the palm center; finger tips reach ~90px below palm
 const FINGER_TIP_OFFSET = 90;
@@ -277,7 +277,8 @@ export default function Game() {
     const st = stateRef.current;
     if (!st.gameRunning) return;
     // Only jump from ground (or allow a single mid-air re-jump when close to ground)
-    if (!st.onGround) return;
+    if (!st.onGround && st.jumpsUsed >= 2) return;
+    st.jumpsUsed = (st.jumpsUsed || 0) + 1;
     st.velocity = JUMP_FORCE;
     st.onGround = false;
     playJumpSound();
@@ -305,6 +306,7 @@ export default function Game() {
     st.playerY = groundY;
     st.velocity = 0;
     st.onGround = true;
+    st.jumpsUsed = 0;
     st.spawnTimer = 0;
     st.time = 0;
     setScreen("playing");
@@ -895,28 +897,29 @@ export default function Game() {
           st.playerY = groundY;
           st.velocity = 0;
           st.onGround = true;
+          st.jumpsUsed = 0;
         } else {
           st.onGround = false;
         }
         if (st.playerY < 30) { st.playerY = 30; st.velocity = 1; }
 
-        // Spawn
+        // Spawn — starts very slow, ramps up gradually
         st.spawnTimer++;
-        const spawnRate = Math.max(70, 100 - Math.floor(st.score / 15));
+        const spawnRate = Math.max(90, 220 - Math.floor(st.score / 6));
         if (st.spawnTimer > spawnRate) {
           spawnObstacle(width);
           st.spawnTimer = 0;
         }
 
-        // Update obstacles + collision
-        const fingerLeft  = 163;
-        const fingerRight = 207;
-        const fingerTipY  = st.playerY + FINGER_TIP_OFFSET;
+        // Update obstacles + collision (hitbox shrunk for fairness)
+        const fingerLeft  = 168;
+        const fingerRight = 202;
+        const fingerTipY  = st.playerY + FINGER_TIP_OFFSET - 8;
 
         let didCrash = false;
         for (let i = st.obstacles.length - 1; i >= 0; i--) {
           const o = st.obstacles[i];
-          o.x -= BASE_SPEED + st.score * 0.004;
+          o.x -= BASE_SPEED + st.score * 0.0018;
 
           if (!didCrash) {
             const obsLeft  = o.x;
