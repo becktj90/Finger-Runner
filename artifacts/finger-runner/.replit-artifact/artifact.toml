@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Finger Runner"
+version = "1.0.0"
+id = "artifacts/finger-runner"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20765
+
+[services.development]
+run = "pnpm --filter @workspace/finger-runner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/finger-runner", "run", "build" ]
+publicDir = "artifacts/finger-runner/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20765"
+BASE_PATH = "/"
