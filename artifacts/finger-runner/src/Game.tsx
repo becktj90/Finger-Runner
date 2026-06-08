@@ -26,15 +26,44 @@ const COIN_R = 13;
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
 // ── Level definitions ─────────────────────────────────────────────────────────
+// Obstacle dimensions, grouped by jump difficulty (height = how much air you need).
+//   low:  cat 42, dog 46, cone 56            — easy hops
+//   mid:  hydrant 58, newsbox 60, gnome 62, trashcan 66
+//   tall: mailbox 68, bicycle 68, stopsign 88 — need a committed hold-jump
+// A full hold-jump clears ~228px, so even the stopsign stays fair.
+const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
+  cat:      { w:28, h:42 },
+  dog:      { w:44, h:46 },
+  cone:     { w:32, h:56 },
+  hydrant:  { w:34, h:58 },
+  newsbox:  { w:36, h:60 },
+  gnome:    { w:30, h:62 },
+  trashcan: { w:36, h:66 },
+  mailbox:  { w:36, h:68 },
+  bicycle:  { w:46, h:68 },
+  stopsign: { w:22, h:88 },
+};
+
+// Per-level obstacle pools. Repeated entries bias the random pick, so the mix
+// escalates: early levels are short, friendly hops; later levels lean tall and
+// dense, with the stopsign showing up more often as the finale approaches.
 const LEVELS = [
-  { num:1, name:"Neighborhood Cruise",  target:500,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:130 },
-  { num:2, name:"Shopping District",    target:600,  theme:"suburb"   as Theme, speedMult:1.25, minSpawn:120 },
-  { num:3, name:"Downtown",             target:650,  theme:"city"     as Theme, speedMult:1.5,  minSpawn:110 },
-  { num:4, name:"City Center",          target:700,  theme:"city"     as Theme, speedMult:1.8,  minSpawn:100 },
-  { num:5, name:"Highway On-Ramp",      target:750,  theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90  },
-  { num:6, name:"Open Highway",         target:800,  theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80  },
-  { num:7, name:"Mountain Pass",        target:900,  theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70  },
-  { num:8, name:"Night Drive",          target:1000, theme:"night"    as Theme, speedMult:3.6,  minSpawn:60  },
+  { num:1, name:"Neighborhood Cruise",  target:500,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0,
+    obs:["cat","dog","cone","cat","dog"] as ObstacleType[] },
+  { num:2, name:"Shopping District",    target:600,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0,
+    obs:["cat","dog","cone","hydrant","trashcan","cone"] as ObstacleType[] },
+  { num:3, name:"Downtown",             target:650,  theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6,
+    obs:["dog","cone","hydrant","newsbox","gnome","trashcan"] as ObstacleType[] },
+  { num:4, name:"City Center",          target:700,  theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2,
+    obs:["cone","hydrant","newsbox","gnome","trashcan","mailbox"] as ObstacleType[] },
+  { num:5, name:"Highway On-Ramp",      target:750,  theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8,
+    obs:["hydrant","newsbox","gnome","trashcan","mailbox","bicycle"] as ObstacleType[] },
+  { num:6, name:"Open Highway",         target:800,  theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4,
+    obs:["newsbox","gnome","trashcan","mailbox","bicycle","stopsign"] as ObstacleType[] },
+  { num:7, name:"Mountain Pass",        target:900,  theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0,
+    obs:["gnome","trashcan","mailbox","bicycle","stopsign","stopsign"] as ObstacleType[] },
+  { num:8, name:"Night Drive",          target:1000, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
+    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
@@ -269,16 +298,11 @@ export default function Game() {
   };
 
   // ── Obstacles ──────────────────────────────────────────────────────────────
-  const OBSTACLE_TYPES: { type: ObstacleType; w: number; h: number }[] = [
-    { type:"mailbox",  w:36, h:68 }, { type:"hydrant",  w:34, h:58 },
-    { type:"stopsign", w:22, h:88 }, { type:"trashcan", w:36, h:66 },
-    { type:"dog",      w:44, h:46 }, { type:"cat",      w:28, h:42 },
-    { type:"bicycle",  w:46, h:68 }, { type:"gnome",    w:30, h:62 },
-    { type:"cone",     w:32, h:56 }, { type:"newsbox",  w:36, h:60 },
-  ];
   const spawnObstacle = (width: number) => {
-    const pick = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
-    stateRef.current.obstacles.push({ x: width + 80, obsWidth: pick.w, obsHeight: pick.h, type: pick.type, passed: false });
+    const pool = getLevelDef(stateRef.current.currentLevel).obs;
+    const type = pool[Math.floor(Math.random() * pool.length)];
+    const dim = OBSTACLE_DIMS[type];
+    stateRef.current.obstacles.push({ x: width + 80, obsWidth: dim.w, obsHeight: dim.h, type, passed: false });
   };
 
   // ── Game events ────────────────────────────────────────────────────────────
@@ -1204,7 +1228,7 @@ export default function Game() {
 
         // Spawn
         st.spawnTimer++;
-        const spawnRate = Math.max(lvlDef.minSpawn, 220 - Math.floor(st.levelScore / 6));
+        const spawnRate = Math.max(lvlDef.minSpawn, 220 - Math.floor(st.levelScore / lvlDef.ramp));
         if (st.spawnTimer > spawnRate) { spawnObstacle(width); st.spawnTimer = 0; }
 
         // Spawn collectible coins — single coin or a short row, at a few heights
