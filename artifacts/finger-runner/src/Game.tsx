@@ -119,6 +119,29 @@ function getEquippedHat(): HatId { return (localStorage.getItem("fingerRunnerHat
 function setEquippedHat(id: HatId) { localStorage.setItem("fingerRunnerHat", id); }
 function getCoins(): number { return parseInt(localStorage.getItem("fingerRunnerCoins") || "0"); }
 function setCoinsLS(n: number) { localStorage.setItem("fingerRunnerCoins", String(Math.max(0, Math.floor(n)))); }
+
+// ── Per-level best scores ──────────────────────────────────────────────────────
+function getLevelBest(levelNum: number): number {
+  return parseInt(localStorage.getItem(`fingerRunnerBest_${levelNum}`) || "0");
+}
+function saveLevelBest(levelNum: number, score: number) {
+  const prev = getLevelBest(levelNum);
+  if (score > prev) localStorage.setItem(`fingerRunnerBest_${levelNum}`, String(Math.floor(score)));
+}
+// Returns null (no attempt), "bronze", "silver", or "gold"
+// Bronze: best >= 33% of target  Silver: best >= 67%  Gold: completed (best >= 100%)
+type Medal = "bronze" | "silver" | "gold";
+function getMedal(levelNum: number): Medal | null {
+  const best = getLevelBest(levelNum);
+  if (best === 0) return null;
+  const target = getLevelDef(levelNum).target;
+  if (best >= target) return "gold";
+  if (best >= target * 0.67) return "silver";
+  if (best >= target * 0.33) return "bronze";
+  return null;
+}
+const MEDAL_EMOJI: Record<Medal, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
+const MEDAL_COLOR: Record<Medal, string> = { bronze: "#cd7f32", silver: "#c0c0c0", gold: "#ffd700" };
 function getOwnedOutfits(): HatId[] {
   try { const v = JSON.parse(localStorage.getItem("fingerRunnerOutfits") || "[]"); return Array.isArray(v) ? (v as HatId[]) : []; }
   catch { return []; }
@@ -179,6 +202,9 @@ export default function Game() {
   const [ownedOutfits, setOwnedState] = useState<HatId[]>(getOwnedOutfits());
   const [completedLevel, setCompletedLevel] = useState(0);
   const [unlockedHat, setUnlockedHat] = useState<typeof HATS[0] | null>(null);
+  const [levelBests, setLevelBests] = useState<number[]>(() => LEVELS.map(lv => getLevelBest(lv.num)));
+  const [completedLevelPrevBest, setCompletedLevelPrevBest] = useState(0);
+  const [completedLevelMedal, setCompletedLevelMedal] = useState<Medal | null>(null);
 
   // ── Audio ──────────────────────────────────────────────────────────────────
   const initAudio = () => {
@@ -372,6 +398,8 @@ export default function Game() {
       st.bestScore = Math.floor(st.totalScore);
       localStorage.setItem("fingerRunnerBest", String(st.bestScore));
     }
+    saveLevelBest(st.currentLevel, st.levelScore);
+    setLevelBests(LEVELS.map(lv => getLevelBest(lv.num)));
     stopMusic();
     setCoinBalanceState(st.coinBalance);
     setTimeout(() => { if (!stateRef.current.gameRunning && audioRef.current.enabled) startMusic(false); }, 600);
@@ -389,6 +417,12 @@ export default function Game() {
     const lvl = st.currentLevel;
     const newMax = Math.max(getMaxLevel(), lvl + 1);
     setMaxLevel(newMax); setMaxLevelState(newMax);
+    // Save per-level best before reading previous best for the complete screen
+    const prevBest = getLevelBest(lvl);
+    setCompletedLevelPrevBest(prevBest);
+    saveLevelBest(lvl, st.levelScore);
+    setLevelBests(LEVELS.map(lv => getLevelBest(lv.num)));
+    setCompletedLevelMedal(getMedal(lvl));
     // Check for hat unlock at next level
     const nextUnlock = HATS.find(h => h.unlockLevel === lvl + 1);
     setUnlockedHat(nextUnlock || null);
@@ -1549,19 +1583,28 @@ export default function Game() {
             </button>
           </div>
           {/* Level select */}
-          <div style={{ marginTop:24, display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center", maxWidth:480 }}>
-            {LEVELS.map(lv => {
+          <div style={{ marginTop:24, display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center", maxWidth:560 }}>
+            {LEVELS.map((lv, idx) => {
               const unlocked = lv.num <= getMaxLevel();
+              const best = levelBests[idx];
+              const medal = getMedal(lv.num);
+              const borderColor = medal === "gold" ? "#ffd700" : medal === "silver" ? "#c0c0c0" : medal === "bronze" ? "#cd7f32" : unlocked ? "#4a9eff" : "#555";
               return (
                 <button key={lv.num}
                   onClick={() => unlocked && startLevel(lv.num)}
-                  onMouseDown={btnPress} onMouseUp={btnRelease}
-                  style={{ padding:"8px 14px", fontSize:"0.9rem", fontWeight:"bold",
-                    background: unlocked ? "#1a73e8" : "rgba(255,255,255,0.15)",
+                  onMouseDown={unlocked ? btnPress : undefined} onMouseUp={unlocked ? btnRelease : undefined}
+                  style={{ padding:"8px 14px", fontSize:"0.85rem", fontWeight:"bold",
+                    background: unlocked ? (medal ? "rgba(26,115,232,0.85)" : "#1a73e8") : "rgba(255,255,255,0.15)",
                     color: unlocked ? "#fff" : "#888",
-                    border: "2px solid " + (unlocked ? "#4a9eff" : "#555"),
-                    borderRadius:20, cursor: unlocked ? "pointer" : "default", fontFamily:font }}>
-                  {unlocked ? `${lv.num}. ${lv.name}` : `🔒 Lv ${lv.num}`}
+                    border: `2px solid ${borderColor}`,
+                    borderRadius:20, cursor: unlocked ? "pointer" : "default", fontFamily:font,
+                    display:"flex", flexDirection:"column", alignItems:"center", gap:2, minWidth:110 }}>
+                  <span>{unlocked ? `${lv.num}. ${lv.name}` : `🔒 Lv ${lv.num}`}</span>
+                  {unlocked && (
+                    <span style={{ fontSize:"0.75rem", fontWeight:"normal", color: medal ? MEDAL_COLOR[medal] : "#adf", letterSpacing:"0.03em" }}>
+                      {medal ? MEDAL_EMOJI[medal] : "–"} {best > 0 ? `${best} / ${lv.target}` : "no run"}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1651,12 +1694,34 @@ export default function Game() {
                 ? (LEVEL_STORY[completedLevel + 1] || "The road rolls on…")
                 : "Lefty & Middy made it home — knuckles weary, nails chipped, hearts full."}
             </p>
-            <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:12, padding:"12px 20px", marginBottom:20 }}>
+            <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:12, padding:"12px 20px", marginBottom:16 }}>
               <div style={{ fontSize:"1rem", color:"#aaa", fontFamily:font }}>Distance covered</div>
               <div style={{ fontSize:"2rem", fontWeight:"bold", color:"#fff", fontFamily:font }}>
                 {Math.floor(stateRef.current.levelScore)} m
               </div>
             </div>
+            {/* Medal + best score */}
+            {completedLevelMedal && (
+              <div style={{ background:`rgba(${completedLevelMedal==="gold"?"255,215,0":completedLevelMedal==="silver"?"192,192,192":"205,127,50"},0.12)`,
+                border:`2px solid ${MEDAL_COLOR[completedLevelMedal]}`,
+                borderRadius:12, padding:"12px 20px", marginBottom:16 }}>
+                <div style={{ fontSize:"2.4rem", lineHeight:1 }}>{MEDAL_EMOJI[completedLevelMedal]}</div>
+                <div style={{ fontSize:"1.1rem", fontWeight:"bold", color: MEDAL_COLOR[completedLevelMedal], fontFamily:font, marginTop:4 }}>
+                  {completedLevelMedal.toUpperCase()} MEDAL
+                </div>
+                {completedLevelPrevBest === 0 ? (
+                  <div style={{ fontSize:"0.85rem", color:"#aaa", fontFamily:font }}>First clear!</div>
+                ) : completedLevelPrevBest < getLevelDef(completedLevel).target ? (
+                  <div style={{ fontSize:"0.85rem", color:"#adf", fontFamily:font }}>
+                    Previous best: {completedLevelPrevBest} → 🥇 now!
+                  </div>
+                ) : (
+                  <div style={{ fontSize:"0.85rem", color:"#aaa", fontFamily:font }}>
+                    Best: {getLevelBest(completedLevel)} m
+                  </div>
+                )}
+              </div>
+            )}
             {unlockedHat && (
               <div style={{ background:"rgba(124,77,255,0.25)", border:"2px solid #7c4dff",
                 borderRadius:12, padding:"12px 20px", marginBottom:20 }}>
