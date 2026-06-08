@@ -22,8 +22,8 @@ interface Particle {
   color: string;
 }
 
-const GRAVITY = 0.88;
-const JUMP_FORCE = -18.5;
+const GRAVITY = 0.70;
+const JUMP_FORCE = -20;
 const BASE_SPEED = 2.0;
 
 // playerY is the palm center; finger tips reach ~90px below palm
@@ -216,16 +216,16 @@ export default function Game() {
 
   // Obstacle catalogue — things a kid sees from a car window
   const OBSTACLE_TYPES: Array<{ type: ObstacleType; w: number; h: number }> = [
-    { type: "mailbox",  w: 55,  h: 74  },
-    { type: "hydrant",  w: 48,  h: 64  },
-    { type: "stopsign", w: 30,  h: 100 },
-    { type: "trashcan", w: 52,  h: 72  },
-    { type: "dog",      w: 78,  h: 52  },
-    { type: "cat",      w: 44,  h: 46  },
-    { type: "bicycle",  w: 84,  h: 76  },
-    { type: "gnome",    w: 40,  h: 68  },
-    { type: "cone",     w: 50,  h: 62  },
-    { type: "newsbox",  w: 54,  h: 66  },
+    { type: "mailbox",  w: 36,  h: 68  },
+    { type: "hydrant",  w: 34,  h: 58  },
+    { type: "stopsign", w: 22,  h: 88  },
+    { type: "trashcan", w: 36,  h: 66  },
+    { type: "dog",      w: 44,  h: 46  },
+    { type: "cat",      w: 28,  h: 42  },
+    { type: "bicycle",  w: 46,  h: 68  },
+    { type: "gnome",    w: 30,  h: 62  },
+    { type: "cone",     w: 32,  h: 56  },
+    { type: "newsbox",  w: 36,  h: 60  },
   ];
 
   const spawnObstacle = (width: number) => {
@@ -931,7 +931,8 @@ export default function Game() {
             }
           }
 
-          if (!o.passed && o.x + o.obsWidth < fingerLeft) o.passed = true;
+          // Passed once the front half clears the player — landing on the back doesn't count
+          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) o.passed = true;
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
 
