@@ -18,8 +18,8 @@ interface Particle {
   color: string;
 }
 
-const GRAVITY = 0.38;
-const JUMP_FORCE = -11.5;
+const GRAVITY = 0.92;
+const JUMP_FORCE = -17.5;
 const BASE_SPEED = 2.8;
 
 export default function Game() {
@@ -329,199 +329,223 @@ export default function Game() {
     }
   };
 
-  // Draw a hand viewed from the side — palm visible, two fingers as running legs pointing downward
+  // Free-floating hand: palm as body, two two-segment finger-legs running
   const drawFinger = (
     ctx: CanvasRenderingContext2D,
     playerY: number,
     time: number,
-    height: number,
+    _height: number,
     gameRunning: boolean,
   ) => {
     const cx = 185;
-
-    const strideSpeed = gameRunning ? 0.24 : 0.05;
-    const stride = Math.sin(time * strideSpeed); // -1 to 1
-    const bodyBob = gameRunning ? Math.abs(stride) * -5 : Math.sin(time * 0.05) * 2;
+    const strideSpeed = gameRunning ? 0.26 : 0.05;
+    const stride = Math.sin(time * strideSpeed);
+    const bodyBob = gameRunning ? Math.abs(stride) * -6 : Math.sin(time * 0.05) * 2;
     const palmY = playerY + bodyBob;
 
-    // Shadow on road
-    ctx.fillStyle = "rgba(0,0,0,0.20)";
+    // Soft drop-shadow beneath the floating hand
+    ctx.fillStyle = "rgba(0,0,0,0.16)";
     ctx.beginPath();
-    ctx.ellipse(cx, height - 78, 38, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, palmY + 115, 30, 6, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Wrist/arm connecting palm down to car window
-    ctx.strokeStyle = "#d4916a";
-    ctx.lineWidth = 26;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(cx + 4, palmY + 28);
-    ctx.bezierCurveTo(cx + 6, palmY + 60, cx + 2, height - 110, cx, height - 80);
-    ctx.stroke();
-    ctx.strokeStyle = "#eab082";
-    ctx.lineWidth = 12;
-    ctx.beginPath();
-    ctx.moveTo(cx, palmY + 30);
-    ctx.bezierCurveTo(cx + 2, palmY + 58, cx - 2, height - 112, cx - 3, height - 82);
-    ctx.stroke();
+    // ── Two-segment finger leg ────────────────────────────────────────────────
+    const drawFingerLeg = (baseX: number, baseY: number, swing: number, skin: string, dark: string) => {
+      const seg1 = 34; // proximal phalanx length
+      const seg2 = 28; // distal phalanx length
 
-    // ---- Palm (body of the hand-man, viewed from the side) ----
-    // Main palm block — wider than tall, slightly tilted
-    ctx.save();
-    ctx.translate(cx, palmY);
-    ctx.rotate(-0.12); // slight forward lean
+      // Joint 1 position (mid-knuckle)
+      const j1x = baseX + Math.sin(swing) * seg1;
+      const j1y = baseY + Math.cos(swing) * seg1;
 
-    // Back-of-hand (top surface)
-    ctx.fillStyle = "#c8784a";
-    ctx.beginPath();
-    ctx.roundRect(-30, -22, 60, 50, 14);
-    ctx.fill();
+      // Lower segment bends naturally outward (like a bent knee on stride)
+      const bendOut = swing * 0.55 + (swing > 0 ? 0.28 : -0.28);
+      const tipX = j1x + Math.sin(bendOut) * seg2;
+      const tipY = j1y + Math.cos(bendOut) * seg2;
 
-    // Palm face (lighter)
-    ctx.fillStyle = "#e8a070";
-    ctx.beginPath();
-    ctx.roundRect(-28, -20, 56, 46, 12);
-    ctx.fill();
-
-    // Knuckle ridge across top
-    ctx.fillStyle = "#d48a58";
-    ctx.beginPath();
-    ctx.roundRect(-26, -22, 52, 14, [12, 12, 0, 0]);
-    ctx.fill();
-
-    // Knuckle bumps (3 visible knuckles)
-    for (let k = -1; k <= 1; k++) {
-      ctx.fillStyle = "#c87848";
-      ctx.beginPath();
-      ctx.ellipse(k * 17, -18, 9, 7, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#dda060";
-      ctx.beginPath();
-      ctx.ellipse(k * 17 - 1, -21, 5, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Curled fingers on back (ring + pinky shown as small arcs peeking above)
-    ctx.strokeStyle = "#c87848";
-    ctx.lineWidth = 9;
-    ctx.lineCap = "round";
-    // Ring finger curl
-    ctx.beginPath();
-    ctx.arc(18, -16, 10, Math.PI * 1.1, Math.PI * 1.9, false);
-    ctx.stroke();
-    // Pinky curl
-    ctx.beginPath();
-    ctx.arc(28, -14, 8, Math.PI * 1.1, Math.PI * 1.85, false);
-    ctx.stroke();
-
-    // Thumb stub on the left side
-    ctx.fillStyle = "#e8a070";
-    ctx.beginPath();
-    ctx.ellipse(-32, 8, 10, 14, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#d48a58";
-    ctx.beginPath();
-    ctx.ellipse(-33, 4, 6, 10, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    // Thumbnail
-    ctx.fillStyle = "#fff8f0";
-    ctx.beginPath();
-    ctx.ellipse(-33, 2, 4, 6, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Skin crease lines on palm
-    ctx.strokeStyle = "rgba(180,100,60,0.4)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(-20, 5);
-    ctx.quadraticCurveTo(0, 2, 20, 8);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-18, 15);
-    ctx.quadraticCurveTo(0, 12, 18, 16);
-    ctx.stroke();
-
-    ctx.restore();
-
-    // ---- Finger Legs (index + middle, extending downward from bottom of palm) ----
-    const legLen = 58;
-    const baseY = palmY + 26;
-
-    // stride > 0 → index forward (right), middle back (left)
-    // stride < 0 → index back, middle forward
-    const indexSwing = stride * 0.48;   // angle from vertical (+ = forward/right)
-    const middleSwing = -stride * 0.48; // opposite phase
-
-    const drawFingerLeg = (
-      baseX: number,
-      swing: number,
-      mainCol: string,
-      darkCol: string,
-      nailCol: string,
-    ) => {
-      const tipX = baseX + Math.sin(swing) * legLen;
-      const tipY = baseY + Math.cos(swing) * legLen;
-      // Mid-knuckle
-      const mk = 0.55;
-      const midX = baseX + Math.sin(swing * mk) * legLen * mk;
-      const midY = baseY + Math.cos(swing * mk) * legLen * mk;
-
-      // Finger shaft
-      ctx.strokeStyle = mainCol;
-      ctx.lineWidth = 16;
+      // Shadow stroke under upper segment
       ctx.lineCap = "round";
-      ctx.lineJoin = "round";
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 19;
       ctx.beginPath();
-      ctx.moveTo(baseX, baseY);
-      ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+      ctx.moveTo(baseX, baseY + 1);
+      ctx.lineTo(j1x + 1, j1y + 1);
       ctx.stroke();
 
-      // Knuckle bump at mid-finger
-      ctx.fillStyle = darkCol;
+      // Upper segment
+      ctx.strokeStyle = skin;
+      ctx.lineWidth = 17;
       ctx.beginPath();
-      ctx.arc(midX, midY, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = mainCol;
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(j1x, j1y);
+      ctx.stroke();
+
+      // Shadow under lower segment
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 16;
       ctx.beginPath();
-      ctx.arc(midX, midY, 6, 0, Math.PI * 2);
+      ctx.moveTo(j1x + 1, j1y + 1);
+      ctx.lineTo(tipX + 1, tipY + 1);
+      ctx.stroke();
+
+      // Lower segment
+      ctx.strokeStyle = skin;
+      ctx.lineWidth = 14;
+      ctx.beginPath();
+      ctx.moveTo(j1x, j1y);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+
+      // Mid knuckle joint
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.arc(j1x, j1y, 9.5, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = skin;
+      ctx.beginPath();
+      ctx.arc(j1x, j1y, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      // Knuckle crease
+      const kAngle = Math.atan2(j1y - baseY, j1x - baseX) + Math.PI / 2;
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(j1x + Math.cos(kAngle) * 6, j1y + Math.sin(kAngle) * 6);
+      ctx.lineTo(j1x - Math.cos(kAngle) * 6, j1y - Math.sin(kAngle) * 6);
+      ctx.stroke();
 
       // Fingertip pad
-      ctx.fillStyle = darkCol;
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.arc(tipX, tipY, 10, 0, Math.PI * 2);
+      ctx.arc(tipX, tipY, 9, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#f5b890";
+      ctx.fillStyle = "#f8c090";
       ctx.beginPath();
       ctx.arc(tipX - 1, tipY - 1, 7, 0, Math.PI * 2);
       ctx.fill();
 
-      // Nail — perpendicular to finger direction
-      const nailAngle = Math.atan2(tipY - midY, tipX - midX) - Math.PI / 2;
-      ctx.fillStyle = nailCol;
+      // Fingernail aligned to lower segment direction
+      const nDir = Math.atan2(tipY - j1y, tipX - j1x);
       ctx.save();
-      ctx.translate(tipX, tipY - 4);
-      ctx.rotate(nailAngle);
+      ctx.translate(tipX, tipY);
+      ctx.rotate(nDir - Math.PI / 2);
+      ctx.fillStyle = "#d9a080";
       ctx.beginPath();
-      ctx.ellipse(0, 0, 5, 4, 0, 0, Math.PI * 2);
+      ctx.roundRect(-5, -9, 10, 10, 3);
       ctx.fill();
+      ctx.fillStyle = "#fdf5f0";
+      ctx.beginPath();
+      ctx.roundRect(-4, -8, 8, 7, 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(140,70,40,0.25)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-5, 0);
+      ctx.lineTo(5, 0);
+      ctx.stroke();
       ctx.restore();
 
-      // Knuckle bump at base (where finger meets palm)
-      ctx.fillStyle = "#c87848";
+      // Base knuckle (where finger meets palm)
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.arc(baseX, baseY, 9, 0, Math.PI * 2);
+      ctx.arc(baseX, baseY, 10, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#e8a070";
+      ctx.fillStyle = skin;
       ctx.beginPath();
-      ctx.arc(baseX - 1, baseY - 1, 6, 0, Math.PI * 2);
+      ctx.arc(baseX - 1, baseY - 1, 8, 0, Math.PI * 2);
       ctx.fill();
     };
 
-    // Index finger (left base, forward phase)
-    drawFingerLeg(cx - 10, indexSwing, "#f0b880", "#d48a58", "#fff0e8");
-    // Middle finger (right base, opposite phase)
-    drawFingerLeg(cx + 10, middleSwing, "#e8a870", "#c87848", "#fff0e8");
+    // ── Palm body ─────────────────────────────────────────────────────────────
+    ctx.save();
+    ctx.translate(cx, palmY);
+    ctx.rotate(-0.1);
+
+    // Back of hand (darker top)
+    ctx.fillStyle = "#bf7040";
+    ctx.beginPath();
+    ctx.roundRect(-33, -26, 66, 54, 16);
+    ctx.fill();
+
+    // Palm face (lighter)
+    ctx.fillStyle = "#eda068";
+    ctx.beginPath();
+    ctx.roundRect(-31, -24, 62, 50, 14);
+    ctx.fill();
+
+    // Knuckle ridge strip
+    ctx.fillStyle = "#cc8448";
+    ctx.beginPath();
+    ctx.roundRect(-29, -26, 58, 18, [14, 14, 0, 0]);
+    ctx.fill();
+
+    // Three knuckle bumps
+    for (let k = -1; k <= 1; k++) {
+      ctx.fillStyle = "#b06030";
+      ctx.beginPath();
+      ctx.ellipse(k * 19, -22, 11, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#dd9858";
+      ctx.beginPath();
+      ctx.ellipse(k * 19 - 1, -25, 7, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Curled ring finger
+    ctx.strokeStyle = "#b86830";
+    ctx.lineWidth = 11;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(21, -20, 12, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.stroke();
+    // Curled pinky
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.arc(31, -17, 9, Math.PI * 1.1, Math.PI * 1.9);
+    ctx.stroke();
+
+    // Thumb (left side)
+    ctx.fillStyle = "#eda068";
+    ctx.beginPath();
+    ctx.ellipse(-36, 5, 12, 17, -0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#c07840";
+    ctx.beginPath();
+    ctx.ellipse(-37, 0, 7.5, 12, -0.22, 0, Math.PI * 2);
+    ctx.fill();
+    // Thumbnail
+    ctx.fillStyle = "#d9a080";
+    ctx.beginPath();
+    ctx.roundRect(-42, -7, 9, 12, 3);
+    ctx.fill();
+    ctx.fillStyle = "#fdf5f0";
+    ctx.beginPath();
+    ctx.roundRect(-41, -6, 7, 9, 2);
+    ctx.fill();
+
+    // Palm crease lines
+    ctx.strokeStyle = "rgba(140,60,20,0.30)";
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-24, 4);
+    ctx.quadraticCurveTo(0, 0, 24, 6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-22, 14);
+    ctx.quadraticCurveTo(0, 11, 21, 16);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // ── Finger legs — drawn outside the palm's save/restore ──────────────────
+    const baseY = palmY + 26;
+    const indexSwing  =  stride * 0.54;
+    const middleSwing = -stride * 0.54;
+
+    // Middle (back leg) first so index (front leg) renders on top
+    drawFingerLeg(cx + 12, baseY, middleSwing, "#e8a060", "#b86830");
+    drawFingerLeg(cx - 12, baseY, indexSwing,  "#f0b070", "#c87840");
   };
 
   const drawObstacle = (ctx: CanvasRenderingContext2D, o: Obstacle, height: number) => {
