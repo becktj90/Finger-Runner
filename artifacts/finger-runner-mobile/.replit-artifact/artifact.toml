@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/mobile/"
+title = "Finger Runner Mobile"
+version = "1.0.0"
+id = "artifacts/finger-runner-mobile"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/mobile/" ]
+localPort = 19117
+
+[services.development]
+run = "pnpm --filter @workspace/finger-runner-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/finger-runner-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/finger-runner-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "19117"
+BASE_PATH = "/mobile/"
