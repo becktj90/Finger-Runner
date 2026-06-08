@@ -58,8 +58,6 @@ const SUFFIX = [
   "yr",
 ];
 
-let nextId = 1;
-
 export function generateSector(index: number, seed: number): Sector {
   const rng = new RNG(seed);
   const name = `${rng.pick(PREFIX)}${rng.pick(SUFFIX)}-${rng.int(10, 99)}`;
@@ -85,7 +83,7 @@ export function generateSector(index: number, seed: number): Sector {
       );
     }
     const ent: WorldEntity = {
-      id: nextId++,
+      id: index * 1000 + entities.length,
       kind,
       x,
       y,

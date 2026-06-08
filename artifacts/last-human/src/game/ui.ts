@@ -34,12 +34,14 @@ export interface GameOverView {
 
 export interface UIHandlers {
   onStart: (endless: boolean) => void;
+  onResume: () => void;
   onChoice: (index: number) => void;
   onBuy: (id: string) => void;
   onLaunch: () => void;
   onRestart: () => void;
   onToggleMute: () => void;
   onShowCodex: () => void;
+  onShowScores: () => void;
   onCloseCodex: () => void;
   onBoost: (held: boolean) => void;
 }
@@ -141,8 +143,24 @@ export class UI {
     );
     wrap.appendChild(stats);
 
+    if (save.run) {
+      const resumeRow = el("div", "lh-btnrow");
+      const resume = el(
+        "button",
+        "lh-btn lh-btn--primary",
+        `⏵ Resume Run · Sector ${save.run.sectorIndex}`,
+      ) as HTMLButtonElement;
+      resume.onclick = () => this.h.onResume();
+      resumeRow.appendChild(resume);
+      wrap.appendChild(resumeRow);
+    }
+
     const btns = el("div", "lh-btnrow");
-    const start = el("button", "lh-btn lh-btn--primary", "▶ Begin Run") as HTMLButtonElement;
+    const start = el(
+      "button",
+      save.run ? "lh-btn" : "lh-btn lh-btn--primary",
+      "▶ New Run",
+    ) as HTMLButtonElement;
     start.onclick = () => this.h.onStart(false);
     const endless = el("button", "lh-btn", "∞ Endless") as HTMLButtonElement;
     endless.onclick = () => this.h.onStart(true);
@@ -151,6 +169,12 @@ export class UI {
     wrap.appendChild(btns);
 
     const btns2 = el("div", "lh-btnrow");
+    const scores = el(
+      "button",
+      "lh-btn lh-btn--ghost",
+      "🏆 Scores",
+    ) as HTMLButtonElement;
+    scores.onclick = () => this.h.onShowScores();
     const codex = el("button", "lh-btn lh-btn--ghost", "📖 Codex") as HTMLButtonElement;
     codex.onclick = () => this.h.onShowCodex();
     const mute = el(
@@ -160,6 +184,7 @@ export class UI {
     ) as HTMLButtonElement;
     this.muteBtn = mute;
     mute.onclick = () => this.h.onToggleMute();
+    btns2.appendChild(scores);
     btns2.appendChild(codex);
     btns2.appendChild(mute);
     wrap.appendChild(btns2);
@@ -210,6 +235,61 @@ export class UI {
         ),
       );
       list.appendChild(item);
+    }
+    wrap.appendChild(list);
+    const back = el("button", "lh-btn lh-btn--primary", "← Back") as HTMLButtonElement;
+    back.onclick = () => this.h.onCloseCodex();
+    wrap.appendChild(back);
+    this.show(wrap);
+  }
+
+  showScores(save: SaveData) {
+    const wrap = el("div", "lh-panel");
+    wrap.appendChild(el("div", "lh-panel-title", "HIGH SCORES"));
+    wrap.appendChild(
+      el(
+        "div",
+        "lh-panel-sub",
+        `Top ${save.scores.length || 0} captures. Best <b>${save.highScore}</b> · Deepest Sector <b>${save.bestSector}</b>.`,
+      ),
+    );
+    const list = el("div", "lh-codex-list");
+    if (!save.scores.length) {
+      list.appendChild(
+        el(
+          "div",
+          "lh-codex locked",
+          "<div class='lh-codex-b'>No runs recorded yet. Survive, get captured, and your score lands here.</div>",
+        ),
+      );
+    } else {
+      const fmt = (s: number) => {
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return `${m}:${sec.toString().padStart(2, "0")}`;
+      };
+      save.scores.forEach((sc, i) => {
+        const d = new Date(sc.date);
+        const date = `${d.getFullYear()}-${(d.getMonth() + 1)
+          .toString()
+          .padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
+        const row = el("div", "lh-score-row");
+        row.appendChild(el("span", "lh-score-rank", `#${i + 1}`));
+        row.appendChild(el("span", "lh-score-val", `${sc.score}`));
+        row.appendChild(
+          el(
+            "span",
+            "lh-score-meta",
+            `Sector ${sc.sector} · ${fmt(sc.duration)} · ${
+              sc.endless ? "∞ Endless" : "Story"
+            }`,
+          ),
+        );
+        row.appendChild(
+          el("span", "lh-score-sub", `${sc.faction} · ${date}`),
+        );
+        list.appendChild(row);
+      });
     }
     wrap.appendChild(list);
     const back = el("button", "lh-btn lh-btn--primary", "← Back") as HTMLButtonElement;

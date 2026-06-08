@@ -97,10 +97,46 @@ export interface LoreEntry {
   text: string;
 }
 
+export interface HighScore {
+  score: number;
+  sector: number;
+  duration: number;
+  endless: boolean;
+  faction: string;
+  date: number;
+}
+
+export interface RunSnapshot {
+  v: number;
+  endless: boolean;
+  sectorIndex: number;
+  runSeed: number;
+  metrics: Metrics;
+  rep: Record<FactionId, number>;
+  salvage: number;
+  capture: number;
+  upgrades: Record<string, number>;
+  score: number;
+  runTime: number;
+  captureFaction: FactionId | null;
+  headlines: string[];
+  player: {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    boost: number;
+  };
+  consumed: number[];
+}
+
 export interface SaveData {
   highScore: number;
   bestSector: number;
   lore: string[];
   runsCompleted: number;
   settings: { muted: boolean };
+  scores: HighScore[];
+  run: RunSnapshot | null;
 }

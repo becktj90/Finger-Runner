@@ -14,12 +14,21 @@ import { generateSector, type Sector } from "./galaxy";
 import { Input } from "./input";
 import { Renderer, type Camera, roundRect } from "./render";
 import { clamp, dist2, RNG } from "./rng";
-import { loadSave, unlockLore, writeSave } from "./storage";
+import {
+  addHighScore,
+  clearRun,
+  loadSave,
+  RUN_VERSION,
+  saveRun,
+  unlockLore,
+  writeSave,
+} from "./storage";
 import { UI, type StationView } from "./ui";
 import type {
   FactionId,
   GameEvent,
   Metrics,
+  RunSnapshot,
   SaveData,
   WorldEntity,
 } from "./types";
@@ -92,6 +101,10 @@ export class Game {
   private lastT = 0;
   private raf = 0;
   private t = 0;
+  private acc = 0;
+  private readonly STEP = 1 / 60;
+  private saveTimer = 0;
+  private consumed = new Set<number>();
 
   constructor(root: HTMLElement) {
     this.canvas = document.createElement("canvas");
@@ -107,22 +120,34 @@ export class Game {
 
     this.ui = new UI(root, {
       onStart: (endless) => this.startRun(endless),
+      onResume: () => this.resumeRun(),
       onChoice: (i) => this.resolveChoice(i),
       onBuy: (id) => this.buyUpgrade(id),
       onLaunch: () => this.closeModal(),
       onRestart: () => this.goToMenu(),
       onToggleMute: () => this.toggleMute(),
       onShowCodex: () => this.ui.showCodex(this.save),
+      onShowScores: () => this.ui.showScores(this.save),
       onCloseCodex: () => this.goToMenu(),
       onBoost: (held) => this.input.setBoostButton(held),
     });
 
     window.addEventListener("resize", this.resize);
+    window.addEventListener("pagehide", this.persist);
+    document.addEventListener("visibilitychange", this.onVisibility);
     this.resize();
     this.goToMenu();
     this.lastT = performance.now();
     this.raf = requestAnimationFrame(this.loop);
   }
+
+  private onVisibility = () => {
+    if (document.visibilityState === "hidden") this.persist();
+  };
+
+  private persist = () => {
+    if (this.state === "playing" || this.state === "modal") this.saveRunState();
+  };
 
   private goToMenu() {
     this.state = "menu";
@@ -197,8 +222,46 @@ export class Game {
     this.capturedBy = null;
     this.captureFaction = null;
     this.headlines = [];
+    clearRun(this.save);
     this.updateBands(true);
     this.loadSector(1);
+    this.state = "playing";
+    this.ui.hideOverlay();
+    this.ui.showBoostButton(true);
+    this.audio.confirm();
+    this.saveRunState();
+  }
+
+  resumeRun() {
+    const snap = this.save.run;
+    if (!snap) {
+      this.startRun(false);
+      return;
+    }
+    this.audio.init();
+    this.endless = snap.endless;
+    this.runSeed = snap.runSeed;
+    this.metrics = { ...snap.metrics };
+    this.rep = { ...snap.rep };
+    this.salvage = snap.salvage;
+    this.capture = snap.capture;
+    this.upgrades = { ...snap.upgrades };
+    this.score = snap.score;
+    this.runTime = snap.runTime;
+    this.capturedBy = null;
+    this.captureFaction = snap.captureFaction;
+    this.headlines = [...snap.headlines];
+    this.restoreSector(snap.sectorIndex, snap.consumed);
+    const p = this.player;
+    p.x = snap.player.x;
+    p.y = snap.player.y;
+    p.vx = snap.player.vx;
+    p.vy = snap.player.vy;
+    p.angle = snap.player.angle;
+    p.boost = snap.player.boost;
+    this.cam.x = p.x;
+    this.cam.y = p.y;
+    this.updateBands(true);
     this.state = "playing";
     this.ui.hideOverlay();
     this.ui.showBoostButton(true);
@@ -208,6 +271,8 @@ export class Game {
   private loadSector(index: number) {
     this.sectorIndex = index;
     this.sector = generateSector(index, (this.runSeed + index * 7919) >>> 0);
+    this.consumed.clear();
+    this.pendingEntityId = null;
     this.player.reset(WORLD_W / 2, WORLD_H / 2);
     this.npcs = [];
     this.particles.clear();
@@ -215,6 +280,55 @@ export class Game {
     this.capture = Math.max(0, this.capture - 30);
     this.cam.x = this.player.x;
     this.cam.y = this.player.y;
+  }
+
+  private restoreSector(index: number, consumed: number[]) {
+    this.sectorIndex = index;
+    this.sector = generateSector(index, (this.runSeed + index * 7919) >>> 0);
+    this.consumed = new Set(consumed);
+    this.pendingEntityId = null;
+    this.currentEvent = null;
+    this.sector.entities = this.sector.entities.filter((e) => {
+      if (!this.consumed.has(e.id)) return true;
+      if (e.kind === "resource") return false;
+      e.used = true;
+      return true;
+    });
+    this.npcs = [];
+    this.particles.clear();
+    this.spawnTimer = 1.5;
+  }
+
+  private snapshot(): RunSnapshot {
+    const p = this.player;
+    return {
+      v: RUN_VERSION,
+      endless: this.endless,
+      sectorIndex: this.sectorIndex,
+      runSeed: this.runSeed,
+      metrics: { ...this.metrics },
+      rep: { ...this.rep },
+      salvage: this.salvage,
+      capture: this.capture,
+      upgrades: { ...this.upgrades },
+      score: this.score,
+      runTime: this.runTime,
+      captureFaction: this.captureFaction,
+      headlines: this.headlines.slice(0, 30),
+      player: {
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        angle: p.angle,
+        boost: p.boost,
+      },
+      consumed: [...this.consumed],
+    };
+  }
+
+  private saveRunState() {
+    saveRun(this.save, this.snapshot());
   }
 
   private nextSector() {
@@ -229,6 +343,7 @@ export class Game {
     this.pushHeadline(
       `JUMP // Sector ${this.sectorIndex}: ${this.sector.name}`,
     );
+    this.saveRunState();
   }
 
   // ---- Spawning ----
@@ -524,6 +639,7 @@ export class Game {
 
       if (e.kind === "resource" && !e.used) {
         e.used = true;
+        this.consumed.add(e.id);
         const amt = e.amount || 8;
         this.salvage += amt;
         this.score += amt;
@@ -538,12 +654,16 @@ export class Game {
         this.openStation(e);
         return;
       } else if (e.kind === "event" && !e.used) {
-        e.used = true;
         const ev = EVENTS.find((x) => x.id === e.eventId);
-        if (ev) this.openEvent(ev, false);
+        if (ev) {
+          e.used = true;
+          this.pendingEntityId = e.id;
+          this.openEvent(ev, false);
+        }
         return;
       } else if (e.kind === "ruin" && !e.used) {
         e.used = true;
+        this.pendingEntityId = e.id;
         this.openEvent(this.makeRuinEvent(), true);
         return;
       }
@@ -586,6 +706,10 @@ export class Game {
 
   // ---- Modals ----
   private currentEvent: GameEvent | null = null;
+  // Entity whose event modal is open but not yet resolved. Committed to
+  // `consumed` only when the player resolves the choice, so backgrounding
+  // mid-modal (which may persist) never loses an unresolved event on resume.
+  private pendingEntityId: number | null = null;
   private openEvent(ev: GameEvent, _isRuin: boolean) {
     this.currentEvent = ev;
     this.state = "modal";
@@ -624,6 +748,10 @@ export class Game {
     }
     this.audio.confirm();
     this.currentEvent = null;
+    if (this.pendingEntityId !== null) {
+      this.consumed.add(this.pendingEntityId);
+      this.pendingEntityId = null;
+    }
     this.updateBands(false);
     this.closeModal();
     this.ui.flashOutcome(c.outcome);
@@ -681,6 +809,7 @@ export class Game {
     this.salvage -= cost;
     this.upgrades[id] = lvl + 1;
     this.audio.confirm();
+    this.saveRunState();
     if (this.stationEntity)
       this.ui.showStation(this.buildStationView(this.stationEntity));
   }
@@ -692,6 +821,8 @@ export class Game {
     this.ui.hideOverlay();
     this.ui.showBoostButton(true);
     this.lastT = performance.now();
+    this.acc = 0;
+    this.saveRunState();
   }
 
   // ---- Metrics bands / headlines ----
@@ -768,10 +899,18 @@ export class Game {
     const newHigh = this.score > this.save.highScore;
     if (newHigh) this.save.highScore = this.score;
     this.save.runsCompleted += 1;
-    writeSave(this.save);
     const fac = this.captureFaction
       ? FACTIONS[this.captureFaction]
       : FACTIONS.nanocloud;
+    this.save.run = null;
+    addHighScore(this.save, {
+      score: this.score,
+      sector: this.sectorIndex,
+      duration: Math.floor(this.runTime),
+      endless: this.endless,
+      faction: fac.name,
+      date: Date.now(),
+    });
     this.particles.burst(this.player.x, this.player.y, fac.color, 60, 260, 1.1);
     this.ui.showGameOver({
       score: this.score,
@@ -1015,15 +1154,33 @@ export class Game {
     ctx.restore();
   }
 
+  // Fixed-timestep simulation with an accumulator. Gameplay always advances in
+  // discrete 1/60s steps so physics/capture rates are frame-rate independent;
+  // rendering still happens once per animation frame.
   private loop = (now: number) => {
-    let dt = (now - this.lastT) / 1000;
+    let frame = (now - this.lastT) / 1000;
     this.lastT = now;
-    if (dt > 0.05) dt = 0.05;
-    this.t += dt * 0; // t advanced in update; advance here too for menu
+    if (frame > 0.25) frame = 0.25; // clamp huge gaps (tab switch) to avoid spiral
+
     if (this.state === "playing") {
-      this.update(dt);
+      this.acc += frame;
+      let steps = 0;
+      while (this.acc >= this.STEP && steps < 5) {
+        this.update(this.STEP);
+        this.acc -= this.STEP;
+        steps += 1;
+        if ((this.state as State) !== "playing") break; // run ended / sector jump
+      }
+      if (steps >= 5) this.acc = 0; // drop backlog if we can't keep up
+
+      this.saveTimer += frame;
+      if (this.saveTimer >= 3) {
+        this.saveTimer = 0;
+        if ((this.state as State) === "playing") this.saveRunState();
+      }
     } else {
-      this.t += dt; // keep visuals animating while paused/menu
+      this.t += frame; // keep menu / paused visuals animating
+      this.acc = 0;
     }
     this.render();
     this.raf = requestAnimationFrame(this.loop);
@@ -1032,6 +1189,8 @@ export class Game {
   destroy() {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
+    window.removeEventListener("pagehide", this.persist);
+    document.removeEventListener("visibilitychange", this.onVisibility);
     this.input.destroy();
     this.ui.destroy();
     this.audio.destroy();
