@@ -9,6 +9,9 @@ interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: Obsta
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"; rot?: number; rotV?: number; }
 interface BloodPuddle { x: number; y: number; rx: number; ry: number; life: number; maxLife: number; }
 interface Coin { x: number; y: number; phase: number; }
+interface Platform { x: number; y: number; w: number; }
+interface RopeScroll { x: number; anchorY: number; length: number; }
+interface ActiveSwing { anchorX: number; anchorY: number; length: number; angle: number; angVel: number; swingFrames: number; }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const GRAVITY = 0.72;
@@ -184,6 +187,11 @@ export default function Game() {
     crashFlash: 0,
     dialog: null as { text: string; life: number; maxLife: number } | null,
     dialogCooldown: 200,
+    platforms: [] as Platform[],
+    platformTimer: 0,
+    ropes: [] as RopeScroll[],
+    ropeTimer: 0,
+    activeSwing: null as ActiveSwing | null,
   });
   const audioRef = useRef<{
     ctx: AudioContext | null; enabled: boolean;
@@ -388,6 +396,7 @@ export default function Game() {
     const canvas = canvasRef.current;
     const roadY = canvas ? canvas.height - ROAD_SURFACE_OFFSET : 400;
     st.gameRunning = false;
+    st.activeSwing = null;
     st.crashFlash = 28;
     st.shake = 18;
     st.jumpHeld = false;
@@ -463,6 +472,21 @@ export default function Game() {
     initAudio();
     const st = stateRef.current;
     if (!st.gameRunning) return;
+    // Release from rope swing — player can bail early
+    if (st.activeSwing) {
+      const sw = st.activeSwing;
+      const launchV = sw.angVel < 0
+        ? Math.max(sw.angVel * sw.length * -0.38 - 8, -20)
+        : -10;
+      st.velocity = launchV;
+      st.onGround = false;
+      st.jumpsUsed = 0;
+      st.activeSwing = null;
+      st.coyoteTimer = 0;
+      playJumpSound();
+      spawnDust(8, 10);
+      return;
+    }
     st.jumpHeld = true;
     if (st.onGround || st.coyoteTimer > 0) {
       doJump(false);
@@ -489,6 +513,11 @@ export default function Game() {
     st.bloodPuddles = [];
     st.coins = [];
     st.coinSpawnTimer = 0;
+    st.platforms = [];
+    st.platformTimer = 0;
+    st.ropes = [];
+    st.ropeTimer = 0;
+    st.activeSwing = null;
     st.crashFlash = 0;
     st.playerY = groundY;
     st.velocity = 0;
@@ -1316,6 +1345,75 @@ export default function Game() {
           if (c.x < -40) st.coins.splice(i, 1);
         }
 
+        // ── Active rope swing ───────────────────────────────────────────────────
+        if (st.activeSwing) {
+          const sw = st.activeSwing;
+          sw.swingFrames++;
+          sw.angVel += -0.065 * Math.sin(sw.angle);
+          sw.angVel *= 0.989;
+          sw.angle += sw.angVel;
+          st.playerY = sw.anchorY + Math.cos(sw.angle) * sw.length - FINGER_TIP_OFFSET;
+          st.velocity = 0;
+          st.onGround = false;
+          // Auto-release when rope passes back through vertical (swinging right after going left)
+          if (sw.swingFrames > 30 && sw.angle > -0.12 && sw.angVel > 0.025) {
+            st.velocity = Math.max(-(sw.angVel * sw.length * 0.38 + 10), -20);
+            st.onGround = false;
+            st.jumpsUsed = 0;
+            st.activeSwing = null;
+            spawnDust(12, 14);
+            if (Math.random() < 0.7) showDialog(pick(JUMP_QUIPS), 70);
+          }
+        }
+
+        // ── Scrolling ropes: move, detect grab ──────────────────────────────────
+        for (let i = st.ropes.length - 1; i >= 0; i--) {
+          const rope = st.ropes[i];
+          rope.x -= speed;
+          if (!st.activeSwing && !st.onGround) {
+            const footY = st.playerY + FINGER_TIP_OFFSET;
+            const inH = rope.x > 152 && rope.x < 218;
+            const inV = st.playerY < rope.anchorY + rope.length && footY > rope.anchorY + 8;
+            if (inH && inV) {
+              st.activeSwing = { anchorX: rope.x, anchorY: rope.anchorY, length: rope.length, angle: 0, angVel: -0.08, swingFrames: 0 };
+              st.velocity = 0;
+              st.ropes.splice(i, 1);
+              showDialog("Wheee!", 80);
+              playJumpSound();
+              continue;
+            }
+          }
+          if (rope.x < -80) st.ropes.splice(i, 1);
+        }
+        st.ropeTimer++;
+        if (st.ropeTimer > 720 + Math.floor(Math.random() * 400)) {
+          st.ropeTimer = 0;
+          st.ropes.push({ x: width + 90, anchorY: 70 + Math.floor(Math.random() * 90), length: 210 + Math.floor(Math.random() * 100) });
+        }
+
+        // ── Platforms: scroll + collision + spawn ───────────────────────────────
+        for (let i = st.platforms.length - 1; i >= 0; i--) {
+          const plat = st.platforms[i];
+          plat.x -= speed;
+          if (plat.x + plat.w < -60) { st.platforms.splice(i, 1); continue; }
+          if (!st.activeSwing && !didCrash) {
+            const footY = st.playerY + FINGER_TIP_OFFSET;
+            if (fingerRight > plat.x && fingerLeft < plat.x + plat.w
+                && st.velocity >= 0 && footY >= plat.y && footY <= plat.y + 32) {
+              st.playerY = plat.y - FINGER_TIP_OFFSET;
+              st.velocity = 0;
+              st.onGround = true;
+              st.jumpsUsed = 0;
+              st.coyoteTimer = COYOTE_FRAMES;
+            }
+          }
+        }
+        st.platformTimer++;
+        if (st.platformTimer > 450 + Math.floor(Math.random() * 180)) {
+          st.platformTimer = 0;
+          st.platforms.push({ x: width + 60, y: roadY - 130 - Math.floor(Math.random() * 100), w: 100 + Math.floor(Math.random() * 110) });
+        }
+
         // Particles
         for (let i = st.particles.length - 1; i >= 0; i--) {
           const p = st.particles[i];
@@ -1381,6 +1479,76 @@ export default function Game() {
 
       for (const o of st.obstacles) drawObstacle(ctx, o, height);
 
+      // Draw floating platforms
+      ctx.save();
+      for (const plat of st.platforms) {
+        const pw = plat.w;
+        // Main surface
+        ctx.fillStyle = "#4a7c28";
+        ctx.beginPath(); ctx.roundRect(plat.x, plat.y - 2, pw, 18, [6, 6, 3, 3]); ctx.fill();
+        // Top highlight
+        ctx.fillStyle = "#6cb840";
+        ctx.beginPath(); ctx.roundRect(plat.x + 3, plat.y - 2, pw - 6, 9, [5, 5, 0, 0]); ctx.fill();
+        // Grass tufts
+        ctx.fillStyle = "#88d848";
+        for (let tx = plat.x + 12; tx < plat.x + pw - 10; tx += 22) {
+          ctx.beginPath(); ctx.ellipse(tx, plat.y - 5, 7, 5, 0, Math.PI, 0); ctx.fill();
+        }
+        // Underside / wood
+        ctx.fillStyle = "#2e4c18";
+        ctx.fillRect(plat.x + 2, plat.y + 14, pw - 4, 8);
+        // Vertical struts
+        ctx.fillStyle = "#3a6020";
+        const strutSpacing = Math.min(40, pw / 2);
+        for (let sx = plat.x + strutSpacing * 0.4; sx < plat.x + pw - 4; sx += strutSpacing) {
+          ctx.fillRect(sx - 3, plat.y + 20, 6, 20);
+        }
+      }
+      ctx.restore();
+
+      // Draw ropes (scrolling ones + active swing)
+      ctx.save();
+      ctx.lineCap = "round";
+      const drawRopeVisual = (ax: number, ay: number, ex: number, ey: number) => {
+        // Anchor beam
+        ctx.fillStyle = "#3a2208";
+        ctx.beginPath(); ctx.roundRect(ax - 24, ay - 12, 48, 16, 6); ctx.fill();
+        ctx.fillStyle = "#6b4c1e";
+        ctx.beginPath(); ctx.roundRect(ax - 20, ay - 10, 40, 12, 4); ctx.fill();
+        // Rope shadow
+        ctx.strokeStyle = "rgba(0,0,0,0.25)";
+        ctx.lineWidth = 10;
+        ctx.beginPath(); ctx.moveTo(ax + 1, ay + 5); ctx.lineTo(ex + 1, ey + 1); ctx.stroke();
+        // Outer rope strand
+        ctx.strokeStyle = "#7a5510";
+        ctx.lineWidth = 9;
+        ctx.beginPath(); ctx.moveTo(ax, ay + 4); ctx.lineTo(ex, ey); ctx.stroke();
+        // Inner highlight strand
+        ctx.strokeStyle = "#d4a030";
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(ax, ay + 4); ctx.lineTo(ex, ey); ctx.stroke();
+        // Bright gleam
+        ctx.strokeStyle = "rgba(255,230,140,0.35)";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(ax + 1, ay + 4); ctx.lineTo(ex + 1, ey); ctx.stroke();
+        // Grab knot
+        ctx.fillStyle = "#3a1c06";
+        ctx.beginPath(); ctx.arc(ex, ey, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#a86820";
+        ctx.beginPath(); ctx.arc(ex, ey, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "rgba(255,210,120,0.5)";
+        ctx.beginPath(); ctx.arc(ex - 2, ey - 2, 3.5, 0, Math.PI * 2); ctx.fill();
+      };
+      for (const rope of st.ropes) {
+        drawRopeVisual(rope.x, rope.anchorY, rope.x, rope.anchorY + rope.length);
+      }
+      if (st.activeSwing) {
+        const sw = st.activeSwing;
+        // Draw from anchor to player grip (top of character body)
+        drawRopeVisual(sw.anchorX, sw.anchorY, 185, st.playerY + 10);
+      }
+      ctx.restore();
+
       // Collectible coins
       for (const c of st.coins) drawCoin(ctx, c, st.time);
 
@@ -1425,7 +1593,7 @@ export default function Game() {
         const d = st.dialog;
         const fadeIn = Math.min(1, (d.maxLife - d.life) / 8);
         const fadeOut = Math.min(1, d.life / 20);
-        const bubbleY = st.playerY - 26 + Math.sin(st.time * 0.1) * 2;
+        const bubbleY = st.playerY - 120 + Math.sin(st.time * 0.1) * 2;
         drawSpeechBubble(ctx, 185, bubbleY, d.text, Math.min(fadeIn, fadeOut));
       }
 
