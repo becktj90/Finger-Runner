@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import './arcade.css';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox";
@@ -539,199 +540,230 @@ export default function Game() {
   };
 
   // ── Background themes ──────────────────────────────────────────────────────
-  const drawCloud = (ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) => {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
-    ctx.fillStyle = "rgba(255,255,255,0.88)";
-    ctx.beginPath();
-    ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.arc(20, 4, 22, 0, Math.PI * 2);
-    ctx.arc(44, 2, 16, 0, Math.PI * 2);
-    ctx.arc(22, -12, 16, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  };
-
   const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: number, time: number, theme: Theme) => {
-    // Sky gradient per theme
-    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    const roadTop = height - ROAD_SURFACE_OFFSET;
+    const horizY  = Math.round(height * 0.60);
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+
     if (theme === "suburb") {
-      grad.addColorStop(0, "#5db8f0"); grad.addColorStop(0.45, "#8ed0ff"); grad.addColorStop(1, "#c8e8ff");
-    } else if (theme === "city") {
-      grad.addColorStop(0, "#7a9bbf"); grad.addColorStop(0.5, "#a0b8cc"); grad.addColorStop(1, "#c4d4df");
-    } else if (theme === "highway") {
-      grad.addColorStop(0, "#3a90d8"); grad.addColorStop(0.4, "#6ab8f0"); grad.addColorStop(1, "#b8dcf4");
-    } else if (theme === "mountain") {
-      grad.addColorStop(0, "#6ab5e8"); grad.addColorStop(0.4, "#9ad0f0"); grad.addColorStop(1, "#d0eaf8");
-    } else { // night
-      grad.addColorStop(0, "#0a0a22"); grad.addColorStop(0.5, "#1a1a40"); grad.addColorStop(1, "#2a2a55");
-    }
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-
-    // Parallax clouds (daytime themes) — slow far drift for depth
-    if (theme !== "night") {
-      const span = width + 260;
-      for (let c = 0; c < 5; c++) {
-        const scale = 0.7 + (c % 3) * 0.45;
-        const cx2 = ((c * 360 - time * (0.25 + scale * 0.18)) % span + span) % span - 130;
-        const cy2 = 48 + (c % 3) * 52 + (c % 2) * 14;
-        drawCloud(ctx, cx2, cy2, scale);
-      }
-    }
-
-    if (theme === "night") {
-      // Stars
-      ctx.fillStyle = "#fff";
-      for (let s = 0; s < 80; s++) {
-        const sx = ((s * 173 + time * 0.2) % width + width) % width;
-        const sy = (s * 137) % (height * 0.55);
-        const ss = s % 3 === 0 ? 2 : 1;
-        ctx.globalAlpha = 0.5 + 0.5 * Math.sin(time * 0.02 + s);
-        ctx.fillRect(sx, sy, ss, ss);
+      // SYNTHWAVE SUNSET — deep purple sky, retro striped sun, neon grid, palm silhouettes
+      const g = ctx.createLinearGradient(0, 0, 0, horizY);
+      g.addColorStop(0, "#000018"); g.addColorStop(0.40, "#200040");
+      g.addColorStop(0.75, "#6a0058"); g.addColorStop(1, "#bb2060");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, width, horizY);
+      ctx.fillStyle = "#0a0016"; ctx.fillRect(0, horizY, width, roadTop - horizY);
+      for (let s = 0; s < 60; s++) {
+        const sx = ((s * 213 + time * 0.10) % (width + 60) + width + 60) % (width + 60) - 30;
+        const sy = (s * 127) % (horizY * 0.55);
+        ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 0.025 + s * 0.9);
+        ctx.fillStyle = s % 3 === 0 ? "#ff80ff" : s % 3 === 1 ? "#80ffff" : "#ffff80";
+        ctx.fillRect(Math.round(sx), Math.round(sy), s % 5 === 0 ? 2 : 1, s % 5 === 0 ? 2 : 1);
       }
       ctx.globalAlpha = 1;
-      // Distant city glow
-      ctx.fillStyle = "rgba(255,140,0,0.12)";
-      ctx.beginPath(); ctx.ellipse(width*0.3, height*0.65, 200, 60, 0, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "rgba(255,160,30,0.08)";
-      ctx.beginPath(); ctx.ellipse(width*0.72, height*0.68, 150, 45, 0, 0, Math.PI*2); ctx.fill();
-      // City skyline silhouette
-      ctx.fillStyle = "#111128";
-      const buildings = [0.05,0.12,0.18,0.24,0.32,0.38,0.44,0.52,0.58,0.64,0.70,0.78,0.85,0.92];
-      const bHeights = [90,140,80,120,100,160,70,130,90,150,110,80,140,100];
-      const bWidths  = [40,30,50,35,45,25,55,38,42,28,48,52,32,44];
-      buildings.forEach((bx, i) => {
-        const bh = bHeights[i]; const bw = bWidths[i];
-        ctx.fillRect(bx*width, height-108-bh, bw, bh);
-        // Windows
-        ctx.fillStyle = "rgba(255,220,80,0.6)";
-        for (let wx = 4; wx < bw-4; wx += 10) {
-          for (let wy = 8; wy < bh-10; wy += 14) {
-            if (Math.random() > 0.3) ctx.fillRect(bx*width+wx, height-108-bh+wy, 6, 8);
+      const hg = ctx.createRadialGradient(width / 2, horizY, 0, width / 2, horizY, width * 0.55);
+      hg.addColorStop(0, "rgba(255,100,40,0.65)"); hg.addColorStop(0.25, "rgba(255,40,120,0.35)"); hg.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = hg; ctx.fillRect(0, horizY - 80, width, 160);
+      ctx.save();
+      ctx.beginPath(); ctx.arc(width / 2, horizY, 78, Math.PI, 0); ctx.closePath(); ctx.clip();
+      const sg = ctx.createLinearGradient(0, horizY - 78, 0, horizY);
+      sg.addColorStop(0, "#ffee44"); sg.addColorStop(0.55, "#ff8800"); sg.addColorStop(1, "#ff3300");
+      ctx.fillStyle = sg; ctx.fillRect(width / 2 - 78, horizY - 78, 156, 78);
+      ctx.fillStyle = "#0a0016";
+      [0.22, 0.38, 0.51, 0.61, 0.69, 0.76, 0.82, 0.87].forEach(f => {
+        ctx.fillRect(width / 2 - 78, horizY - 78 * (1 - f), 156, 3.5);
+      });
+      ctx.restore();
+      const gBot = roadTop + 4;
+      for (let gi = 0; gi <= 7; gi++) {
+        const t = gi / 7; const gy = horizY + (gBot - horizY) * (t * t);
+        ctx.strokeStyle = `rgba(255,0,200,${0.12 + t * 0.42})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke();
+      }
+      for (let v = -7; v <= 7; v++) {
+        const gxB = width / 2 + v * (width / 5.5);
+        ctx.strokeStyle = "rgba(255,0,200,0.26)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(width / 2, horizY + 4); ctx.lineTo(gxB, gBot); ctx.stroke();
+      }
+      const drawPalm = (px: number, ph: number) => {
+        ctx.fillStyle = "#0a0018"; ctx.fillRect(px - 5, horizY - ph, 10, ph);
+        ([ [-40,-20],[-30,-35],[-15,-15],[30,-28],[22,-38],[10,-18] ] as [number,number][]).forEach(([dx,dy]) => {
+          ctx.beginPath(); ctx.moveTo(px, horizY - ph);
+          ctx.quadraticCurveTo(px + dx * 0.5, horizY - ph + dy * 0.4, px + dx, horizY - ph + dy);
+          ctx.strokeStyle = "#0a0018"; ctx.lineWidth = 8; ctx.lineCap = "round"; ctx.stroke();
+        });
+      };
+      drawPalm(55, 75); drawPalm(175, 65); drawPalm(width - 70, 80); drawPalm(width - 190, 70);
+
+    } else if (theme === "city") {
+      // NEON CITY — near-black sky, neon-outlined buildings with glowing windows
+      const g = ctx.createLinearGradient(0, 0, 0, height);
+      g.addColorStop(0, "#000010"); g.addColorStop(0.6, "#030328"); g.addColorStop(1, "#0a003a");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
+      for (let s = 0; s < 40; s++) {
+        const sx = ((s * 317 + time * 0.07) % (width + 40) + width + 40) % (width + 40) - 20;
+        const sy = (s * 97) % (horizY * 0.38);
+        ctx.globalAlpha = 0.4 + 0.6 * Math.sin(time * 0.02 + s);
+        ctx.fillStyle = ["#00ffff","#ff00ff","#ffff00"][s % 3];
+        ctx.fillRect(Math.round(sx), Math.round(sy), 1.5, 1.5);
+      }
+      ctx.globalAlpha = 1;
+      const ng1 = ctx.createRadialGradient(width * 0.28, horizY, 0, width * 0.28, horizY, 200);
+      ng1.addColorStop(0, "rgba(0,180,255,0.14)"); ng1.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ng1; ctx.fillRect(0, horizY - 80, width, 160);
+      const ng2 = ctx.createRadialGradient(width * 0.74, horizY, 0, width * 0.74, horizY, 160);
+      ng2.addColorStop(0, "rgba(255,0,200,0.12)"); ng2.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ng2; ctx.fillRect(0, horizY - 80, width, 160);
+      const nCols = ["#00ffcc","#ff00aa","#ffee00","#00aaff","#ff6622","#aa44ff"];
+      [[0.02,130,48],[0.11,95,35],[0.18,85,52],[0.26,115,32],[0.34,80,44],[0.43,90,38],
+       [0.51,110,30],[0.59,80,46],[0.66,88,54],[0.73,100,28],[0.81,75,40],[0.88,95,36],[0.94,80,42]
+      ].forEach(([bxf,bh,bw], i) => {
+        const bx = bxf * width; const by2 = horizY - bh; const nc = nCols[i % nCols.length];
+        ctx.fillStyle = "#020215"; ctx.fillRect(bx, by2, bw, bh);
+        ctx.shadowColor = nc; ctx.shadowBlur = 8; ctx.strokeStyle = nc; ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.65 + 0.35 * Math.sin(time * 0.025 + i * 0.7);
+        ctx.strokeRect(bx, by2, bw, bh); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        ctx.fillStyle = nc; ctx.globalAlpha = 0.5;
+        for (let wx = 4; wx < bw - 5; wx += 10) {
+          for (let wy = 7; wy < bh - 9; wy += 14) {
+            if ((i + wx * 3 + wy) % 4 !== 0) ctx.fillRect(bx + wx, by2 + wy, 5, 7);
           }
         }
-        ctx.fillStyle = "#111128";
+        ctx.globalAlpha = 1;
       });
-    } else if (theme === "city") {
-      // Building silhouettes
-      ctx.fillStyle = "#5a6878";
-      const cfgs = [[0.02,50,55],[0.1,80,38],[0.17,45,60],[0.25,100,30],[0.33,65,48],[0.42,55,40],[0.5,90,35],[0.58,70,45],[0.65,48,55],[0.72,85,32],[0.8,60,50],[0.88,45,62],[0.94,75,38]];
-      cfgs.forEach(([bx,bh,bw]) => {
-        ctx.fillRect(bx*width, height-108-bh, bw, bh);
-      });
-      ctx.fillStyle = "#6a7888";
-      const cfgs2 = [[0.06,35,40],[0.15,60,28],[0.22,30,48],[0.3,75,25],[0.4,40,32],[0.48,65,28],[0.56,50,36],[0.63,35,44],[0.7,65,26],[0.78,45,38],[0.86,30,50]];
-      cfgs2.forEach(([bx,bh,bw]) => {
-        ctx.fillRect(bx*width, height-108-bh, bw, bh);
-      });
-    } else if (theme === "mountain") {
-      // Mountain silhouettes
-      ctx.fillStyle = "#4a6858";
-      ctx.beginPath();
-      ctx.moveTo(0, height*0.75);
-      ctx.lineTo(width*0.12, height*0.42); ctx.lineTo(width*0.25, height*0.65);
-      ctx.lineTo(width*0.38, height*0.35); ctx.lineTo(width*0.52, height*0.58);
-      ctx.lineTo(width*0.65, height*0.30); ctx.lineTo(width*0.78, height*0.52);
-      ctx.lineTo(width*0.90, height*0.38); ctx.lineTo(width, height*0.55);
-      ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fill();
-      // Snow caps
-      ctx.fillStyle = "#e8f0f8";
-      [[0.38, height*0.35],[0.65, height*0.30],[0.90, height*0.38]].forEach(([mx, my]) => {
-        ctx.beginPath();
-        ctx.moveTo(mx*width, my); ctx.lineTo(mx*width-18, my+28); ctx.lineTo(mx*width+18, my+28);
-        ctx.closePath(); ctx.fill();
-      });
-      // Pine trees silhouette
-      ctx.fillStyle = "#2d4a38";
-      [0.05,0.09,0.15,0.20,0.45,0.48,0.55,0.60,0.75,0.80,0.87,0.92].forEach(tx => {
-        ctx.beginPath();
-        ctx.moveTo(tx*width, height-108-55);
-        ctx.lineTo(tx*width-14, height-108); ctx.lineTo(tx*width+14, height-108);
-        ctx.closePath(); ctx.fill();
-      });
+
     } else if (theme === "highway") {
-      // Wide open landscape
-      ctx.fillStyle = "#5a8a6a";
-      ctx.beginPath();
-      ctx.moveTo(0, height*0.85);
-      ctx.lineTo(width*0.5, height*0.70); ctx.lineTo(width, height*0.82);
-      ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fill();
-      // Distance hills
-      ctx.fillStyle = "#7aac8a";
-      ctx.beginPath();
-      ctx.moveTo(0, height*0.78);
-      ctx.quadraticCurveTo(width*0.3, height*0.62, width*0.6, height*0.75);
-      ctx.quadraticCurveTo(width*0.85, height*0.55, width, height*0.72);
-      ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fill();
+      // OUTRUN HIGHWAY — purple-to-orange sky, retro striped sun, cyan perspective grid
+      const g = ctx.createLinearGradient(0, 0, 0, horizY);
+      g.addColorStop(0, "#000018"); g.addColorStop(0.28, "#380055");
+      g.addColorStop(0.60, "#cc3300"); g.addColorStop(0.85, "#ffaa00"); g.addColorStop(1, "#ffdd44");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, width, horizY);
+      ctx.fillStyle = "#080612"; ctx.fillRect(0, horizY, width, height - horizY);
+      ctx.save();
+      ctx.beginPath(); ctx.arc(width / 2, horizY, 90, Math.PI, 0); ctx.closePath(); ctx.clip();
+      const sg2 = ctx.createLinearGradient(0, horizY - 90, 0, horizY);
+      sg2.addColorStop(0, "#ffff88"); sg2.addColorStop(0.5, "#ffaa00"); sg2.addColorStop(1, "#ff4400");
+      ctx.fillStyle = sg2; ctx.fillRect(width / 2 - 90, horizY - 90, 180, 90);
+      ctx.fillStyle = "#000018";
+      [0.18, 0.34, 0.48, 0.60, 0.70, 0.78, 0.85, 0.91].forEach(f => {
+        ctx.fillRect(width / 2 - 90, horizY - 90 * (1 - f), 180, 4);
+      });
+      ctx.restore();
+      for (let gi = 0; gi <= 5; gi++) {
+        const t = gi / 5; const gy = horizY + (roadTop - horizY + 10) * (t * t);
+        ctx.strokeStyle = `rgba(0,220,255,${0.12 + t * 0.32})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke();
+      }
+      for (let v = -6; v <= 6; v++) {
+        const gxB = width / 2 + v * (width / 5.5);
+        ctx.strokeStyle = "rgba(0,220,255,0.18)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(width / 2, horizY - 5); ctx.lineTo(gxB, roadTop + 8); ctx.stroke();
+      }
+
+    } else if (theme === "mountain") {
+      // PIXEL PEAKS — teal starfield, stepped blocky mountains, neon snow, pixel pines
+      const g = ctx.createLinearGradient(0, 0, 0, height);
+      g.addColorStop(0, "#000820"); g.addColorStop(0.55, "#061838"); g.addColorStop(1, "#081c28");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
+      for (let s = 0; s < 80; s++) {
+        const sx = (s * 167 + 11) % width; const sy = (s * 113) % (horizY * 0.70);
+        ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 0.022 + s * 0.65);
+        ctx.fillStyle = s % 5 === 0 ? "#00ffaa" : s % 5 === 1 ? "#ff88ff" : s % 5 === 2 ? "#ffee00" : "#aaffff";
+        ctx.fillRect(Math.floor(sx), Math.floor(sy), s % 6 === 0 ? 2 : 1, s % 6 === 0 ? 2 : 1);
+      }
+      ctx.globalAlpha = 1;
+      ctx.shadowColor = "#44ffcc"; ctx.shadowBlur = 24;
+      ctx.fillStyle = "#bbfff0"; ctx.beginPath(); ctx.arc(width * 0.83, horizY * 0.28, 26, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0; ctx.fillStyle = "#061838";
+      ctx.beginPath(); ctx.arc(width * 0.83 + 9, horizY * 0.28 - 5, 20, 0, Math.PI * 2); ctx.fill();
+      const pixMtn = (mx: number, mh: number, col: string) => {
+        ctx.fillStyle = col;
+        for (let py = 0; py < mh; py += 4) {
+          const w2 = mh * 0.9 * (1 - (py / mh) * (py / mh)) + 4;
+          ctx.fillRect(Math.round(mx - w2), horizY - mh + py, Math.round(w2 * 2), 4);
+        }
+      };
+      pixMtn(width*0.08,120,"#0c2c46"); pixMtn(width*0.26,165,"#0a2440");
+      pixMtn(width*0.44,200,"#0c2c46"); pixMtn(width*0.62,175,"#0a2440");
+      pixMtn(width*0.80,148,"#0c2c46"); pixMtn(width*0.96,188,"#0a2440");
+      ctx.fillStyle = "#aaffee";
+      ([[0.08,120],[0.26,165],[0.44,200],[0.62,175],[0.80,148],[0.96,188]] as [number,number][]).forEach(([mxf,mh]) => {
+        ctx.fillRect(mxf*width-10, horizY-mh, 20, 12); ctx.fillRect(mxf*width-15, horizY-mh+10, 30, 6);
+      });
+      ctx.fillStyle = "#041c30";
+      [0.05,0.09,0.16,0.21,0.48,0.53,0.59,0.65,0.77,0.83,0.89,0.94].forEach(tx => {
+        const px = tx * width; const th = 40 + Math.abs(Math.sin(tx * 17)) * 18;
+        ctx.fillRect(px-3, horizY-th-4, 6, th+4); ctx.fillRect(px-9, horizY-th, 18, 12);
+        ctx.fillRect(px-13, horizY-th+10, 26, 12); ctx.fillRect(px-17, horizY-th+20, 34, 10);
+      });
+
     } else {
-      // Suburb — rolling hills
-      ctx.fillStyle = "#7aa8c2";
-      ctx.beginPath();
-      ctx.moveTo(0, height*0.72);
-      ctx.quadraticCurveTo(width*0.25, height*0.48, width*0.55, height*0.76);
-      ctx.quadraticCurveTo(width*0.82, height*0.42, width, height*0.69);
-      ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.fill();
-      ctx.fillStyle = "#5d8a9e";
-      ctx.beginPath();
-      ctx.moveTo(0, height*0.78);
-      ctx.quadraticCurveTo(width*0.35, height*0.58, width*0.7, height*0.81);
-      ctx.quadraticCurveTo(width*0.92, height*0.62, width, height*0.77);
-      ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.fill();
+      // DEEP SPACE (night) — black sky, colorful pixel stars, nebula, neon city outlines
+      ctx.fillStyle = "#000008"; ctx.fillRect(0, 0, width, height);
+      for (let s = 0; s < 100; s++) {
+        const sx = ((s * 193 + time * 0.14) % (width + 60) + width + 60) % (width + 60) - 30;
+        const sy = (s * 137) % (horizY * 0.72);
+        ctx.globalAlpha = 0.45 + 0.55 * Math.sin(time * 0.022 + s);
+        ctx.fillStyle = ["#00ffff","#ff00ff","#ffff44","#ff8844","#88ffaa","#ffffff"][s % 6];
+        const ss = s % 8 === 0 ? 3 : s % 4 === 0 ? 2 : 1;
+        ctx.fillRect(Math.round(sx), Math.round(sy), ss, ss);
+      }
+      ctx.globalAlpha = 1;
+      const neb1 = ctx.createRadialGradient(width*0.22, horizY*0.4, 0, width*0.22, horizY*0.4, 130);
+      neb1.addColorStop(0, "rgba(0,100,255,0.09)"); neb1.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = neb1; ctx.fillRect(0, 0, width, horizY);
+      const neb2 = ctx.createRadialGradient(width*0.72, horizY*0.52, 0, width*0.72, horizY*0.52, 110);
+      neb2.addColorStop(0, "rgba(160,0,255,0.08)"); neb2.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = neb2; ctx.fillRect(0, 0, width, horizY);
+      const nc2 = ["#00ffff","#ff00ff","#ffee00","#ff4422","#00ff88"];
+      [[0.05,90,40],[0.12,140,30],[0.18,80,50],[0.24,120,35],[0.32,100,42],
+       [0.38,160,25],[0.44,70,55],[0.52,130,38],[0.58,90,44],
+       [0.64,150,28],[0.70,110,48],[0.78,80,52],[0.85,140,32],[0.92,100,40]
+      ].forEach(([bxf,bh,bw], i) => {
+        const bx = bxf * width; const by2 = horizY - bh; const nc = nc2[i % nc2.length];
+        ctx.fillStyle = "#000010"; ctx.fillRect(bx, by2, bw, bh);
+        ctx.shadowColor = nc; ctx.shadowBlur = 10; ctx.strokeStyle = nc; ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.75 + 0.25 * Math.sin(time * 0.035 + i);
+        ctx.strokeRect(bx, by2, bw, bh); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        ctx.fillStyle = nc; ctx.globalAlpha = 0.45 + 0.3 * Math.sin(time * 0.028 + i * 1.5);
+        for (let wx = 3; wx < bw - 4; wx += 9) {
+          for (let wy = 6; wy < bh - 8; wy += 13) {
+            if ((i * 3 + wx + wy) % 4 !== 0) ctx.fillRect(bx + wx, by2 + wy, 4, 6);
+          }
+        }
+        ctx.globalAlpha = 1;
+      });
     }
 
-    // Sidewalk / grass strip
-    if (theme === "city") {
-      ctx.fillStyle = "#8a8a9a"; // concrete
-    } else if (theme === "highway") {
-      ctx.fillStyle = "#6a7260"; // gravel shoulder
-    } else if (theme === "mountain") {
-      ctx.fillStyle = "#7a7060"; // rocky gravel
-    } else if (theme === "night") {
-      ctx.fillStyle = "#3a3a4a"; // dark concrete
-    } else {
-      ctx.fillStyle = "#7db560"; // grass
-    }
-    ctx.fillRect(0, height - 108, width, 18);
-
-    // Road surface
-    ctx.fillStyle = theme === "night" ? "#1e1e2e" : theme === "highway" ? "#4a5260" : "#555e6a";
+    // ── Shared neon road (all themes) ────────────────────────────────────────
+    const neonAccent = theme === "city"     ? "#00ffcc"
+      : theme === "night"    ? "#00ffff"
+      : theme === "mountain" ? "#44ffcc"
+      : "#ff00cc";
+    ctx.fillStyle = theme === "city" || theme === "night" ? "#04041a" : "#0a0018";
+    ctx.fillRect(0, roadTop, width, 18);
+    ctx.fillStyle = "#060610";
     ctx.fillRect(0, height - 90, width, 90);
-
-    // Curb
-    ctx.fillStyle = theme === "night" ? "#444" : "#8a929e";
-    ctx.fillRect(0, height - 92, width, 5);
-
-    // Road markings
-    const dashSpeed = theme === "highway" ? 6.0 : 3.8;
-    ctx.strokeStyle = theme === "night" ? "rgba(255,200,0,0.5)" : "rgba(255,255,255,0.4)";
-    ctx.lineWidth = 4;
-    for (let i = -1; i < 7; i++) {
-      const xPos = ((time * dashSpeed) % (width + 180)) + i * (width / 5.5) - 90;
-      ctx.beginPath(); ctx.moveTo(xPos, height - 50); ctx.lineTo(xPos + 60, height - 50); ctx.stroke();
+    ctx.shadowColor = neonAccent; ctx.shadowBlur = 14;
+    ctx.strokeStyle = neonAccent; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.moveTo(0, roadTop); ctx.lineTo(width, roadTop); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    ctx.shadowColor = neonAccent; ctx.shadowBlur = 8;
+    ctx.strokeStyle = neonAccent; ctx.lineWidth = 2; ctx.globalAlpha = 0.45;
+    ctx.beginPath(); ctx.moveTo(0, height - 4); ctx.lineTo(width, height - 4); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    const dashClr = theme === "night" ? "#00ffff" : theme === "city" ? "#00ccff" : "#ff44ff";
+    ctx.shadowColor = dashClr; ctx.shadowBlur = 10; ctx.strokeStyle = dashClr; ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.7;
+    for (let i = -1; i < 8; i++) {
+      const xPos = ((time * 4.5) % (width + 180)) + i * (width / 5.5) - 90;
+      ctx.beginPath(); ctx.moveTo(xPos, height - 50); ctx.lineTo(xPos + 55, height - 50); ctx.stroke();
     }
-    // Highway gets double centre line
-    if (theme === "highway") {
-      ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 3;
-      for (let i = -1; i < 7; i++) {
-        const xPos = ((time * dashSpeed) % (width + 180)) + i * (width / 5.5) - 90;
-        ctx.beginPath(); ctx.moveTo(xPos, height - 30); ctx.lineTo(xPos + 60, height - 30); ctx.stroke();
-      }
+    ctx.globalAlpha = 0.45;
+    for (let i = -1; i < 8; i++) {
+      const xPos = ((time * 4.5) % (width + 180)) + i * (width / 5.5) - 90;
+      ctx.beginPath(); ctx.moveTo(xPos, height - 24); ctx.lineTo(xPos + 55, height - 24); ctx.stroke();
     }
-    // Night streetlights
-    if (theme === "night") {
-      for (let i = 0; i < 6; i++) {
-        const lx = ((width * 0.18 * i - time * 2.0) % (width + 100) + width + 100) % (width + 100) - 50;
-        // Pole
-        ctx.fillStyle = "#555"; ctx.fillRect(lx - 3, height - 108 - 80, 6, 80);
-        // Arm
-        ctx.fillStyle = "#555"; ctx.fillRect(lx - 3, height - 108 - 80, 28, 5);
-        // Light glow
-        ctx.fillStyle = "rgba(255,200,60,0.9)";
-        ctx.beginPath(); ctx.arc(lx + 25, height - 108 - 78, 6, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "rgba(255,200,60,0.08)";
-        ctx.beginPath(); ctx.ellipse(lx + 25, height - 108 - 40, 55, 55, 0, 0, Math.PI * 2); ctx.fill();
-      }
-    }
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
   };
 
   // ── Obstacle drawings ──────────────────────────────────────────────────────
@@ -1192,17 +1224,22 @@ export default function Game() {
   const drawSpeechBubble = (ctx: CanvasRenderingContext2D, x: number, y: number, text: string, alpha: number) => {
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-    ctx.font = "bold 16px Arial";
-    const w = Math.min(300, ctx.measureText(text).width + 28);
+    const AF = "'Press Start 2P', 'Courier New', monospace";
+    ctx.font = `11px ${AF}`;
+    const w = Math.min(340, ctx.measureText(text).width + 28);
     const h = 36;
-    const bx = x - w / 2, by = y - h;
-    ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
-    ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 12); ctx.fill();
-    // tail pointing down to the character
-    ctx.beginPath(); ctx.moveTo(x - 9, by + h - 1); ctx.lineTo(x + 9, by + h - 1); ctx.lineTo(x - 2, by + h + 13); ctx.closePath(); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#222"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const bx = x - w / 2; const by = y - h;
+    ctx.fillStyle = "#000012";
+    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 3); ctx.fill();
+    ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 10;
+    ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 3); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#000012";
+    ctx.beginPath(); ctx.moveTo(x - 7, by + h - 1); ctx.lineTo(x + 7, by + h - 1); ctx.lineTo(x, by + h + 11); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x - 7, by + h - 1); ctx.lineTo(x, by + h + 11); ctx.lineTo(x + 7, by + h - 1); ctx.stroke();
+    ctx.fillStyle = "#00ffcc"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(text, x, by + h / 2);
     ctx.textBaseline = "alphabetic";
     ctx.restore();
@@ -1479,65 +1516,54 @@ export default function Game() {
 
       for (const o of st.obstacles) drawObstacle(ctx, o, height);
 
-      // Draw floating platforms
+      // Draw floating platforms — neon electric style
       ctx.save();
       for (const plat of st.platforms) {
         const pw = plat.w;
-        // Main surface
-        ctx.fillStyle = "#4a7c28";
-        ctx.beginPath(); ctx.roundRect(plat.x, plat.y - 2, pw, 18, [6, 6, 3, 3]); ctx.fill();
-        // Top highlight
-        ctx.fillStyle = "#6cb840";
-        ctx.beginPath(); ctx.roundRect(plat.x + 3, plat.y - 2, pw - 6, 9, [5, 5, 0, 0]); ctx.fill();
-        // Grass tufts
-        ctx.fillStyle = "#88d848";
-        for (let tx = plat.x + 12; tx < plat.x + pw - 10; tx += 22) {
-          ctx.beginPath(); ctx.ellipse(tx, plat.y - 5, 7, 5, 0, Math.PI, 0); ctx.fill();
-        }
-        // Underside / wood
-        ctx.fillStyle = "#2e4c18";
-        ctx.fillRect(plat.x + 2, plat.y + 14, pw - 4, 8);
-        // Vertical struts
-        ctx.fillStyle = "#3a6020";
-        const strutSpacing = Math.min(40, pw / 2);
-        for (let sx = plat.x + strutSpacing * 0.4; sx < plat.x + pw - 4; sx += strutSpacing) {
-          ctx.fillRect(sx - 3, plat.y + 20, 6, 20);
+        ctx.fillStyle = "#001428";
+        ctx.beginPath(); ctx.roundRect(plat.x, plat.y, pw, 16, [3, 3, 2, 2]); ctx.fill();
+        ctx.shadowColor = "#00ccff"; ctx.shadowBlur = 14;
+        ctx.fillStyle = "#00aaff";
+        ctx.beginPath(); ctx.roundRect(plat.x, plat.y, pw, 5, [3, 3, 0, 0]); ctx.fill();
+        ctx.strokeStyle = "#00ccff"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.roundRect(plat.x, plat.y, pw, 16, [3, 3, 2, 2]); ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#005588";
+        for (let px2 = plat.x + 8; px2 < plat.x + pw - 8; px2 += 16) {
+          ctx.fillRect(px2, plat.y + 7, 8, 2);
+          ctx.fillRect(px2, plat.y + 11, 8, 2);
         }
       }
       ctx.restore();
 
-      // Draw ropes (scrolling ones + active swing)
+      // Draw ropes — electric neon style
       ctx.save();
       ctx.lineCap = "round";
       const drawRopeVisual = (ax: number, ay: number, ex: number, ey: number) => {
         // Anchor beam
-        ctx.fillStyle = "#3a2208";
-        ctx.beginPath(); ctx.roundRect(ax - 24, ay - 12, 48, 16, 6); ctx.fill();
-        ctx.fillStyle = "#6b4c1e";
-        ctx.beginPath(); ctx.roundRect(ax - 20, ay - 10, 40, 12, 4); ctx.fill();
-        // Rope shadow
-        ctx.strokeStyle = "rgba(0,0,0,0.25)";
-        ctx.lineWidth = 10;
-        ctx.beginPath(); ctx.moveTo(ax + 1, ay + 5); ctx.lineTo(ex + 1, ey + 1); ctx.stroke();
-        // Outer rope strand
-        ctx.strokeStyle = "#7a5510";
-        ctx.lineWidth = 9;
+        ctx.fillStyle = "#1a0a00";
+        ctx.beginPath(); ctx.roundRect(ax - 22, ay - 10, 44, 14, 3); ctx.fill();
+        ctx.shadowColor = "#ffaa00"; ctx.shadowBlur = 10;
+        ctx.strokeStyle = "#ffaa00"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.roundRect(ax - 22, ay - 10, 44, 14, 3); ctx.stroke();
+        ctx.shadowBlur = 0;
+        // Rope glow (outer)
+        ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 18;
+        ctx.strokeStyle = "#aa6600"; ctx.lineWidth = 8;
         ctx.beginPath(); ctx.moveTo(ax, ay + 4); ctx.lineTo(ex, ey); ctx.stroke();
-        // Inner highlight strand
-        ctx.strokeStyle = "#d4a030";
-        ctx.lineWidth = 5;
+        // Rope bright core
+        ctx.strokeStyle = "#ffdd00"; ctx.lineWidth = 4;
         ctx.beginPath(); ctx.moveTo(ax, ay + 4); ctx.lineTo(ex, ey); ctx.stroke();
-        // Bright gleam
-        ctx.strokeStyle = "rgba(255,230,140,0.35)";
-        ctx.lineWidth = 2;
+        ctx.shadowBlur = 0;
+        // White gleam
+        ctx.strokeStyle = "rgba(255,255,200,0.6)"; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(ax + 1, ay + 4); ctx.lineTo(ex + 1, ey); ctx.stroke();
         // Grab knot
-        ctx.fillStyle = "#3a1c06";
-        ctx.beginPath(); ctx.arc(ex, ey, 12, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#a86820";
-        ctx.beginPath(); ctx.arc(ex, ey, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "rgba(255,210,120,0.5)";
-        ctx.beginPath(); ctx.arc(ex - 2, ey - 2, 3.5, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 16;
+        ctx.fillStyle = "#884400"; ctx.beginPath(); ctx.arc(ex, ey, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#ffcc00"; ctx.beginPath(); ctx.arc(ex, ey, 7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#ffee88"; ctx.beginPath(); ctx.arc(ex - 2, ey - 2, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
       };
       for (const rope of st.ropes) {
         drawRopeVisual(rope.x, rope.anchorY, rope.x, rope.anchorY + rope.length);
@@ -1599,53 +1625,83 @@ export default function Game() {
 
       ctx.restore(); // end screen shake
 
-      // HUD
-      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 6;
-      ctx.fillStyle = theme === "night" ? "#ffd700" : "#fff";
-      ctx.font = "bold 52px Arial"; ctx.textAlign = "left";
-      ctx.fillText(String(Math.floor(st.levelScore)), 38, 74);
-      ctx.font = "bold 20px Arial";
-      ctx.fillText("BEST " + st.bestScore, 40, 102);
+      // HUD — retro arcade style
+      const AF = "'Press Start 2P', 'Courier New', monospace";
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
 
-      // Coin counter (top-right, under the music toggle)
-      ctx.textAlign = "right"; ctx.fillStyle = "#ffcf33"; ctx.font = "bold 26px Arial";
-      ctx.fillText("🪙 " + st.coinBalance, width - 24, 92);
-      ctx.textAlign = "left";
-
-      // Level pill
-      const lvlText = `LVL ${st.currentLevel}`;
-      ctx.font = "bold 18px Arial"; ctx.textAlign = "center";
-      const lvlW = ctx.measureText(lvlText).width + 28;
-      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.beginPath(); ctx.roundRect(38, 112, lvlW, 28, 8); ctx.fill();
-      ctx.fillStyle = "#ffd700"; ctx.shadowBlur = 0; ctx.fillText(lvlText, 38 + lvlW/2, 131);
-
-      // Level progress bar
-      const progress = Math.min(1, st.levelScore / lvlDef.target);
-      const barW = 180; const barX = 38; const barY = 145;
-      ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.beginPath(); ctx.roundRect(barX, barY, barW, 8, 4); ctx.fill();
-      const barGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-      barGrad.addColorStop(0, "#4eff91"); barGrad.addColorStop(1, "#00c853");
-      ctx.fillStyle = barGrad; ctx.beginPath(); ctx.roundRect(barX, barY, barW * progress, 8, 4); ctx.fill();
+      // Score (6-digit zero-padded)
+      ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 16;
+      ctx.fillStyle = "#00ffff"; ctx.font = `bold 44px ${AF}`;
+      ctx.fillText(String(Math.floor(st.levelScore)).padStart(6, "0"), 20, 68);
       ctx.shadowBlur = 0;
 
-      // Game over panel (on canvas)
-      if (!st.gameRunning && !st.levelComplete && st.totalScore > 0) {
-        ctx.fillStyle = "rgba(0,0,0,0.78)";
-        ctx.beginPath(); ctx.roundRect(width/2-250, height/2-145, 500, 290, 20); ctx.fill();
-        ctx.fillStyle = "#ff6b6b"; ctx.textAlign = "center";
-        ctx.font = "bold 48px Arial"; ctx.fillText("OUCH! 🤕", width/2, height/2 - 70);
-        ctx.fillStyle = "#fff"; ctx.font = "bold 26px Arial";
-        ctx.fillText(`Level ${st.currentLevel}: ${Math.floor(st.levelScore)} / ${lvlDef.target}`, width/2, height/2 - 26);
-        ctx.fillStyle = "#aaa"; ctx.font = "20px Arial";
-        ctx.fillText(`Total distance: ${Math.floor(st.totalScore)}`, width/2, height/2 + 10);
-        if (Math.floor(st.totalScore) >= st.bestScore && st.totalScore > 5) {
-          ctx.fillStyle = "#ffd700"; ctx.font = "bold 24px Arial"; ctx.fillText("★ NEW RECORD! ★", width/2, height/2 + 48);
-        }
-        ctx.fillStyle = "#ddd"; ctx.font = "20px Arial";
-        ctx.fillText("Tap or press SPACE to retry this level", width/2, height/2 + 110);
+      // Best score
+      ctx.shadowColor = "#ff00ff"; ctx.shadowBlur = 10;
+      ctx.fillStyle = "#ff00ff"; ctx.font = `10px ${AF}`;
+      ctx.fillText("BEST " + st.bestScore, 22, 90);
+      ctx.shadowBlur = 0;
+
+      // Coin counter (top-right)
+      ctx.textAlign = "right";
+      ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 12;
+      ctx.fillStyle = "#ffee00"; ctx.font = `11px ${AF}`;
+      ctx.fillText("\u2605 " + st.coinBalance, width - 20, 90);
+      ctx.shadowBlur = 0; ctx.textAlign = "left";
+
+      // Level pill
+      const lvlText = `LV${st.currentLevel}`;
+      ctx.font = `10px ${AF}`;
+      const lvlW = ctx.measureText(lvlText).width + 22;
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(20, 102, lvlW, 22, 3); ctx.fill(); ctx.stroke();
+      ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 8;
+      ctx.fillStyle = "#00ffcc"; ctx.textAlign = "center";
+      ctx.fillText(lvlText, 20 + lvlW / 2, 118);
+      ctx.shadowBlur = 0; ctx.textAlign = "left";
+
+      // Progress bar — neon
+      const progress = Math.min(1, st.levelScore / lvlDef.target);
+      const barW = 180; const barX = 20; const barY = 132;
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.strokeStyle = "rgba(0,150,100,0.4)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(barX, barY, barW, 7, 2); ctx.fill(); ctx.stroke();
+      if (progress > 0) {
+        const bg = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+        bg.addColorStop(0, "#00ffcc"); bg.addColorStop(0.5, "#00ff88"); bg.addColorStop(1, "#44ff00");
+        ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 10;
+        ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(barX, barY, barW * progress, 7, 2); ctx.fill();
+        ctx.shadowBlur = 0;
       }
 
-      // Red screen flash on crash
+      // Game over panel — GAME OVER arcade style
+      if (!st.gameRunning && !st.levelComplete && st.totalScore > 0) {
+        ctx.fillStyle = "rgba(0,0,0,0.88)";
+        ctx.strokeStyle = "#ff0044"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.roundRect(width/2-220, height/2-148, 440, 296, 4); ctx.fill();
+        ctx.shadowColor = "#ff0044"; ctx.shadowBlur = 24; ctx.stroke(); ctx.shadowBlur = 0;
+        ctx.shadowColor = "#ff0044"; ctx.shadowBlur = 20;
+        ctx.fillStyle = "#ff0044"; ctx.textAlign = "center";
+        ctx.font = `24px ${AF}`; ctx.fillText("GAME OVER", width/2, height/2 - 86);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#00ffcc"; ctx.font = `10px ${AF}`;
+        ctx.fillText(`LEVEL ${st.currentLevel}`, width/2, height/2 - 48);
+        ctx.fillStyle = "#ffffff"; ctx.font = `10px ${AF}`;
+        ctx.fillText(`${Math.floor(st.levelScore)} / ${lvlDef.target} m`, width/2, height/2 - 24);
+        ctx.fillStyle = "#555555"; ctx.font = `9px ${AF}`;
+        ctx.fillText(`TOTAL: ${Math.floor(st.totalScore)} m`, width/2, height/2 + 6);
+        if (Math.floor(st.totalScore) >= st.bestScore && st.totalScore > 5) {
+          ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 16;
+          ctx.fillStyle = "#ffee00"; ctx.font = `10px ${AF}`;
+          ctx.fillText("\u2605 NEW RECORD \u2605", width/2, height/2 + 46);
+          ctx.shadowBlur = 0;
+        }
+        ctx.fillStyle = "#444444"; ctx.font = `8px ${AF}`;
+        ctx.fillText("PRESS SPACE TO RETRY", width/2, height/2 + 106);
+        ctx.textAlign = "left";
+      }
+
+      // Red crash flash
       if (st.crashFlash > 0) {
         const flashAlpha = (st.crashFlash / 28) * 0.55;
         ctx.fillStyle = `rgba(180,0,0,${flashAlpha})`;
@@ -1712,65 +1768,75 @@ export default function Game() {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const font = "Arial, sans-serif";
+  const font = "'Courier New', monospace";
+  const retroFont = "'Press Start 2P', monospace";
   const overlay: React.CSSProperties = {
     position:"absolute", inset:0, display:"flex", flexDirection:"column",
     alignItems:"center", justifyContent:"center", zIndex:10, fontFamily:font,
   };
 
   return (
-    <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#87CEEB", touchAction:"none" }}>
+    <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#000008", touchAction:"none" }}>
       <canvas ref={canvasRef} style={{ display:"block" }} onPointerDown={handleCanvasClick}
         onPointerUp={() => releaseJump()} onPointerLeave={() => releaseJump()} onPointerCancel={() => releaseJump()} />
+      <div className="arcade-vignette" />
+      <div className="arcade-scanlines" />
 
       {/* ── Start screen ── */}
       {screen === "start" && (
-        <div style={{ ...overlay, background:"rgba(0,0,0,0.5)", color:"#fff", textShadow:"0 2px 4px rgba(0,0,0,0.7)" }}>
-          <div style={{ fontSize:"4rem", fontWeight:"bold", color:"#ffd700", textShadow:"0 4px 10px rgba(0,0,0,0.6)", marginBottom:8, fontFamily:font }}>
+        <div style={{ ...overlay, background:"rgba(0,0,0,0.82)" }}>
+          <div className="arcade-neon-pulse" style={{ fontFamily:retroFont, fontSize:"1.7rem", color:"#ffee00", marginBottom:8, letterSpacing:"0.04em", textAlign:"center", textShadow:"0 0 12px #ffee00, 0 0 30px #ff8800" }}>
             👆 FINGER RUNNER
           </div>
-          <p style={{ fontSize:"1.05rem", margin:"10px auto 6px", maxWidth:520, lineHeight:1.5, color:"#ffe9a8", fontStyle:"italic" }}>
+          <p style={{ fontSize:"0.58rem", fontFamily:retroFont, margin:"8px auto 4px", maxWidth:500, lineHeight:2.5, color:"#00ffcc", textShadow:"0 0 8px #00ffcc", textAlign:"center" }}>
             {STORY_INTRO}
           </p>
-          <p style={{ fontSize:"1.3rem", margin:"4px 0" }}>Tap / hold SPACE to jump • double-tap for a double jump • Clear 8 levels</p>
-          <p style={{ fontSize:"1.1rem", margin:"4px 0", color:"#aef" }}>
-            {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked • collect 🪙 coins for more!
+          <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff88ff", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff88ff", textAlign:"center" }}>
+            TAP / SPACE TO JUMP · DOUBLE TAP = DOUBLE JUMP
           </p>
-          <div style={{ display:"flex", gap:16, marginTop:28 }}>
-            <button onClick={() => startLevel(1)}
-              onMouseDown={btnPress} onMouseUp={btnRelease}
-              style={{ padding:"16px 44px", fontSize:"1.5rem", background:"#ff4757", color:"#fff", border:"none",
-                borderRadius:60, cursor:"pointer", boxShadow:"0 8px 0 #c2363e", fontFamily:font, fontWeight:"bold" }}>
-              START RUNNING
+          <p style={{ fontSize:"0.52rem", fontFamily:retroFont, margin:"0 0 4px", color:"#555", lineHeight:2.5, textAlign:"center" }}>
+            {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked · collect ★ coins
+          </p>
+          <div style={{ display:"flex", gap:16, marginTop:20 }}>
+            <button onClick={() => startLevel(1)} className="retro-btn"
+              style={{ padding:"14px 30px", fontSize:"0.78rem", fontFamily:retroFont,
+                background:"transparent", color:"#ff4444",
+                border:"3px solid #ff4444",
+                boxShadow:"0 0 14px #ff4444, inset 0 0 14px rgba(255,68,68,0.08)",
+                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
+              ▶ START
             </button>
-            <button onClick={openWardrobe}
-              onMouseDown={btnPress} onMouseUp={btnRelease}
-              style={{ padding:"16px 28px", fontSize:"1.4rem", background:"#7c4dff", color:"#fff", border:"none",
-                borderRadius:60, cursor:"pointer", boxShadow:"0 8px 0 #5a2fd0", fontFamily:font, fontWeight:"bold" }}>
-              👕 WARDROBE
+            <button onClick={openWardrobe} className="retro-btn"
+              style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
+                background:"transparent", color:"#aa44ff",
+                border:"3px solid #aa44ff",
+                boxShadow:"0 0 14px #aa44ff, inset 0 0 14px rgba(170,68,255,0.08)",
+                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
+              WARDROBE
             </button>
           </div>
           {/* Level select */}
-          <div style={{ marginTop:24, display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center", maxWidth:560 }}>
+          <div style={{ marginTop:18, display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center", maxWidth:600 }}>
             {LEVELS.map((lv, idx) => {
               const unlocked = lv.num <= getMaxLevel();
               const best = levelBests[idx];
               const medal = getMedal(lv.num);
-              const borderColor = medal === "gold" ? "#ffd700" : medal === "silver" ? "#c0c0c0" : medal === "bronze" ? "#cd7f32" : unlocked ? "#4a9eff" : "#555";
+              const neonBorder = medal === "gold" ? "#ffd700" : medal === "silver" ? "#c0c0c0" : medal === "bronze" ? "#cd7f32" : unlocked ? "#00aaff" : "#333";
               return (
                 <button key={lv.num}
                   onClick={() => unlocked && startLevel(lv.num)}
-                  onMouseDown={unlocked ? btnPress : undefined} onMouseUp={unlocked ? btnRelease : undefined}
-                  style={{ padding:"8px 14px", fontSize:"0.85rem", fontWeight:"bold",
-                    background: unlocked ? (medal ? "rgba(26,115,232,0.85)" : "#1a73e8") : "rgba(255,255,255,0.15)",
-                    color: unlocked ? "#fff" : "#888",
-                    border: `2px solid ${borderColor}`,
-                    borderRadius:20, cursor: unlocked ? "pointer" : "default", fontFamily:font,
-                    display:"flex", flexDirection:"column", alignItems:"center", gap:2, minWidth:110 }}>
-                  <span>{unlocked ? `${lv.num}. ${lv.name}` : `🔒 Lv ${lv.num}`}</span>
+                  className={unlocked ? "retro-btn" : undefined}
+                  style={{ padding:"7px 11px", fontSize:"0.52rem", fontFamily:retroFont,
+                    background:"rgba(0,0,0,0.65)",
+                    color: unlocked ? "#fff" : "#444",
+                    border: `2px solid ${neonBorder}`,
+                    boxShadow: unlocked ? `0 0 7px ${neonBorder}` : "none",
+                    cursor: unlocked ? "pointer" : "default",
+                    display:"flex", flexDirection:"column", alignItems:"center", gap:2, minWidth:96, lineHeight:2 }}>
+                  <span>{unlocked ? `${lv.num}. ${lv.name}` : `🔒 LV${lv.num}`}</span>
                   {unlocked && (
-                    <span style={{ fontSize:"0.75rem", fontWeight:"normal", color: medal ? MEDAL_COLOR[medal] : "#adf", letterSpacing:"0.03em" }}>
-                      {medal ? MEDAL_EMOJI[medal] : "–"} {best > 0 ? `${best} / ${lv.target}` : "no run"}
+                    <span style={{ fontSize:"0.48rem", color: medal ? MEDAL_COLOR[medal] : "#00ffcc" }}>
+                      {medal ? MEDAL_EMOJI[medal] : "–"} {best > 0 ? `${best}/${lv.target}` : "no run"}
                     </span>
                   )}
                 </button>
@@ -1782,65 +1848,69 @@ export default function Game() {
 
       {/* ── Wardrobe screen ── */}
       {screen === "wardrobe" && (
-        <div style={{ ...overlay, background:"rgba(10,10,30,0.92)", color:"#fff" }}>
-          <div style={{ background:"rgba(255,255,255,0.07)", borderRadius:24, padding:"32px 40px", maxWidth:540, width:"90%", boxShadow:"0 8px 40px rgba(0,0,0,0.6)" }}>
-            <h2 style={{ fontSize:"2rem", margin:"0 0 6px 0", color:"#ffd700", textAlign:"center", fontFamily:font }}>👕 WARDROBE</h2>
-            <p style={{ color:"#aaa", textAlign:"center", margin:"0 0 12px 0", fontFamily:font }}>Earn outfits by leveling up — or buy them with 🪙 coins</p>
-            <div style={{ textAlign:"center", margin:"0 0 20px 0" }}>
-              <span style={{ display:"inline-block", background:"rgba(255,207,51,0.15)", border:"2px solid #ffcf33",
-                borderRadius:30, padding:"6px 18px", fontSize:"1.2rem", fontWeight:"bold", color:"#ffcf33", fontFamily:font }}>
-                🪙 {coinBalance} coins
+        <div style={{ ...overlay, background:"rgba(0,0,10,0.94)" }}>
+          <div style={{ background:"rgba(0,255,204,0.03)", border:"2px solid #00ffcc44", boxShadow:"0 0 30px rgba(0,255,204,0.12)", borderRadius:3, padding:"26px 32px", maxWidth:540, width:"90%" }}>
+            <h2 style={{ fontSize:"0.85rem", margin:"0 0 6px 0", color:"#00ffcc", textAlign:"center", fontFamily:retroFont, textShadow:"0 0 12px #00ffcc", letterSpacing:"0.06em" }}>WARDROBE</h2>
+            <p style={{ color:"#555", textAlign:"center", margin:"0 0 12px 0", fontFamily:font, fontSize:"0.75rem" }}>Level up or spend ★ coins to unlock outfits</p>
+            <div style={{ textAlign:"center", margin:"0 0 14px 0" }}>
+              <span style={{ display:"inline-block", background:"rgba(255,238,0,0.08)", border:"2px solid #ffee00",
+                boxShadow:"0 0 10px rgba(255,238,0,0.25)", borderRadius:2, padding:"5px 16px", fontSize:"0.72rem", fontFamily:retroFont, color:"#ffee00" }}>
+                ★ {coinBalance} COINS
               </span>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, maxHeight:"50vh", overflowY:"auto" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, maxHeight:"50vh", overflowY:"auto" }}>
               {HATS.map(hat => {
                 const owned = isHatUnlocked(hat, ownedOutfits);
                 const isCoin = hat.cost != null;
                 const equipped = equippedHat === hat.id;
                 const affordable = coinBalance >= (hat.cost ?? 0);
                 const subtitle = isCoin
-                  ? (owned ? "Owned" : `Buy: 🪙 ${hat.cost}`)
+                  ? (owned ? "Owned" : `Buy: ★ ${hat.cost}`)
                   : (hat.unlockLevel === 0 ? "Always available" : `Unlock: Level ${hat.unlockLevel}`);
                 return (
                   <div key={hat.id}
-                    style={{ background: equipped ? "rgba(124,77,255,0.3)" : "rgba(255,255,255,0.06)",
-                      border: `2px solid ${equipped ? "#7c4dff" : owned ? "#555" : "#333"}`,
-                      borderRadius:14, padding:"14px 16px", display:"flex", alignItems:"center", gap:12,
-                      opacity: owned ? 1 : 0.7 }}>
-                    <span style={{ fontSize:"2rem" }}>{hat.emoji}</span>
+                    style={{ background: equipped ? "rgba(0,255,204,0.07)" : "rgba(255,255,255,0.02)",
+                      border: `2px solid ${equipped ? "#00ffcc" : owned ? "#333" : "#222"}`,
+                      boxShadow: equipped ? "0 0 10px rgba(0,255,204,0.22)" : "none",
+                      borderRadius:3, padding:"11px 13px", display:"flex", alignItems:"center", gap:10,
+                      opacity: owned ? 1 : 0.55 }}>
+                    <span style={{ fontSize:"1.8rem" }}>{hat.emoji}</span>
                     <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontWeight:"bold", fontSize:"1rem", fontFamily:font }}>{hat.name}</div>
-                      <div style={{ fontSize:"0.8rem", color:"#aaa", fontFamily:font }}>{subtitle}</div>
+                      <div style={{ fontWeight:"bold", fontSize:"0.62rem", fontFamily:retroFont, color:"#fff", lineHeight:1.9 }}>{hat.name}</div>
+                      <div style={{ fontSize:"0.6rem", color:"#555", fontFamily:font }}>{subtitle}</div>
                     </div>
                     {owned ? (
-                      <button onClick={() => handleEquipHat(hat.id)}
-                        onMouseDown={btnPress} onMouseUp={btnRelease}
-                        style={{ padding:"6px 14px", fontSize:"0.85rem", fontWeight:"bold",
-                          background: equipped ? "#7c4dff" : "#333", color:"#fff",
-                          border:"none", borderRadius:20, cursor:"pointer", fontFamily:font }}>
+                      <button onClick={() => handleEquipHat(hat.id)} className="retro-btn"
+                        style={{ padding:"5px 10px", fontSize:"0.58rem", fontFamily:retroFont,
+                          background: equipped ? "rgba(0,255,204,0.18)" : "transparent",
+                          color: equipped ? "#00ffcc" : "#777",
+                          border:`2px solid ${equipped ? "#00ffcc" : "#444"}`,
+                          boxShadow: equipped ? "0 0 8px rgba(0,255,204,0.35)" : "none",
+                          cursor:"pointer", lineHeight:2 }}>
                         {equipped ? "✓ ON" : "EQUIP"}
                       </button>
                     ) : isCoin ? (
-                      <button onClick={() => affordable && handleBuyOutfit(hat)}
-                        onMouseDown={affordable ? btnPress : undefined} onMouseUp={affordable ? btnRelease : undefined}
+                      <button onClick={() => affordable && handleBuyOutfit(hat)} className={affordable ? "retro-btn" : undefined}
                         disabled={!affordable}
-                        style={{ padding:"6px 14px", fontSize:"0.85rem", fontWeight:"bold",
-                          background: affordable ? "#ffcf33" : "#333", color: affordable ? "#222" : "#777",
-                          border:"none", borderRadius:20, cursor: affordable ? "pointer" : "not-allowed", fontFamily:font }}>
-                        🪙 {hat.cost}
+                        style={{ padding:"5px 10px", fontSize:"0.58rem", fontFamily:retroFont,
+                          background: affordable ? "rgba(255,238,0,0.12)" : "transparent",
+                          color: affordable ? "#ffee00" : "#444",
+                          border:`2px solid ${affordable ? "#ffee00" : "#333"}`,
+                          boxShadow: affordable ? "0 0 8px rgba(255,238,0,0.25)" : "none",
+                          cursor: affordable ? "pointer" : "not-allowed", lineHeight:2 }}>
+                        ★ {hat.cost}
                       </button>
                     ) : (
-                      <span style={{ fontSize:"0.8rem", color:"#666", fontFamily:font }}>🔒 Lv {hat.unlockLevel}</span>
+                      <span style={{ fontSize:"0.52rem", color:"#444", fontFamily:retroFont, lineHeight:2 }}>🔒 LV{hat.unlockLevel}</span>
                     )}
                   </div>
                 );
               })}
             </div>
-            <button onClick={() => setScreen("start")}
-              onMouseDown={btnPress} onMouseUp={btnRelease}
-              style={{ marginTop:24, width:"100%", padding:"14px", fontSize:"1.1rem", fontWeight:"bold",
-                background:"#444", color:"#fff", border:"none", borderRadius:40, cursor:"pointer", fontFamily:font }}>
-              ← Back
+            <button onClick={() => setScreen("start")} className="retro-btn"
+              style={{ marginTop:18, width:"100%", padding:"11px", fontSize:"0.66rem", fontFamily:retroFont,
+                background:"transparent", color:"#444", border:"2px solid #333", cursor:"pointer", letterSpacing:"0.05em" }}>
+              ← BACK
             </button>
           </div>
         </div>
@@ -1848,87 +1918,75 @@ export default function Game() {
 
       {/* ── Level Complete screen ── */}
       {screen === "levelComplete" && (
-        <div style={{ ...overlay, background:"rgba(0,0,0,0.7)" }}>
-          <div style={{ background:"linear-gradient(135deg,#1a1a3a,#2a2a5a)", borderRadius:24, padding:"36px 44px",
-            maxWidth:480, width:"90%", textAlign:"center", boxShadow:"0 12px 60px rgba(0,0,0,0.8)",
-            border:"2px solid rgba(255,215,0,0.3)" }}>
-            <div style={{ fontSize:"3rem", marginBottom:8 }}>🎉</div>
-            <h2 style={{ fontSize:"2.2rem", color:"#ffd700", margin:"0 0 6px 0", fontFamily:font }}>LEVEL COMPLETE!</h2>
-            <p style={{ fontSize:"1.2rem", color:"#adf", margin:"0 0 10px 0", fontFamily:font }}>
+        <div style={{ ...overlay, background:"rgba(0,0,0,0.84)" }}>
+          <div style={{ background:"rgba(0,0,20,0.96)", border:"3px solid #00ffcc", boxShadow:"0 0 40px rgba(0,255,204,0.22), 0 0 80px rgba(0,255,204,0.07)",
+            borderRadius:4, padding:"30px 38px", maxWidth:480, width:"90%", textAlign:"center" }}>
+            <div style={{ fontSize:"2.4rem", marginBottom:6 }}>🎉</div>
+            <h2 style={{ fontSize:"0.85rem", color:"#00ffcc", margin:"0 0 4px 0", fontFamily:retroFont, textShadow:"0 0 14px #00ffcc", letterSpacing:"0.06em" }}>STAGE CLEAR!</h2>
+            <p style={{ fontSize:"0.58rem", color:"#ff88ff", margin:"0 0 8px 0", fontFamily:retroFont, textShadow:"0 0 8px #ff88ff", lineHeight:2.2 }}>
               {getLevelDef(completedLevel).name}
             </p>
-            <p style={{ fontSize:"1rem", color:"#ffe9a8", fontStyle:"italic", margin:"0 0 16px 0", lineHeight:1.4 }}>
+            <p style={{ fontSize:"0.62rem", color:"#666", fontStyle:"italic", margin:"0 0 14px 0", lineHeight:1.8, fontFamily:font }}>
               {completedLevel < LEVELS.length
                 ? (LEVEL_STORY[completedLevel + 1] || "The road rolls on…")
                 : "Lefty & Middy made it home — knuckles weary, nails chipped, hearts full."}
             </p>
-            <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:12, padding:"12px 20px", marginBottom:16 }}>
-              <div style={{ fontSize:"1rem", color:"#aaa", fontFamily:font }}>Distance covered</div>
-              <div style={{ fontSize:"2rem", fontWeight:"bold", color:"#fff", fontFamily:font }}>
-                {Math.floor(stateRef.current.levelScore)} m
-              </div>
+            <div style={{ background:"rgba(0,255,204,0.05)", border:"1px solid #00ffcc33", borderRadius:3, padding:"10px 16px", marginBottom:12 }}>
+              <div style={{ fontSize:"0.52rem", color:"#00ffcc77", fontFamily:retroFont, lineHeight:2.2 }}>DISTANCE</div>
+              <div style={{ fontSize:"1.3rem", fontWeight:"bold", color:"#fff", fontFamily:retroFont }}>{Math.floor(stateRef.current.levelScore)} m</div>
             </div>
-            {/* Medal + best score */}
             {completedLevelMedal && (
-              <div style={{ background:`rgba(${completedLevelMedal==="gold"?"255,215,0":completedLevelMedal==="silver"?"192,192,192":"205,127,50"},0.12)`,
+              <div style={{ background:`rgba(${completedLevelMedal==="gold"?"255,238,0":completedLevelMedal==="silver"?"192,192,192":"205,127,50"},0.08)`,
                 border:`2px solid ${MEDAL_COLOR[completedLevelMedal]}`,
-                borderRadius:12, padding:"12px 20px", marginBottom:16 }}>
-                <div style={{ fontSize:"2.4rem", lineHeight:1 }}>{MEDAL_EMOJI[completedLevelMedal]}</div>
-                <div style={{ fontSize:"1.1rem", fontWeight:"bold", color: MEDAL_COLOR[completedLevelMedal], fontFamily:font, marginTop:4 }}>
+                boxShadow:`0 0 12px ${MEDAL_COLOR[completedLevelMedal]}44`,
+                borderRadius:3, padding:"10px 16px", marginBottom:12 }}>
+                <div style={{ fontSize:"1.9rem", lineHeight:1 }}>{MEDAL_EMOJI[completedLevelMedal]}</div>
+                <div style={{ fontSize:"0.6rem", fontFamily:retroFont, color: MEDAL_COLOR[completedLevelMedal], marginTop:4, textShadow:`0 0 8px ${MEDAL_COLOR[completedLevelMedal]}`, lineHeight:2.2 }}>
                   {completedLevelMedal.toUpperCase()} MEDAL
                 </div>
                 {completedLevelPrevBest === 0 ? (
-                  <div style={{ fontSize:"0.85rem", color:"#aaa", fontFamily:font }}>First clear!</div>
+                  <div style={{ fontSize:"0.58rem", color:"#666", fontFamily:font }}>First clear!</div>
                 ) : completedLevelPrevBest < getLevelDef(completedLevel).target ? (
-                  <div style={{ fontSize:"0.85rem", color:"#adf", fontFamily:font }}>
-                    Previous best: {completedLevelPrevBest} → 🥇 now!
-                  </div>
+                  <div style={{ fontSize:"0.58rem", color:"#00ffcc", fontFamily:font }}>Previous: {completedLevelPrevBest} → 🥇 now!</div>
                 ) : (
-                  <div style={{ fontSize:"0.85rem", color:"#aaa", fontFamily:font }}>
-                    Best: {getLevelBest(completedLevel)} m
-                  </div>
+                  <div style={{ fontSize:"0.58rem", color:"#666", fontFamily:font }}>Best: {getLevelBest(completedLevel)} m</div>
                 )}
               </div>
             )}
             {unlockedHat && (
-              <div style={{ background:"rgba(124,77,255,0.25)", border:"2px solid #7c4dff",
-                borderRadius:12, padding:"12px 20px", marginBottom:20 }}>
-                <div style={{ fontSize:"0.9rem", color:"#c5a9ff", fontFamily:font }}>NEW UNLOCK!</div>
-                <div style={{ fontSize:"2rem" }}>{unlockedHat.emoji}</div>
-                <div style={{ fontSize:"1.1rem", fontWeight:"bold", color:"#fff", fontFamily:font }}>{unlockedHat.name}</div>
-                <button onClick={() => handleEquipHat(unlockedHat.id)}
-                  onMouseDown={btnPress} onMouseUp={btnRelease}
-                  style={{ marginTop:8, padding:"6px 20px", fontSize:"0.9rem", background:"#7c4dff",
-                    color:"#fff", border:"none", borderRadius:20, cursor:"pointer", fontFamily:font }}>
-                  Equip it!
+              <div style={{ background:"rgba(170,68,255,0.10)", border:"2px solid #aa44ff", boxShadow:"0 0 14px rgba(170,68,255,0.28)", borderRadius:3, padding:"10px 16px", marginBottom:16 }}>
+                <div style={{ fontSize:"0.58rem", color:"#cc88ff", fontFamily:retroFont, lineHeight:2.2 }}>NEW UNLOCK!</div>
+                <div style={{ fontSize:"1.8rem" }}>{unlockedHat.emoji}</div>
+                <div style={{ fontSize:"0.62rem", fontFamily:retroFont, color:"#fff", lineHeight:2.2 }}>{unlockedHat.name}</div>
+                <button onClick={() => handleEquipHat(unlockedHat.id)} className="retro-btn"
+                  style={{ marginTop:6, padding:"6px 16px", fontSize:"0.58rem", fontFamily:retroFont,
+                    background:"rgba(170,68,255,0.18)", color:"#cc88ff", border:"2px solid #aa44ff",
+                    boxShadow:"0 0 8px rgba(170,68,255,0.28)", cursor:"pointer", lineHeight:2 }}>
+                  EQUIP IT
                 </button>
               </div>
             )}
-            <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
               {completedLevel < LEVELS.length && (
-                <button
-                  onClick={() => startLevel(completedLevel + 1)}
-                  onMouseDown={btnPress} onMouseUp={btnRelease}
-                  style={{ padding:"16px 36px", fontSize:"1.3rem", fontWeight:"bold", background:"#00c853",
-                    color:"#fff", border:"none", borderRadius:50, cursor:"pointer",
-                    boxShadow:"0 6px 0 #009624", fontFamily:font }}>
-                  Level {completedLevel + 1} →
+                <button onClick={() => startLevel(completedLevel + 1)} className="retro-btn"
+                  style={{ padding:"13px 26px", fontSize:"0.72rem", fontFamily:retroFont,
+                    background:"rgba(0,200,80,0.12)", color:"#00ff88", border:"3px solid #00ff88",
+                    boxShadow:"0 0 16px rgba(0,255,136,0.32)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+                  LV {completedLevel + 1} →
                 </button>
               )}
               {completedLevel >= LEVELS.length && (
-                <button onClick={() => startLevel(completedLevel + 1)}
-                  onMouseDown={btnPress} onMouseUp={btnRelease}
-                  style={{ padding:"16px 36px", fontSize:"1.3rem", fontWeight:"bold", background:"#ffd700",
-                    color:"#222", border:"none", borderRadius:50, cursor:"pointer",
-                    boxShadow:"0 6px 0 #b8960a", fontFamily:font }}>
-                  🏆 Keep Going!
+                <button onClick={() => startLevel(completedLevel + 1)} className="retro-btn"
+                  style={{ padding:"13px 26px", fontSize:"0.72rem", fontFamily:retroFont,
+                    background:"rgba(255,238,0,0.12)", color:"#ffee00", border:"3px solid #ffee00",
+                    boxShadow:"0 0 16px rgba(255,238,0,0.32)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+                  ★ KEEP GOING
                 </button>
               )}
-              <button onClick={() => setScreen("start")}
-                onMouseDown={btnPress} onMouseUp={btnRelease}
-                style={{ padding:"16px 24px", fontSize:"1.1rem", background:"#333",
-                  color:"#fff", border:"none", borderRadius:50, cursor:"pointer", fontFamily:font }}>
-                Menu
+              <button onClick={() => setScreen("start")} className="retro-btn"
+                style={{ padding:"13px 16px", fontSize:"0.68rem", fontFamily:retroFont,
+                  background:"transparent", color:"#444", border:"2px solid #333", cursor:"pointer", lineHeight:1.8 }}>
+                MENU
               </button>
             </div>
           </div>
@@ -1936,12 +1994,14 @@ export default function Game() {
       )}
 
       {/* ── Music toggle ── */}
-      <button onClick={handleToggleMusic}
-        style={{ position:"absolute", top:20, right:20, zIndex:20,
-          padding:"10px 18px", fontSize:"1.05rem",
-          background:"rgba(0,0,0,0.6)", color:"white",
-          border:"2px solid #ffd700", borderRadius:30, cursor:"pointer", fontFamily:font }}>
-        🎵 {musicOn ? "ON" : "OFF"}
+      <button onClick={handleToggleMusic} className="retro-btn"
+        style={{ position:"absolute", top:18, right:18, zIndex:20,
+          padding:"8px 14px", fontSize:"0.52rem", fontFamily:retroFont,
+          background:"rgba(0,0,0,0.8)", color: musicOn ? "#ffee00" : "#444",
+          border:`2px solid ${musicOn ? "#ffee00" : "#333"}`,
+          boxShadow: musicOn ? "0 0 10px rgba(255,238,0,0.38)" : "none",
+          cursor:"pointer", letterSpacing:"0.05em", lineHeight:2 }}>
+        ♪ {musicOn ? "ON" : "OFF"}
       </button>
     </div>
   );
