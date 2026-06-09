@@ -26,6 +26,10 @@ const BASE_SPEED = 2.0;
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
 const COIN_R = 13;
+const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice during these)
+const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
+const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
+const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -87,6 +91,29 @@ const HATS: { id: HatId; name: string; emoji: string; unlockLevel: number; cost?
   { id:"halo",      name:"Angel Halo",    emoji:"😇", unlockLevel:0, cost:200 },
 ];
 
+// ── Lightsaber tiers ──────────────────────────────────────────────────────────
+// The fingers wield a saber to slice obstacles mid-run. Tier 1 (red) is always
+// owned; higher tiers cost coins, glow a new colour, and reach a little further.
+type Saber = { tier: number; name: string; color: string; glow: string; reach: number; cost: number };
+const SABERS: Saber[] = [
+  { tier:1, name:"Red Saber",    color:"#ff2b2b", glow:"#ff6b6b", reach:120, cost:0   },
+  { tier:2, name:"Orange Saber", color:"#ff9500", glow:"#ffbe5c", reach:135, cost:60  },
+  { tier:3, name:"Green Saber",  color:"#34ff5e", glow:"#86ff9e", reach:150, cost:130 },
+  { tier:4, name:"Blue Saber",   color:"#36b8ff", glow:"#8fd9ff", reach:165, cost:230 },
+  { tier:5, name:"Purple Saber", color:"#b14bff", glow:"#d49bff", reach:185, cost:380 },
+];
+function getSaberDef(tier: number): Saber { return SABERS[Math.min(SABERS.length, Math.max(1, tier)) - 1]; }
+function getSaberLevel(): number {
+  const raw = parseInt(localStorage.getItem("fingerRunnerSaber") || "1", 10);
+  const tier = Number.isFinite(raw) ? raw : 1;
+  return Math.min(SABERS.length, Math.max(1, tier));
+}
+function setSaberLevelLS(n: number) { localStorage.setItem("fingerRunnerSaber", String(n)); }
+
+// ── Kids / easy mode ──────────────────────────────────────────────────────────
+function getKidsMode(): boolean { return localStorage.getItem("fingerRunnerKids") === "1"; }
+function setKidsModeLS(on: boolean) { localStorage.setItem("fingerRunnerKids", on ? "1" : "0"); }
+
 // ── Storyline & dialog ────────────────────────────────────────────────────────
 const STORY_INTRO =
   "Trapped in a boring sedan on the world's longest road trip, two restless fingers — Lefty & Middy — spot a cracked-open window and make a break for it. Eight wild stretches of road stand between them and freedom.";
@@ -114,6 +141,7 @@ const CRASH_QUIPS = [
   "Well, that'll leave a callus.", "Ow. OW. OWWW.", "Tell my thumb I love it…",
   "That's gonna need a band-aid.", "I regret everything.", "Cramp! It was a cramp!",
 ];
+const SLICE_QUIPS = ["Sliced!", "Hi-yah!", "Vzzm!", "Chop chop!", "Take that!", "Zap!", "Force is strong!"];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -193,6 +221,9 @@ export default function Game() {
     ropes: [] as RopeScroll[],
     ropeTimer: 0,
     activeSwing: null as ActiveSwing | null,
+    saberSwing: 0,
+    saberCooldown: 0,
+    kidsMode: getKidsMode(),
   });
   const audioRef = useRef<{
     ctx: AudioContext | null; enabled: boolean;
@@ -214,6 +245,8 @@ export default function Game() {
   const [levelBests, setLevelBests] = useState<number[]>(() => LEVELS.map(lv => getLevelBest(lv.num)));
   const [completedLevelPrevBest, setCompletedLevelPrevBest] = useState(0);
   const [completedLevelMedal, setCompletedLevelMedal] = useState<Medal | null>(null);
+  const [saberLevel, setSaberLevelState] = useState(getSaberLevel());
+  const [kidsMode, setKidsModeState] = useState(getKidsMode());
 
   // ── Audio ──────────────────────────────────────────────────────────────────
   const initAudio = () => {
@@ -330,6 +363,35 @@ export default function Game() {
       g.gain.setValueAtTime(0.12, t + i * 0.06); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.12);
       osc.connect(g); g.connect(ctx.destination); osc.start(t + i * 0.06); osc.stop(t + i * 0.06 + 0.14);
     });
+  };
+  // Whoosh of the blade swinging through the air
+  const playSaberSwingSound = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator(); const g = ctx.createGain(); const f = ctx.createBiquadFilter();
+    osc.type = "sawtooth"; f.type = "bandpass"; f.frequency.value = 850; f.Q.value = 7;
+    osc.frequency.setValueAtTime(280, t); osc.frequency.linearRampToValueAtTime(760, t + 0.13);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.16, t + 0.04); g.gain.linearRampToValueAtTime(0.001, t + 0.2);
+    osc.connect(f); f.connect(g); g.connect(ctx.destination); osc.start(t); osc.stop(t + 0.22);
+  };
+  // Electric zap when the blade connects with an obstacle
+  const playSaberHitSound = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.13, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const filt = ctx.createBiquadFilter(); filt.type = "bandpass"; filt.frequency.value = 2400; filt.Q.value = 1.6;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.85, t); g.gain.linearRampToValueAtTime(0, t + 0.13);
+    src.connect(filt); filt.connect(g); g.connect(ctx.destination); src.start(t);
+    // bright ping on top
+    const ping = ctx.createOscillator(); const pg = ctx.createGain();
+    ping.type = "triangle"; ping.frequency.setValueAtTime(1400, t); ping.frequency.exponentialRampToValueAtTime(700, t + 0.12);
+    pg.gain.setValueAtTime(0.12, t); pg.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+    ping.connect(pg); pg.connect(ctx.destination); ping.start(t); ping.stop(t + 0.16);
   };
 
   // ── Obstacles ──────────────────────────────────────────────────────────────
@@ -500,6 +562,42 @@ export default function Game() {
 
   const releaseJump = () => { stateRef.current.jumpHeld = false; };
 
+  // ── Lightsaber slash ───────────────────────────────────────────────────────
+  const slash = () => {
+    initAudio();
+    const st = stateRef.current;
+    if (!st.gameRunning || st.activeSwing) return;
+    if (st.saberSwing > 0 || st.saberCooldown > 0) return;
+    st.saberSwing = SABER_SWING_FRAMES;
+    st.saberCooldown = st.kidsMode ? Math.floor(SLASH_COOLDOWN * 0.7) : SLASH_COOLDOWN;
+    playSaberSwingSound();
+  };
+
+  // Destroy an obstacle the blade connects with, showering coloured sparks.
+  const sliceObstacle = (o: Obstacle, roadY: number) => {
+    const st = stateRef.current;
+    const saber = getSaberDef(getSaberLevel());
+    const cxo = o.x + o.obsWidth / 2;
+    const cyo = roadY - o.obsHeight / 2;
+    st.shake = Math.max(st.shake, 6);
+    for (let i = 0; i < 26; i++) {
+      const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 7;
+      st.particles.push({ x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2,
+        life: 22 + Math.random() * 18, size: 3 + Math.random() * 5,
+        color: Math.random() < 0.5 ? saber.color : saber.glow, shape: "circle" });
+    }
+    for (let i = 0; i < 8; i++) {
+      const ang = Math.random() * Math.PI * 2; const sp = 3 + Math.random() * 6;
+      st.particles.push({ x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5,
+        life: 14 + Math.random() * 10, size: 2 + Math.random() * 3, color: "#ffffff",
+        shape: "rect", rot: Math.random() * 6, rotV: (Math.random() - 0.5) * 0.5 });
+    }
+    st.coinBalance += 1;
+    setCoinsLS(st.coinBalance);
+    if (Math.random() < 0.5) showDialog(pick(SLICE_QUIPS), 60);
+    playSaberHitSound();
+  };
+
   const startLevel = (levelNum: number) => {
     initAudio();
     const canvas = canvasRef.current; if (!canvas) return;
@@ -519,6 +617,9 @@ export default function Game() {
     st.ropes = [];
     st.ropeTimer = 0;
     st.activeSwing = null;
+    st.saberSwing = 0;
+    st.saberCooldown = 0;
+    st.kidsMode = getKidsMode();
     st.crashFlash = 0;
     st.playerY = groundY;
     st.velocity = 0;
@@ -1137,6 +1238,7 @@ export default function Game() {
   const drawFinger = (
     ctx: CanvasRenderingContext2D, playerY: number, time: number, _height: number,
     gameRunning: boolean, hatId: HatId, stretchX = 1, stretchY = 1,
+    saber: Saber | null = null, saberSwing = 0,
   ) => {
     const cx = 185;
     const strideSpeed = gameRunning ? 0.26 : 0.05;
@@ -1217,6 +1319,55 @@ export default function Game() {
     // Front leg (index finger) on top
     drawFingerLeg(ctx, cx - 11, baseY, indexSwing, true);
 
+    // ── Lightsaber wielded by the front hand ──
+    if (saber) {
+      const pivotX = cx - 6;
+      const pivotY = palmY + 12;
+      // Idle: blade held up and forward with a gentle bob. Swing: sweep up→down-forward.
+      let ang = -1.12 + Math.sin(time * 0.08) * 0.05;
+      if (saberSwing > 0) {
+        const p = 1 - saberSwing / SABER_SWING_FRAMES;     // 0 → 1 across the swing
+        const ease = 1 - Math.pow(1 - p, 2);
+        ang = -1.95 + ease * 2.55;                          // arc from overhead to down-forward
+      }
+      const hiltLen = 22;
+      const bladeLen = saber.reach * 0.5;
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      const hiltBaseX = pivotX - dx * 7, hiltBaseY = pivotY - dy * 7;
+      const emitX = pivotX + dx * hiltLen, emitY = pivotY + dy * hiltLen;
+      const tipX = emitX + dx * bladeLen, tipY = emitY + dy * bladeLen;
+
+      ctx.save();
+      ctx.lineCap = "round";
+      // swing trail
+      if (saberSwing > 0) {
+        ctx.globalAlpha = 0.18 * (saberSwing / SABER_SWING_FRAMES);
+        ctx.strokeStyle = saber.glow; ctx.lineWidth = bladeLen * 0.7;
+        ctx.beginPath();
+        ctx.arc(pivotX, pivotY, hiltLen + bladeLen * 0.5, ang - 0.55, ang + 0.15);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // metal hilt
+      ctx.strokeStyle = "#777"; ctx.lineWidth = 9;
+      ctx.beginPath(); ctx.moveTo(hiltBaseX, hiltBaseY); ctx.lineTo(emitX, emitY); ctx.stroke();
+      ctx.strokeStyle = "#cfcfcf"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(hiltBaseX, hiltBaseY); ctx.lineTo(emitX, emitY); ctx.stroke();
+      ctx.fillStyle = "#3a3a3a"; ctx.beginPath(); ctx.arc(emitX, emitY, 3.4, 0, Math.PI * 2); ctx.fill();
+      // glowing blade
+      ctx.shadowColor = saber.glow; ctx.shadowBlur = 18;
+      ctx.strokeStyle = saber.glow; ctx.lineWidth = 11;
+      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
+      ctx.strokeStyle = saber.color; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
+      // white-hot core
+      ctx.shadowBlur = 9;
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
     ctx.restore();
   };
 
@@ -1260,6 +1411,11 @@ export default function Game() {
         e.preventDefault();
         if (e.repeat) return; // ignore OS key-repeat so holding doesn't burn the double jump
         jump();
+      } else if (e.code === "KeyF" || e.code === "KeyJ" || e.code === "ArrowDown"
+                 || e.code === "ShiftLeft" || e.code === "ShiftRight") {
+        e.preventDefault();
+        if (e.repeat) return;
+        slash();
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -1287,10 +1443,15 @@ export default function Game() {
           levelComplete();
         }
 
+        // Saber swing / cooldown timers
+        if (st.saberSwing > 0) st.saberSwing--;
+        if (st.saberCooldown > 0) st.saberCooldown--;
+
         // Physics — variable jump height + snappy fall
         let g = GRAVITY;
         if (st.velocity < 0 && !st.jumpHeld) g *= LOW_JUMP_GRAVITY_MULT;
         else if (st.velocity > 0) g *= FALL_GRAVITY_MULT;
+        if (st.kidsMode) g *= 0.82;   // easy mode: floatier, more forgiving jumps
         st.velocity += g;
         if (st.velocity > MAX_FALL) st.velocity = MAX_FALL;
         st.playerY += st.velocity;
@@ -1327,8 +1488,10 @@ export default function Game() {
         if (st.shake > 0) { st.shake *= 0.86; if (st.shake < 0.4) st.shake = 0; }
 
         // Spawn
+        const kidsSpeedMult = st.kidsMode ? KIDS_SPEED_MULT : 1;
         st.spawnTimer++;
-        const spawnRate = Math.max(lvlDef.minSpawn, 220 - Math.floor(st.levelScore / lvlDef.ramp));
+        const spawnRate = Math.max(lvlDef.minSpawn, 220 - Math.floor(st.levelScore / lvlDef.ramp))
+          * (st.kidsMode ? KIDS_SPAWN_MULT : 1);
         if (st.spawnTimer > spawnRate) { spawnObstacle(width); st.spawnTimer = 0; }
 
         // Spawn collectible coins — single coin or a short row, at a few heights
@@ -1346,11 +1509,26 @@ export default function Game() {
         // Obstacles + collision
         const fingerLeft = 168; const fingerRight = 202;
         const fingerTipY = st.playerY + FINGER_TIP_OFFSET - 8;
-        const speed = BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001;
+        const speed = (BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001) * kidsSpeedMult;
+        const saberReach = getSaberDef(getSaberLevel()).reach;
         let didCrash = false;
         for (let i = st.obstacles.length - 1; i >= 0; i--) {
           const o = st.obstacles[i];
           o.x -= speed;
+          // Saber slice — during an active swing, vaporise obstacles within blade reach.
+          // Horizontal: obstacle within the blade's forward sweep. Vertical: the finger
+          // must be low enough that the swung blade can connect with the obstacle's body
+          // (prevents slicing ground obstacles while soaring high above them).
+          const obsTopSlice = roadY - o.obsHeight;
+          const vReach = saberReach * 0.6;
+          const fingerHigh = fingerTipY - vReach;
+          if (st.saberSwing > 0 && !didCrash
+              && o.x + o.obsWidth >= fingerLeft - 6 && o.x <= fingerRight + saberReach
+              && fingerHigh <= roadY && fingerTipY + vReach >= obsTopSlice) {
+            sliceObstacle(o, roadY);
+            st.obstacles.splice(i, 1);
+            continue;
+          }
           if (!didCrash) {
             const obsTop = roadY - o.obsHeight;
             if (fingerRight > o.x && fingerLeft < o.x + o.obsWidth && fingerTipY > obsTop) {
@@ -1472,6 +1650,8 @@ export default function Game() {
         if (st.crashFlash > 0) st.crashFlash--;
       } else {
         st.time++;
+        if (st.saberSwing > 0) st.saberSwing--;
+        if (st.saberCooldown > 0) st.saberCooldown--;
         if (st.crashFlash > 0) st.crashFlash--;
         if (st.dialog && st.dialog.life > 0) st.dialog.life--;
         if (st.shake > 0) { st.shake *= 0.86; if (st.shake < 0.4) st.shake = 0; }
@@ -1612,7 +1792,8 @@ export default function Game() {
         stretchY = 1 - 0.26 * k;
         stretchX = 1 + 0.26 * k;
       }
-      drawFinger(ctx, st.playerY, st.time, height, st.gameRunning, hat, stretchX, stretchY);
+      const saberDefRender = getSaberDef(getSaberLevel());
+      drawFinger(ctx, st.playerY, st.time, height, st.gameRunning, hat, stretchX, stretchY, saberDefRender, st.saberSwing);
 
       // Dialog speech bubble above the character
       if (st.dialog && st.dialog.life > 0) {
@@ -1751,9 +1932,23 @@ export default function Game() {
     // Auto-equip the freshly bought outfit
     setEquippedHat(hat.id); setEquippedHatState(hat.id);
   };
+  const handleUpgradeSaber = () => {
+    const cur = getSaberLevel();
+    if (cur >= SABERS.length) return;
+    const next = getSaberDef(cur + 1);
+    if (getCoins() < next.cost) return;
+    const newBal = getCoins() - next.cost;
+    setCoinsLS(newBal); setCoinBalanceState(newBal); stateRef.current.coinBalance = newBal;
+    setSaberLevelLS(next.tier); setSaberLevelState(next.tier);
+  };
+  const handleToggleKids = () => {
+    const v = !getKidsMode();
+    setKidsModeLS(v); setKidsModeState(v); stateRef.current.kidsMode = v;
+  };
   const openWardrobe = () => {
     setCoinBalanceState(getCoins());
     setOwnedState(getOwnedOutfits());
+    setSaberLevelState(getSaberLevel());
     setScreen("wardrobe");
   };
 
@@ -1794,6 +1989,9 @@ export default function Game() {
           <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff88ff", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff88ff", textAlign:"center" }}>
             TAP / SPACE TO JUMP · DOUBLE TAP = DOUBLE JUMP
           </p>
+          <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff5555", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff5555", textAlign:"center" }}>
+            ⚔ SLASH BUTTON / F TO SWING THE LIGHTSABER
+          </p>
           <p style={{ fontSize:"0.52rem", fontFamily:retroFont, margin:"0 0 4px", color:"#555", lineHeight:2.5, textAlign:"center" }}>
             {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked · collect ★ coins
           </p>
@@ -1815,6 +2013,21 @@ export default function Game() {
               WARDROBE
             </button>
           </div>
+          {/* Easy / kids mode toggle */}
+          <button onClick={handleToggleKids} className="retro-btn"
+            style={{ marginTop:14, padding:"10px 20px", fontSize:"0.62rem", fontFamily:retroFont,
+              background: kidsMode ? "rgba(0,255,136,0.12)" : "transparent",
+              color: kidsMode ? "#00ff88" : "#00aa66",
+              border:`3px solid ${kidsMode ? "#00ff88" : "#00aa66"}`,
+              boxShadow: kidsMode ? "0 0 14px rgba(0,255,136,0.4)" : "0 0 8px rgba(0,170,102,0.25)",
+              cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
+            🧒 KIDS EASY MODE: {kidsMode ? "ON" : "OFF"}
+          </button>
+          {kidsMode && (
+            <p style={{ fontSize:"0.5rem", fontFamily:retroFont, margin:"8px 0 0", color:"#00ff88aa", lineHeight:2.2, textAlign:"center" }}>
+              SLOWER · MORE SPACE · FLOATIER JUMPS · FASTER SABER
+            </p>
+          )}
           {/* Level select */}
           <div style={{ marginTop:18, display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center", maxWidth:600 }}>
             {LEVELS.map((lv, idx) => {
@@ -1907,6 +2120,47 @@ export default function Game() {
                 );
               })}
             </div>
+            {/* Lightsaber upgrades */}
+            <h3 style={{ fontSize:"0.7rem", margin:"18px 0 4px 0", color:"#ff5555", textAlign:"center", fontFamily:retroFont, textShadow:"0 0 10px #ff5555", letterSpacing:"0.06em" }}>⚔ LIGHTSABER</h3>
+            <p style={{ color:"#555", textAlign:"center", margin:"0 0 10px 0", fontFamily:font, fontSize:"0.72rem" }}>Slash obstacles mid-run — upgrade for a longer, brighter blade</p>
+            <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
+              {SABERS.map(s => {
+                const owned = saberLevel >= s.tier;
+                const equipped = saberLevel === s.tier;
+                const isNext = s.tier === saberLevel + 1;
+                const affordable = coinBalance >= s.cost;
+                return (
+                  <div key={s.tier}
+                    style={{ width:96, background: equipped ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.015)",
+                      border:`2px solid ${equipped ? s.color : owned ? "#333" : isNext ? s.color+"88" : "#222"}`,
+                      boxShadow: equipped ? `0 0 12px ${s.color}66` : "none",
+                      borderRadius:3, padding:"10px 6px", display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+                      opacity: owned || isNext ? 1 : 0.45 }}>
+                    {/* blade preview */}
+                    <div style={{ width:5, height:38, borderRadius:3, background:s.color,
+                      boxShadow:`0 0 10px ${s.glow}, 0 0 18px ${s.glow}` }} />
+                    <div style={{ fontSize:"0.46rem", fontFamily:retroFont, color:"#ccc", lineHeight:1.8, textAlign:"center" }}>{s.name.replace(" Saber","")}</div>
+                    {equipped ? (
+                      <span style={{ fontSize:"0.46rem", fontFamily:retroFont, color:s.color, lineHeight:1.8 }}>✓ ACTIVE</span>
+                    ) : owned ? (
+                      <span style={{ fontSize:"0.46rem", fontFamily:retroFont, color:"#666", lineHeight:1.8 }}>OWNED</span>
+                    ) : isNext ? (
+                      <button onClick={() => affordable && handleUpgradeSaber()} className={affordable ? "retro-btn" : undefined}
+                        disabled={!affordable}
+                        style={{ padding:"4px 8px", fontSize:"0.46rem", fontFamily:retroFont,
+                          background: affordable ? "rgba(255,238,0,0.12)" : "transparent",
+                          color: affordable ? "#ffee00" : "#444",
+                          border:`2px solid ${affordable ? "#ffee00" : "#333"}`,
+                          cursor: affordable ? "pointer" : "not-allowed", lineHeight:1.8 }}>
+                        ★ {s.cost}
+                      </button>
+                    ) : (
+                      <span style={{ fontSize:"0.5rem", fontFamily:retroFont, color:"#444", lineHeight:1.8 }}>🔒</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             <button onClick={() => setScreen("start")} className="retro-btn"
               style={{ marginTop:18, width:"100%", padding:"11px", fontSize:"0.66rem", fontFamily:retroFont,
                 background:"transparent", color:"#444", border:"2px solid #333", cursor:"pointer", letterSpacing:"0.05em" }}>
@@ -1992,6 +2246,27 @@ export default function Game() {
           </div>
         </div>
       )}
+
+      {/* ── On-screen SLASH button (during play) ── */}
+      {screen === "playing" && (() => {
+        const s = getSaberDef(saberLevel);
+        return (
+          <button
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); slash(); }}
+            className="retro-btn"
+            style={{ position:"absolute", bottom:24, right:24, zIndex:25,
+              width:96, height:96, borderRadius:"50%",
+              fontSize:"0.6rem", fontFamily:retroFont, touchAction:"none",
+              background:`radial-gradient(circle at 50% 40%, ${s.color}33, rgba(0,0,0,0.85))`,
+              color:"#fff", border:`3px solid ${s.color}`,
+              boxShadow:`0 0 18px ${s.glow}, inset 0 0 16px ${s.color}55`,
+              cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.7,
+              display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4 }}>
+            <span style={{ fontSize:"1.4rem", lineHeight:1 }}>⚔</span>
+            SLASH
+          </button>
+        );
+      })()}
 
       {/* ── Music toggle ── */}
       <button onClick={handleToggleMusic} className="retro-btn"
