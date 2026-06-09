@@ -394,6 +394,133 @@ export default function Game() {
     ping.connect(pg); pg.connect(ctx.destination); ping.start(t); ping.stop(t + 0.16);
   };
 
+  // ── Obstacle "defeat" voices ────────────────────────────────────────────────
+  // Cat → meow: a vowel-ish bandpassed saw that rises then falls, with vibrato.
+  const playMeow = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator(); const g = ctx.createGain();
+    const f = ctx.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 1100; f.Q.value = 5;
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.linearRampToValueAtTime(860, t + 0.12);
+    osc.frequency.linearRampToValueAtTime(430, t + 0.38);
+    const lfo = ctx.createOscillator(); const lfoG = ctx.createGain();
+    lfo.frequency.value = 17; lfoG.gain.value = 24; lfo.connect(lfoG); lfoG.connect(osc.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.18, t + 0.05);
+    g.gain.setValueAtTime(0.16, t + 0.28); g.gain.linearRampToValueAtTime(0.0001, t + 0.42);
+    osc.connect(f); f.connect(g); g.connect(ctx.destination);
+    osc.start(t); osc.stop(t + 0.44); lfo.start(t); lfo.stop(t + 0.44);
+  };
+  // Dog → bark: two quick gruff "woofs", each a falling saw + noise transient.
+  const playBark = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const woof = (t: number) => {
+      const osc = ctx.createOscillator(); const g = ctx.createGain();
+      const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1500;
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(330, t);
+      osc.frequency.exponentialRampToValueAtTime(135, t + 0.12);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.28, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+      osc.connect(f); f.connect(g); g.connect(ctx.destination); osc.start(t); osc.stop(t + 0.18);
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const nf = ctx.createBiquadFilter(); nf.type = "bandpass"; nf.frequency.value = 900; nf.Q.value = 1;
+      const ng = ctx.createGain(); ng.gain.setValueAtTime(0.16, t); ng.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      src.connect(nf); nf.connect(ng); ng.connect(ctx.destination); src.start(t);
+    };
+    const t0 = ctx.currentTime; woof(t0); woof(t0 + 0.2);
+  };
+  // Bicycle → bright bell ding.
+  const playBell = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    [0, 1].forEach((idx) => {
+      const tt = t + idx * 0.09;
+      const osc = ctx.createOscillator(); const g = ctx.createGain();
+      osc.type = "triangle"; osc.frequency.value = 2100;
+      g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(0.16, tt + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.001, tt + 0.25);
+      osc.connect(g); g.connect(ctx.destination); osc.start(tt); osc.stop(tt + 0.26);
+    });
+  };
+  // Metal objects (mailbox / hydrant / newsbox) → inharmonic clang.
+  const playClang = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    [320, 511, 743, 1100].forEach((fr) => {
+      const osc = ctx.createOscillator(); const g = ctx.createGain();
+      osc.type = "square"; osc.frequency.value = fr;
+      g.gain.setValueAtTime(0.07, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.connect(g); g.connect(ctx.destination); osc.start(t); osc.stop(t + 0.32);
+    });
+  };
+  // Stop sign / gnome → comedic wobbly boing.
+  const playBoing = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator(); const g = ctx.createGain();
+    osc.type = "sine"; osc.frequency.setValueAtTime(700, t);
+    osc.frequency.exponentialRampToValueAtTime(180, t + 0.3);
+    const lfo = ctx.createOscillator(); const lg = ctx.createGain();
+    lfo.frequency.value = 14; lg.gain.value = 60; lfo.connect(lg); lg.connect(osc.frequency);
+    g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
+    osc.connect(g); g.connect(ctx.destination); osc.start(t); osc.stop(t + 0.35); lfo.start(t); lfo.stop(t + 0.35);
+  };
+  // Cone → rubbery honk/squeak.
+  const playHonk = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator(); const g = ctx.createGain();
+    osc.type = "sawtooth"; osc.frequency.setValueAtTime(400, t);
+    osc.frequency.linearRampToValueAtTime(620, t + 0.1);
+    osc.frequency.linearRampToValueAtTime(300, t + 0.22);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.16, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+    osc.connect(g); g.connect(ctx.destination); osc.start(t); osc.stop(t + 0.28);
+  };
+  // Trashcan → metallic clatter (noise burst + ringing partials).
+  const playClatter = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.25, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 1.5);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const f = ctx.createBiquadFilter(); f.type = "highpass"; f.frequency.value = 1500;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    src.connect(f); f.connect(g); g.connect(ctx.destination); src.start(t);
+    [880, 1320].forEach((fr, i) => {
+      const osc = ctx.createOscillator(); const og = ctx.createGain();
+      osc.type = "square"; osc.frequency.value = fr;
+      og.gain.setValueAtTime(0.06, t + i * 0.03); og.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc.connect(og); og.connect(ctx.destination); osc.start(t + i * 0.03); osc.stop(t + 0.22);
+    });
+  };
+  // Pick the right "defeat" voice for what the blade just sliced.
+  const playObstacleSound = (type: ObstacleType) => {
+    switch (type) {
+      case "cat": return playMeow();
+      case "dog": return playBark();
+      case "bicycle": return playBell();
+      case "trashcan": return playClatter();
+      case "stopsign":
+      case "gnome": return playBoing();
+      case "cone": return playHonk();
+      default: return playClang(); // mailbox, hydrant, newsbox
+    }
+  };
+
   // ── Obstacles ──────────────────────────────────────────────────────────────
   const spawnObstacle = (width: number) => {
     const pool = getLevelDef(stateRef.current.currentLevel).obs;
@@ -596,6 +723,7 @@ export default function Game() {
     setCoinsLS(st.coinBalance);
     if (Math.random() < 0.5) showDialog(pick(SLICE_QUIPS), 60);
     playSaberHitSound();
+    playObstacleSound(o.type);
   };
 
   const startLevel = (levelNum: number) => {
