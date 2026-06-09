@@ -1459,7 +1459,7 @@ export default function Game() {
         ang = -1.95 + ease * 2.55;                          // arc from overhead to down-forward
       }
       const hiltLen = 22;
-      const bladeLen = saber.reach * 0.5;
+      const bladeLen = saber.reach * 0.85;
       const dx = Math.cos(ang), dy = Math.sin(ang);
       const hiltBaseX = pivotX - dx * 7, hiltBaseY = pivotY - dy * 7;
       const emitX = pivotX + dx * hiltLen, emitY = pivotY + dy * hiltLen;
@@ -1467,32 +1467,37 @@ export default function Game() {
 
       ctx.save();
       ctx.lineCap = "round";
-      // swing trail
+      // swing trail — a large fan arc behind the blade
       if (saberSwing > 0) {
-        ctx.globalAlpha = 0.18 * (saberSwing / SABER_SWING_FRAMES);
-        ctx.strokeStyle = saber.glow; ctx.lineWidth = bladeLen * 0.7;
+        ctx.globalAlpha = 0.22 * (saberSwing / SABER_SWING_FRAMES);
+        ctx.strokeStyle = saber.glow; ctx.lineWidth = bladeLen * 0.85;
         ctx.beginPath();
-        ctx.arc(pivotX, pivotY, hiltLen + bladeLen * 0.5, ang - 0.55, ang + 0.15);
+        ctx.arc(pivotX, pivotY, hiltLen + bladeLen * 0.5, ang - 0.65, ang + 0.22);
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
       // metal hilt
-      ctx.strokeStyle = "#777"; ctx.lineWidth = 9;
+      ctx.strokeStyle = "#777"; ctx.lineWidth = 10;
       ctx.beginPath(); ctx.moveTo(hiltBaseX, hiltBaseY); ctx.lineTo(emitX, emitY); ctx.stroke();
-      ctx.strokeStyle = "#cfcfcf"; ctx.lineWidth = 4;
+      ctx.strokeStyle = "#cfcfcf"; ctx.lineWidth = 5;
       ctx.beginPath(); ctx.moveTo(hiltBaseX, hiltBaseY); ctx.lineTo(emitX, emitY); ctx.stroke();
-      ctx.fillStyle = "#3a3a3a"; ctx.beginPath(); ctx.arc(emitX, emitY, 3.4, 0, Math.PI * 2); ctx.fill();
-      // glowing blade
-      ctx.shadowColor = saber.glow; ctx.shadowBlur = 18;
-      ctx.strokeStyle = saber.glow; ctx.lineWidth = 11;
+      ctx.fillStyle = "#3a3a3a"; ctx.beginPath(); ctx.arc(emitX, emitY, 4, 0, Math.PI * 2); ctx.fill();
+      // glowing blade — outer aura
+      ctx.shadowColor = saber.glow; ctx.shadowBlur = 32;
+      ctx.strokeStyle = saber.glow; ctx.lineWidth = 18;
       ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      ctx.strokeStyle = saber.color; ctx.lineWidth = 6;
+      // mid layer
+      ctx.shadowBlur = 22;
+      ctx.strokeStyle = saber.color; ctx.lineWidth = 10;
       ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
       // white-hot core
-      ctx.shadowBlur = 9;
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2.4;
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 4;
       ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
+      // crisp inner line
       ctx.shadowBlur = 0;
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
       ctx.restore();
     }
 
