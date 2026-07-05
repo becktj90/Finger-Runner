@@ -3,13 +3,12 @@
 ## Quick Start - 3 Steps to Live
 
 ### Step 1: Enable GitHub Pages
-1. Go to https://github.com/becktj90/Finger-Runner/settings
-2. Scroll to **"Pages"** section on the left sidebar
-3. Under "Source", select:
+1. Go to https://github.com/becktj90/Finger-Runner/settings/pages
+2. Under "Source", select:
    - **Deploy from a branch**
-   - Branch: `v1-production`
+   - Branch: `main`
    - Folder: `/ (root)`
-4. Click **"Save"**
+3. Click **"Save"**
 
 ### Step 2: Wait for Deployment
 - GitHub will build and deploy automatically
@@ -17,29 +16,63 @@
 - Watch the "Deployments" tab for status
 
 ### Step 3: Access Your Game
-Your game will be live at:
+Your game is live at:
 ```
 https://becktj90.github.io/Finger-Runner/
+```
+and, once the custom domain below is set up, also at:
+```
+https://play.beckify.com/
 ```
 
 ---
 
 ## What Gets Deployed
 
-The v1-production branch contains:
+The `main` branch root contains:
 - ✅ `index.html` - Main game file
 - ✅ `style.css` - All styling
 - ✅ `game.js` - Complete game engine
+- ✅ `CNAME` - Custom domain mapping (`play.beckify.com`)
 - ✅ `README.md` - Documentation
 
 **No build step required.** GitHub Pages serves files directly.
 
 ---
 
+## Custom Domain: play.beckify.com
+
+The repo root has a `CNAME` file containing `play.beckify.com`, which tells
+GitHub Pages to serve this site on that hostname once DNS is pointed at it.
+
+### DNS setup (done once, at your domain registrar/DNS provider for beckify.com)
+
+Add a **CNAME record**:
+
+| Type  | Host/Name | Value                  |
+|-------|-----------|------------------------|
+| CNAME | `play`    | `becktj90.github.io.`  |
+
+This only adds the `play` subdomain — it does not touch any existing records
+for the apex `beckify.com` or `www.beckify.com`.
+
+### GitHub Pages setup
+
+1. Go to https://github.com/becktj90/Finger-Runner/settings/pages
+2. Under "Custom domain", enter `play.beckify.com` and click **Save**
+   (GitHub reads this from the `CNAME` file automatically, but the field
+   must show it before "Enforce HTTPS" becomes available).
+3. Wait for the DNS check to go green (can take a few minutes up to a few
+   hours depending on DNS propagation).
+4. Once the DNS check passes, check **"Enforce HTTPS"** so the game is only
+   served over `https://play.beckify.com/`.
+
+---
+
 ## Troubleshooting
 
 ### Page not loading?
-- Check that you selected the correct branch (`v1-production`)
+- Check that you selected the correct branch (`main`)
 - Wait 2-3 minutes for deployment to complete
 - Clear your browser cache (Ctrl+Shift+Del)
 
@@ -52,10 +85,12 @@ The v1-production branch contains:
 - On mobile, close other apps
 - Try reducing browser tabs
 
-### Custom domain?
-- Go to Settings > Pages > Custom Domain
-- Add your domain (e.g., `runner.yourdomain.com`)
-- Follow DNS setup instructions
+### Custom domain shows 404 or a DNS error?
+- Confirm the CNAME DNS record (`play` → `becktj90.github.io.`) is created
+  at your beckify.com DNS provider
+- DNS propagation can take up to 24 hours in rare cases; usually minutes
+- Check https://github.com/becktj90/Finger-Runner/settings/pages for the
+  domain verification status
 
 ---
 
@@ -87,6 +122,7 @@ Once deployed, you can:
 ---
 
 **Status:** Ready for deployment ✅  
-**Branch:** v1-production  
+**Branch:** main  
+**Custom domain:** play.beckify.com  
 **Version:** 1.0.0  
-**Last Updated:** 2026-06-07
+**Last Updated:** 2026-07-05
