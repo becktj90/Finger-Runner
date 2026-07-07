@@ -1,0 +1,527 @@
+:root {
+  --bg: #04050c;
+  --panel: rgba(10, 14, 28, 0.86);
+  --panel-border: rgba(120, 160, 255, 0.22);
+  --text: #e6eeff;
+  --muted: #9fb0d6;
+  --accent: #7dd3ff;
+  --accent2: #ff6ad5;
+  --good: #8affc4;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.lh-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  touch-action: none;
+}
+
+/* ---------- Overlay ---------- */
+.lh-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 10;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(4, 6, 16, 0.45),
+    rgba(2, 3, 9, 0.82)
+  );
+  backdrop-filter: blur(2px);
+  animation: lh-fade 0.35s ease;
+}
+
+@keyframes lh-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------- Main menu ---------- */
+.lh-menu {
+  text-align: center;
+  max-width: 640px;
+  width: 100%;
+}
+
+.lh-title {
+  font-size: clamp(46px, 12vw, 110px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 0.95;
+  background: linear-gradient(120deg, #7dd3ff 0%, #ff6ad5 60%, #f5c451 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 50px rgba(125, 211, 255, 0.25);
+  filter: drop-shadow(0 0 18px rgba(255, 106, 213, 0.25));
+}
+
+.lh-subtitle {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: clamp(13px, 3.4vw, 16px);
+  line-height: 1.6;
+}
+.lh-subtitle em {
+  color: var(--accent2);
+  font-style: italic;
+}
+
+.lh-stats {
+  margin: 22px auto 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.lh-stats b {
+  color: var(--text);
+}
+
+.lh-btnrow {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.lh-btn {
+  appearance: none;
+  border: 1px solid var(--panel-border);
+  background: rgba(20, 28, 52, 0.7);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 13px 26px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+.lh-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: rgba(30, 40, 72, 0.85);
+}
+.lh-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+.lh-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.lh-btn--primary {
+  background: linear-gradient(120deg, #1f6feb, #7d3bff);
+  border-color: transparent;
+  box-shadow: 0 8px 30px rgba(60, 120, 255, 0.35);
+}
+.lh-btn--primary:hover:not(:disabled) {
+  box-shadow: 0 12px 40px rgba(120, 90, 255, 0.5);
+}
+.lh-btn--ghost {
+  background: transparent;
+}
+
+.lh-help {
+  margin-top: 22px;
+  font-size: 12px;
+  color: rgba(160, 178, 215, 0.75);
+  line-height: 1.7;
+}
+.lh-help b {
+  color: var(--accent);
+}
+
+.lh-legend {
+  margin: 22px auto 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  max-width: 460px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted);
+}
+.lh-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.lh-legend-item b {
+  color: var(--text);
+}
+.lh-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+/* ---------- Cards (event / station / gameover) ---------- */
+.lh-card,
+.lh-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 26px;
+  max-width: 540px;
+  width: 100%;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  animation: lh-pop 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+@keyframes lh-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.lh-card-tag {
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  font-weight: 700;
+  color: var(--accent2);
+  margin-bottom: 8px;
+}
+.lh-card-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 12px;
+}
+.lh-card-body {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.lh-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+.lh-choice {
+  appearance: none;
+  text-align: left;
+  border: 1px solid var(--panel-border);
+  background: rgba(18, 24, 46, 0.7);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 14px 16px;
+  border-radius: 11px;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+.lh-choice:hover {
+  transform: translateX(4px);
+  border-color: var(--accent);
+  background: rgba(28, 38, 68, 0.85);
+}
+
+/* ---------- Station ---------- */
+.lh-station-meta {
+  margin: 14px 0 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.lh-station-meta b {
+  color: var(--good);
+}
+.lh-upgrades {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 16px 0;
+}
+.lh-upg {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(16, 22, 42, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.lh-upg-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.lh-upg-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.lh-upg-lvl {
+  font-size: 11px;
+  color: var(--muted);
+}
+.lh-upg-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  flex: 1;
+}
+.lh-buy {
+  appearance: none;
+  border: 1px solid transparent;
+  background: linear-gradient(120deg, #1f6feb, #7d3bff);
+  color: #fff;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 12.5px;
+  padding: 8px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.lh-buy:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+.lh-buy:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: rgba(60, 70, 100, 0.5);
+}
+
+/* ---------- Game over ---------- */
+.lh-go-faction {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.lh-go-score {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.lh-go-score b {
+  color: var(--text);
+  font-size: 16px;
+}
+.lh-new {
+  color: var(--good);
+  font-weight: 700;
+  margin-left: 6px;
+}
+.lh-go-log {
+  margin-top: 16px;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 14px;
+}
+.lh-go-log-h {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.lh-go-log-line {
+  font-size: 12.5px;
+  color: rgba(200, 215, 245, 0.85);
+  line-height: 1.6;
+  font-style: italic;
+}
+
+/* ---------- Codex ---------- */
+.lh-panel {
+  max-width: 620px;
+}
+.lh-panel-title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+}
+.lh-panel-sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0 18px;
+}
+.lh-codex-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.lh-codex {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.lh-codex.locked {
+  opacity: 0.5;
+}
+.lh-codex.got {
+  background: rgba(18, 26, 50, 0.55);
+}
+.lh-codex-h {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+.lh-codex.locked .lh-codex-h {
+  color: var(--muted);
+}
+.lh-codex-b {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ---------- High scores ---------- */
+.lh-score-row {
+  display: grid;
+  grid-template-columns: 44px 80px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(10, 14, 28, 0.55);
+}
+.lh-score-rank {
+  grid-row: 1 / span 2;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent);
+  text-align: center;
+}
+.lh-score-val {
+  grid-row: 1 / span 2;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.lh-score-meta {
+  grid-column: 3;
+  grid-row: 1;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.lh-score-sub {
+  grid-column: 3;
+  grid-row: 2;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ---------- Outcome flash ---------- */
+.lh-flash {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  transform: translate(-50%, 20px);
+  max-width: 460px;
+  width: calc(100% - 40px);
+  background: rgba(10, 14, 28, 0.92);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+  text-align: center;
+  opacity: 0;
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease;
+  z-index: 9;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.5);
+}
+.lh-flash.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------- Touch boost button ---------- */
+.lh-boost-btn {
+  position: absolute;
+  right: 22px;
+  bottom: 38%;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 2px solid rgba(125, 211, 255, 0.55);
+  background: rgba(20, 32, 60, 0.55);
+  color: #bfe9ff;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 8;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  box-shadow: 0 0 22px rgba(125, 211, 255, 0.25);
+  transition:
+    transform 0.1s ease,
+    background 0.15s ease;
+}
+.lh-boost-btn.active {
+  background: rgba(60, 120, 255, 0.7);
+  transform: scale(0.92);
+  box-shadow: 0 0 32px rgba(125, 211, 255, 0.5);
+}
+
+@media (max-width: 540px) {
+  .lh-card,
+  .lh-panel {
+    padding: 20px;
+  }
+  .lh-upgrades {
+    grid-template-columns: 1fr;
+  }
+  .lh-card-title {
+    font-size: 20px;
+  }
+}

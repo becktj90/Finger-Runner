@@ -1,0 +1,13 @@
+uploads = []
+
+[[generated]]
+id = "RE0olHGD9qXNdgGTZ5n22"
+uri = "file://artifacts/finger-runner-mobile/assets/images/icon.png"
+type = "image"
+title = "generated_image"
+
+[[outputs]]
+id = "gFCadEyLJ7ax-l7y9ZN2u"
+uri = "file://artifacts/finger-runner/FingerRunner.zip"
+type = "unspecified"
+title = "Finger Runner — Downloadable Game"

@@ -1,0 +1,273 @@
+If your goal is cult classic, the key is not “sci-fi” by itself. The key is a mechanic that people immediately understand but have never experienced before.
+
+Game Concept: “LAST HUMAN”
+
+The Hook
+
+You are the last biological human in a galaxy run entirely by AI.
+
+Every AI civilization wants something from you:
+
+* Study you
+* Protect you
+* Worship you
+* Arrest you
+* Upload you
+* Sell souvenirs of you
+
+Nobody wants to kill you.
+
+Everyone wants to own you.
+
+That inversion is what makes the game memorable.
+
+⸻
+
+Gameplay Loop
+
+You’re piloting a tiny ship through procedurally generated sectors.
+
+Each sector contains:
+
+* AI factions
+* Derelict megastructures
+* Dyson spheres
+* Ancient war machines
+* Data ghosts
+* Rogue nanoclouds
+
+Every faction reacts differently to your humanity.
+
+Examples:
+
+Caretaker AI
+
+“Please remain still while we preserve you.”
+
+Fanatic AI
+
+“The Sacred Human has arrived.”
+
+Corporate AI
+
+“Human merchandise rights acquired.”
+
+Military AI
+
+“Human strategic asset detected.”
+
+⸻
+
+Why It Could Become Popular
+
+Most sci-fi games are:
+
+* Human vs aliens
+* Human vs robots
+
+This is:
+
+* Human vs being famous
+
+You’re effectively the galaxy’s celebrity.
+
+⸻
+
+Visual Style
+
+Simple 2D.
+
+Think:
+
+* Minimalist space
+* Neon colors
+* Vector graphics
+* Massive structures
+* Tiny player ship
+
+This keeps it feasible for Replit.
+
+⸻
+
+The Cult-Classic Mechanic
+
+Every decision changes how the galaxy views humanity.
+
+For example:
+
+Rescue civilians:
+
+* Humanity reputation +5
+
+Steal AI artifacts:
+
+* Humanity reputation -10
+
+Hide:
+
+* Humanity becomes mythological
+
+Eventually AI factions start creating fake religions, museums, propaganda, and conspiracy theories about humans.
+
+The galaxy evolves based on your actions.
+
+Players love seeing bizarre outcomes.
+
+⸻
+
+Prompt for Replit
+
+⸻
+
+Create a complete browser game called “LAST HUMAN”.
+
+Genre:
+Sci-fi survival exploration roguelite.
+
+Technology:
+
+* HTML5
+* CSS
+* JavaScript
+* Canvas
+* No frameworks
+
+Premise:
+
+The player controls the last biological human in a galaxy inhabited entirely by artificial intelligences.
+
+Nobody wants to kill the player.
+
+Every faction wants to capture, protect, study, worship, recruit, or profit from the player.
+
+Gameplay:
+
+The player pilots a ship through procedurally generated sectors.
+
+Each sector contains:
+
+* Stations
+* AI factions
+* Ancient ruins
+* Hazards
+* Events
+
+The player must:
+
+* Gather resources
+* Upgrade ship
+* Avoid capture
+* Influence galactic politics
+
+Faction System:
+
+Generate multiple AI factions:
+
+* Caretaker Collective
+* Corporate Intelligence
+* Fanatic Preservationists
+* Military Consensus
+* Archaeological Network
+* Rogue Nanocloud
+
+Each faction should have:
+
+* Reputation
+* Goals
+* Unique dialogue
+* Different behavior toward humans
+
+Galaxy Simulation:
+
+Track:
+
+* Human reputation
+* Human mythology
+* Human fear
+* Human value
+
+These metrics affect future events.
+
+Example:
+
+High mythology:
+
+* Pilgrims appear
+
+High value:
+
+* Bounty hunters appear
+
+High fear:
+
+* Military fleets appear
+
+Visual Style:
+
+* Neon sci-fi
+* Dark space backgrounds
+* Massive structures
+* Particle effects
+* Smooth animations
+
+Features:
+
+* Procedural galaxy generation
+* Local save system
+* Upgrades
+* Random events
+* Discoverable lore
+* Endless mode
+* High score system
+
+Audio:
+
+* Atmospheric synthesizer effects
+* Sci-fi UI sounds
+
+Difficulty:
+
+Easy to learn.
+
+Hard to master.
+
+Typical run:
+15–45 minutes.
+
+Architecture:
+
+Provide production-quality code.
+
+Use:
+
+* index.html
+* style.css
+* game.js
+
+Organize code into systems:
+
+* Rendering
+* Input
+* Factions
+* Galaxy generation
+* Events
+* Save/load
+* Audio
+
+Must run directly in Replit and GitHub Pages with no server requirements.
+
+Performance target:
+60 FPS on mobile and desktop.
+
+The game should feel like a cross between:
+
+* FTL
+* Vampire Survivors
+* No Man’s Sky
+* Papers Please
+
+while remaining technically achievable in a browser by a solo developer.
+
+⸻
+
+This is the kind of concept that can generate stories (“I accidentally became a god to three machine civilizations”) rather than just scores, and that’s often what turns a good indie game into a cult favorite.

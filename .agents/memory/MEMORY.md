@@ -1,0 +1,3 @@
+- [Vanilla canvas in react-vite artifact](vanilla-canvas-artifact.md) — mounting a framework-free canvas game inside the react-vite scaffold; CSS/entry gotchas.
+- [finger-runner typecheck](finger-runner-typecheck.md) — tsc errors in ui/calendar.tsx & ui/spinner.tsx are duplicate @types/react noise, not your Game.tsx bug.
+- [Transitive vuln overrides](transitive-vuln-overrides.md) — patch vulnerable transitive npm deps via pnpm-workspace.yaml overrides; check consumer API usage before major bumps.
