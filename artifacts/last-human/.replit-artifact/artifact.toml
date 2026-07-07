@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/last-human/"
+title = "LAST HUMAN"
+version = "1.0.0"
+id = "artifacts/last-human"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/last-human/" ]
+localPort = 23218
+
+[services.development]
+run = "pnpm --filter @workspace/last-human run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/last-human", "run", "build" ]
+publicDir = "artifacts/last-human/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23218"
+BASE_PATH = "/last-human/"
