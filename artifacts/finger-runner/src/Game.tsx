@@ -15,7 +15,7 @@ import {
   POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
-  getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
+  getCharacterDef, BOOST_FRAMES, BOOST_COOLDOWN, BOOST_GAS_COLORS,
 } from "./three/coords";
 
 // Lazily loaded: these pull in the Three.js/R3F render stack and the
@@ -67,6 +67,7 @@ const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
 const SWIPE_THRESHOLD = 18;     // px a touch must travel to commit a swipe gesture (lowered for better mobile feel)
+const TURBO_BOOST_MULT = 1.85;  // fart-turbo speed multiplier — punchier than the shared BOOST_MULT for a real "blast" feel
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -1029,6 +1030,21 @@ export default function Game() {
     if (st.boostTimer > 0 || st.boostCooldown > 0) return;
     st.boostTimer = BOOST_FRAMES;
     st.boostCooldown = BOOST_COOLDOWN;
+    // Ignition blast — one big green cloud punched out the back the instant the
+    // turbo fires, so activation feels explosive rather than a slow build-up.
+    const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
+    for (let g = 0; g < 22; g++) {
+      const spread = Math.random() * Math.PI - Math.PI / 2; // fan out backward/up
+      const sp = 3 + Math.random() * 6;
+      pushCapped(st.particles, POOL_PARTICLES, {
+        x: 176 + (Math.random() - 0.5) * 18, y: gasBaseY + (Math.random() - 0.5) * 16,
+        vx: Math.cos(spread) * sp + 2, vy: -Math.abs(Math.sin(spread)) * sp - 0.5,
+        life: 30 + Math.random() * 18, size: 8 + Math.random() * 10,
+        color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
+        shape: "gas",
+      });
+    }
+    st.shake = Math.max(st.shake, 7); // kick of acceleration
     playFart();
   };
 
@@ -1297,7 +1313,7 @@ export default function Game() {
         const fingerTipY = st.playerY + FINGER_TIP_OFFSET - 8;
         if (st.boostTimer > 0) st.boostTimer--;
         if (st.boostCooldown > 0) st.boostCooldown--;
-        const boostMult = st.boostTimer > 0 ? BOOST_MULT : 1;
+        const boostMult = st.boostTimer > 0 ? TURBO_BOOST_MULT : 1;
         // Reflect boost state to the on-screen button (only re-renders on change).
         const boostActiveNow = st.boostTimer > 0;
         const boostReadyNow = st.boostCooldown === 0;
@@ -1310,11 +1326,13 @@ export default function Game() {
         // pinned by the road floor-clamp (which only freezes "circle" droplets).
         if (st.boostTimer > 0) {
           const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
-          for (let g = 0; g < 2; g++) {
+          // Thick green plume blasting backward out the runner — more, bigger,
+          // faster puffs than a gentle trail so the turbo reads as a jet blast.
+          for (let g = 0; g < 5; g++) {
             pushCapped(st.particles, POOL_PARTICLES, {
-              x: 185 + (Math.random() - 0.5) * 16, y: gasBaseY + Math.random() * 10,
-              vx: 1.1 + Math.random() * 1.8, vy: -(0.7 + Math.random() * 1.3),
-              life: 28 + Math.random() * 12, size: 5 + Math.random() * 5,
+              x: 178 + (Math.random() - 0.5) * 20, y: gasBaseY + Math.random() * 14,
+              vx: 2.6 + Math.random() * 3.4, vy: -(0.4 + Math.random() * 1.8),
+              life: 26 + Math.random() * 16, size: 7 + Math.random() * 8,
               color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
               shape: "gas",
             });
@@ -1577,16 +1595,26 @@ export default function Game() {
           ?? getImg(charId);
         if (img) {
           const feetY = st.playerY + 90;
-          // Run cycle bob — subtle up/down oscillation while on ground
-          const runBob = (st.gameRunning && st.onGround && !st.sliding)
-            ? Math.sin(st.time * 0.38) * 4 : 0;
+          // ── Run cycle ──────────────────────────────────────────────────────
+          // Only one static sprite frame exists per character, so the run is
+          // sold procedurally: a springy footfall bounce, a rhythmic lean that
+          // rocks the body left/right with each stride, and a squash as each
+          // foot plants. strideT advances two footfalls per full period.
+          const running = st.gameRunning && st.onGround && !st.sliding;
+          const strideT = st.time * 0.55;
+          // Bounce: the body pushes UP off each foot (abs(sin) => one hop per step)
+          const runBob = running ? -Math.abs(Math.sin(strideT)) * 9 : 0;
+          // Rhythmic body rock — alternates direction every stride
+          const runWobble = running ? Math.sin(strideT * 2) * 0.07 : 0;
           // Lean angle: forward lean when running, back lean when airborne, flat + forward rotate when sliding
-          const tilt = st.sliding ? 0.42
-            : (!st.onGround ? -0.07 : (st.gameRunning ? 0.05 : 0));
+          const tilt = (st.sliding ? 0.42
+            : (!st.onGround ? -0.07 : (st.gameRunning ? 0.05 : 0))) + runWobble;
+          // Foot-plant squash synced to the stride (max as bounce bottoms out)
+          const plantK = running ? Math.max(0, Math.cos(strideT)) * 0.08 : 0;
           // Squash/stretch on landing impact
           const landK = Math.min(1, (st.landImpact || 0) / 10);
-          const scaleX = 1 + 0.22 * landK;
-          const scaleY = Math.max(0.55, 1 - 0.28 * landK);
+          const scaleX = 1 + 0.22 * landK + plantK * 0.6;
+          const scaleY = Math.max(0.55, (1 - 0.28 * landK) - plantK);
           // Sprite size — squash down when sliding
           const spriteH = st.sliding ? 68 : 118;
           const spriteW = img.naturalWidth * (spriteH / img.naturalHeight);
@@ -1946,18 +1974,18 @@ export default function Game() {
         ⛶
       </button>
 
-      {screen === "game" && (
+      {screen === "playing" && (
         <div style={{
           position: "fixed",
-          bottom: "80px",
-          left: "12px",
-          right: "12px",
+          bottom: "150px",
+          left: "0",
+          right: "0",
           display: "flex",
-          gap: "10px",
-          justifyContent: "center",
+          justifyContent: "space-between",
           alignItems: "center",
-          zIndex: 7,
-          pointerEvents: "auto",
+          padding: "0 14px",
+          zIndex: 8,
+          pointerEvents: "none",
         }}>
           <button
             onPointerDown={(e) => {
@@ -1970,19 +1998,20 @@ export default function Game() {
               if (stateRef.current.gameRunning) moveLane(-1);
             }}
             style={{
-              flex: 1,
-              maxWidth: "140px",
-              padding: "14px 16px",
-              background: "rgba(255, 60, 60, 1)",
+              width: "104px",
+              padding: "16px 12px",
+              background: "rgba(255, 60, 60, 0.9)",
               border: "3px solid #ff2020",
               color: "white",
-              fontSize: "16px",
+              fontSize: "18px",
               fontWeight: "bold",
-              borderRadius: "10px",
-              boxShadow: "0 6px 16px rgba(255, 0, 0, 0.6)",
+              borderRadius: "12px",
+              boxShadow: "0 6px 16px rgba(255, 0, 0, 0.55)",
               userSelect: "none",
               WebkitUserSelect: "none" as any,
               WebkitTouchCallout: "none" as any,
+              touchAction: "none",
+              pointerEvents: "auto",
               opacity: stateRef.current.gameRunning ? 1 : 0.6,
             }}
           >
@@ -1999,19 +2028,20 @@ export default function Game() {
               if (stateRef.current.gameRunning) moveLane(1);
             }}
             style={{
-              flex: 1,
-              maxWidth: "140px",
-              padding: "14px 16px",
-              background: "rgba(60, 60, 255, 1)",
+              width: "104px",
+              padding: "16px 12px",
+              background: "rgba(60, 60, 255, 0.9)",
               border: "3px solid #2020ff",
               color: "white",
-              fontSize: "16px",
+              fontSize: "18px",
               fontWeight: "bold",
-              borderRadius: "10px",
-              boxShadow: "0 6px 16px rgba(0, 0, 255, 0.6)",
+              borderRadius: "12px",
+              boxShadow: "0 6px 16px rgba(0, 0, 255, 0.55)",
               userSelect: "none",
               WebkitUserSelect: "none" as any,
               WebkitTouchCallout: "none" as any,
+              touchAction: "none",
+              pointerEvents: "auto",
               opacity: stateRef.current.gameRunning ? 1 : 0.6,
             }}
           >
