@@ -66,7 +66,7 @@ const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice dur
 const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
-const SWIPE_THRESHOLD = 28;     // px a touch must travel to commit a swipe gesture
+const SWIPE_THRESHOLD = 18;     // px a touch must travel to commit a swipe gesture (lowered for better mobile feel)
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -758,10 +758,17 @@ export default function Game() {
   // it each frame for the 3D render layer's smooth animated slide.
   const moveLane = (dir: -1 | 1) => {
     const st = stateRef.current;
-    if (!st.gameRunning) return;
+    if (!st.gameRunning) {
+      console.log('[Finger Runner] Cannot move lanes - game is not running');
+      return;
+    }
     const next = Math.max(-1, Math.min(1, st.lane + dir));
-    if (next === st.lane) return;
+    if (next === st.lane) {
+      console.log(`[Finger Runner] Lane boundary reached (lane: ${st.lane})`);
+      return;
+    }
     st.lane = next;
+    console.log(`[Finger Runner] Moved to lane ${st.lane}`);
     // Sideways dust kick — tactile feedback on lane switch
     const groundY = getGroundY(sizeRef.current.height);
     for (let i = 0; i < 5; i++) {
@@ -1175,10 +1182,12 @@ export default function Game() {
       } else if (e.code === "ArrowLeft" || e.code === "KeyA") {
         e.preventDefault();
         if (e.repeat) return;
+        console.log('[Finger Runner] Left key pressed');
         moveLane(-1);
       } else if (e.code === "ArrowRight" || e.code === "KeyD") {
         e.preventDefault();
         if (e.repeat) return;
+        console.log('[Finger Runner] Right key pressed');
         moveLane(1);
       }
     };
@@ -1764,7 +1773,11 @@ export default function Game() {
     const dx = e.clientX - t.startX; const dy = e.clientY - t.startY;
     if (Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) return;
     t.consumed = true;
-    if (Math.abs(dx) > Math.abs(dy)) moveLane(dx > 0 ? 1 : -1);
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const direction = dx > 0 ? 1 : -1;
+      console.log(`[Finger Runner] Swipe detected: ${direction > 0 ? 'RIGHT' : 'LEFT'}`);
+      moveLane(direction);
+    }
     else if (dy < 0) { if (stateRef.current.gameRunning) jump(); }
     else slide();
   };
@@ -1876,6 +1889,82 @@ export default function Game() {
       <canvas ref={canvasRef} style={{ display:"block", position:"absolute", inset:0, zIndex:2, touchAction:"none" }}
         onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove}
         onPointerUp={onCanvasPointerUp} onPointerLeave={onCanvasPointerCancel} onPointerCancel={onCanvasPointerCancel} />
+
+      {/* Mobile control buttons for lane movement - always visible during gameplay */}
+      {screen === "game" && (
+        <div style={{
+          position: "fixed",
+          bottom: "80px",
+          left: "12px",
+          right: "12px",
+          display: "flex",
+          gap: "10px",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 7,
+          pointerEvents: "auto",
+        }}>
+          <button
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (stateRef.current.gameRunning) moveLane(-1);
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              if (stateRef.current.gameRunning) moveLane(-1);
+            }}
+            style={{
+              flex: 1,
+              maxWidth: "140px",
+              padding: "14px 16px",
+              background: "rgba(255, 60, 60, 1)",
+              border: "3px solid #ff2020",
+              color: "white",
+              fontSize: "16px",
+              fontWeight: "bold",
+              borderRadius: "10px",
+              boxShadow: "0 6px 16px rgba(255, 0, 0, 0.6)",
+              userSelect: "none",
+              WebkitUserSelect: "none" as any,
+              WebkitTouchCallout: "none" as any,
+              opacity: stateRef.current.gameRunning ? 1 : 0.6,
+            }}
+          >
+            ◀ LEFT
+          </button>
+          <button
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (stateRef.current.gameRunning) moveLane(1);
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              if (stateRef.current.gameRunning) moveLane(1);
+            }}
+            style={{
+              flex: 1,
+              maxWidth: "140px",
+              padding: "14px 16px",
+              background: "rgba(60, 60, 255, 1)",
+              border: "3px solid #2020ff",
+              color: "white",
+              fontSize: "16px",
+              fontWeight: "bold",
+              borderRadius: "10px",
+              boxShadow: "0 6px 16px rgba(0, 0, 255, 0.6)",
+              userSelect: "none",
+              WebkitUserSelect: "none" as any,
+              WebkitTouchCallout: "none" as any,
+              opacity: stateRef.current.gameRunning ? 1 : 0.6,
+            }}
+          >
+            RIGHT ▶
+          </button>
+        </div>
+      )}
+
       <div ref={dialogElRef} style={{
         position:"absolute", top:"18%", left:"50%", transform:"translateX(-50%)", zIndex:6,
         fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:"0.62rem", color:"#00ffcc",
