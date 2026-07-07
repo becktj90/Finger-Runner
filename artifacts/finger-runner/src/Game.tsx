@@ -1903,18 +1903,6 @@ export default function Game() {
   const currentChar = getCharacterDef(selectedCharacter);
   const currentSaber = getSaberDef(saberLevel);
 
-  const toggleFullscreen = () => {
-    const elem = document.documentElement;
-    if (!document.fullscreenElement) {
-      elem.requestFullscreen?.().catch(() => {
-        // Fallback for browsers that don't support fullscreen
-        console.log('Fullscreen not available');
-      });
-    } else {
-      document.exitFullscreen?.();
-    }
-  };
-
   return (
     <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
       <Scene3DBoundary>
