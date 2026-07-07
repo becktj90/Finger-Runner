@@ -758,10 +758,17 @@ export default function Game() {
   // it each frame for the 3D render layer's smooth animated slide.
   const moveLane = (dir: -1 | 1) => {
     const st = stateRef.current;
-    if (!st.gameRunning) return;
+    if (!st.gameRunning) {
+      console.log('[Finger Runner] Cannot move lanes - game is not running');
+      return;
+    }
     const next = Math.max(-1, Math.min(1, st.lane + dir));
-    if (next === st.lane) return;
+    if (next === st.lane) {
+      console.log(`[Finger Runner] Lane boundary reached (lane: ${st.lane})`);
+      return;
+    }
     st.lane = next;
+    console.log(`[Finger Runner] Moved to lane ${st.lane}`);
     // Sideways dust kick — tactile feedback on lane switch
     const groundY = getGroundY(sizeRef.current.height);
     for (let i = 0; i < 5; i++) {
@@ -1175,10 +1182,12 @@ export default function Game() {
       } else if (e.code === "ArrowLeft" || e.code === "KeyA") {
         e.preventDefault();
         if (e.repeat) return;
+        console.log('[Finger Runner] Left key pressed');
         moveLane(-1);
       } else if (e.code === "ArrowRight" || e.code === "KeyD") {
         e.preventDefault();
         if (e.repeat) return;
+        console.log('[Finger Runner] Right key pressed');
         moveLane(1);
       }
     };
