@@ -19,7 +19,7 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "@types/three": "^0.159.0",
+    "@types/three": "^0.170.0",
     "@vitejs/plugin-react": "catalog:",
     "typescript": "^5.3.0",
     "vite": "catalog:"
@@ -29,9 +29,9 @@
     "framer-motion": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "three": "^0.159.0",
-    "@react-three/fiber": "^8.18.0",
-    "@react-three/drei": "^9.122.0",
-    "@react-three/postprocessing": "^2.16.0"
+    "three": "^0.170.0",
+    "@react-three/fiber": "^9.0.0",
+    "@react-three/drei": "^10.0.0",
+    "@react-three/postprocessing": "^3.0.0"
   }
 }
