@@ -1038,17 +1038,18 @@ export default function Game() {
     const saber = getSaberDef(getSaberLevel());
     const cxo = o.x + o.obsWidth / 2;
     const cyo = roadY - o.obsHeight / 2;
-    st.shake = Math.max(st.shake, 6);
-    for (let i = 0; i < 26; i++) {
-      const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 7;
+    st.shake = Math.max(st.shake, 8);
+    // Enhanced saber particles - more satisfying explosion
+    for (let i = 0; i < 32; i++) {
+      const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 8;
       pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2,
-        life: 22 + Math.random() * 18, size: 3 + Math.random() * 5,
+        life: 24 + Math.random() * 20, size: 3 + Math.random() * 5,
         color: Math.random() < 0.5 ? saber.color : saber.glow, shape: "circle" });
     }
-    for (let i = 0; i < 8; i++) {
-      const ang = Math.random() * Math.PI * 2; const sp = 3 + Math.random() * 6;
+    for (let i = 0; i < 12; i++) {
+      const ang = Math.random() * Math.PI * 2; const sp = 3 + Math.random() * 7;
       pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5,
-        life: 14 + Math.random() * 10, size: 2 + Math.random() * 3, color: "#ffffff",
+        life: 16 + Math.random() * 12, size: 2 + Math.random() * 3.5, color: "#ffffff",
         shape: "rect", rot: Math.random() * 6, rotV: (Math.random() - 0.5) * 0.5 });
     }
     st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
@@ -1370,7 +1371,28 @@ export default function Game() {
               crash(); didCrash = true;
             }
           }
-          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) o.passed = true;
+          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) {
+            o.passed = true;
+            // Near-miss effect: sparkle burst when narrowly avoiding an obstacle
+            if (!didCrash && o.lane === st.lane) {
+              const numParticles = 6 + Math.floor(Math.random() * 4);
+              for (let p = 0; p < numParticles; p++) {
+                const ang = Math.random() * Math.PI * 2;
+                const sp = 1.5 + Math.random() * 3;
+                const colors = ["#ffff66", "#ffff99", "#ffcc00", "#ffff44"];
+                pushCapped(st.particles, POOL_PARTICLES, {
+                  x: fingerLeft - 8 + Math.random() * 16,
+                  y: st.playerY + 40 + Math.random() * 30,
+                  vx: Math.cos(ang) * sp + (Math.random() - 0.5) * 1,
+                  vy: Math.sin(ang) * sp - 1,
+                  life: 12 + Math.random() * 12,
+                  size: 1.5 + Math.random() * 2.5,
+                  color: colors[Math.floor(Math.random() * colors.length)],
+                  shape: "circle"
+                });
+              }
+            }
+          }
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
 
@@ -1802,6 +1824,16 @@ export default function Game() {
       startMusic(themeId, st.gameRunning, lvlDef.speedMult);
     } else stopMusic();
   };
+  const toggleFullscreen = () => {
+    const elem = document.documentElement;
+    if (!document.fullscreenElement) {
+      elem.requestFullscreen?.().catch(() => {
+        console.log('Fullscreen not available on this device');
+      });
+    } else {
+      document.exitFullscreen?.();
+    }
+  };
   const goToMenu = () => {
     stopMusic();
     if (audioRef.current.enabled) startMusic("start", false);
@@ -1871,6 +1903,18 @@ export default function Game() {
   const currentChar = getCharacterDef(selectedCharacter);
   const currentSaber = getSaberDef(saberLevel);
 
+  const toggleFullscreen = () => {
+    const elem = document.documentElement;
+    if (!document.fullscreenElement) {
+      elem.requestFullscreen?.().catch(() => {
+        // Fallback for browsers that don't support fullscreen
+        console.log('Fullscreen not available');
+      });
+    } else {
+      document.exitFullscreen?.();
+    }
+  };
+
   return (
     <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
       <Scene3DBoundary>
@@ -1891,6 +1935,29 @@ export default function Game() {
         onPointerUp={onCanvasPointerUp} onPointerLeave={onCanvasPointerCancel} onPointerCancel={onCanvasPointerCancel} />
 
       {/* Mobile control buttons for lane movement - always visible during gameplay */}
+      {/* Fullscreen button - always visible */}
+      <button
+        onClick={toggleFullscreen}
+        style={{
+          position: "fixed",
+          top: "20px",
+          right: "20px",
+          zIndex: 9,
+          padding: "10px 14px",
+          background: "rgba(100, 150, 255, 0.9)",
+          border: "2px solid #6496ff",
+          color: "white",
+          fontSize: "18px",
+          borderRadius: "8px",
+          cursor: "pointer",
+          boxShadow: "0 4px 12px rgba(100, 150, 255, 0.5)",
+          fontWeight: "bold",
+        }}
+        title="Toggle fullscreen"
+      >
+        ⛶
+      </button>
+
       {screen === "game" && (
         <div style={{
           position: "fixed",
@@ -2233,6 +2300,17 @@ export default function Game() {
           {boostActive ? "BOOST!" : boostReady ? "FART" : "···"}
         </button>
       )}
+
+      {/* ── Fullscreen toggle ── */}
+      <button onClick={toggleFullscreen} className="retro-btn"
+        style={{ position:"absolute", top:18, right:110, zIndex:20,
+          padding:"8px 14px", fontSize:"0.52rem", fontFamily:retroFont,
+          background:"rgba(0,0,0,0.8)", color:"#6496ff",
+          border:"2px solid #6496ff",
+          boxShadow:"0 0 10px rgba(100,150,255,0.38)",
+          cursor:"pointer", letterSpacing:"0.05em", lineHeight:2 }}>
+        ⛶
+      </button>
 
       {/* ── Music toggle ── */}
       <button onClick={handleToggleMusic} className="retro-btn"
