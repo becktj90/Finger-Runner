@@ -1,24 +1,60 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense, type PointerEvent as ReactPointerEvent } from "react";
 import './arcade.css';
+import {
+  getSaveValue, setSaveValue,
+  incrementStat, recordLevelScore,
+  checkAchievements, getUnlockedCount, getTotalCount,
+  isSaberOwned, buySaber, getNextUnlockableSaber,
+  isEndlessUnlocked,
+  getEndlessHighScore, getEndlessBestDistance,
+  isMusicEnabled, toggleMusic,
+} from "./game";
+import Scene3DBoundary from "./three/Scene3DBoundary";
+import type { GameSceneState, Theme3D } from "./three/coords";
+import {
+  POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
+  POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
+  SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
+  getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
+} from "./three/coords";
+
+// Lazily loaded: these pull in the Three.js/R3F render stack and the
+// wardrobe UI, which aren't needed to paint the very first frame. Splitting
+// them into their own chunks shrinks the critical-path bundle so the
+// menu/HUD shows sooner, especially on slower connections.
+const Scene3D = lazy(() => import("./three/Scene3D"));
+const WardrobeScreen = lazy(() => import("./components/WardrobeScreen"));
+const CharacterSelectScreen = lazy(() => import("./components/CharacterSelectScreen"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox";
+type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart";
 type Theme = "suburb"|"city"|"highway"|"mountain"|"night";
 type HatId = "none"|"tophat"|"cap"|"crown"|"cowboy"|"viking"|"beanie"|"party"|"wizard"|"propeller"|"halo";
 
-interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; }
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"; rot?: number; rotV?: number; }
+interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; lane: number; }
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"|"gas"; rot?: number; rotV?: number; }
 interface BloodPuddle { x: number; y: number; rx: number; ry: number; life: number; maxLife: number; }
 interface Coin { x: number; y: number; phase: number; }
+type PowerUpType = "magnet"|"shield"|"multiplier";
+interface PowerUp { x: number; y: number; type: PowerUpType; phase: number; }
 interface Platform { x: number; y: number; w: number; }
 interface RopeScroll { x: number; anchorY: number; length: number; }
 interface ActiveSwing { anchorX: number; anchorY: number; length: number; angle: number; angVel: number; swingFrames: number; }
+
+// Pushes into a pooled entity array only while under its 3D render pool
+// cap (see three/coords.ts POOL_* constants). Without this, a level or
+// Endless-mode ramp that spams spawns faster than entities are recycled
+// could grow a state array past its render pool size — the extra entities
+// would still be fully live for collision/scoring but never drawn.
+function pushCapped<T>(arr: T[], cap: number, item: T) {
+  if (arr.length < cap) arr.push(item);
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const GRAVITY = 0.72;
 const JUMP_FORCE = -18.5;
 const LOW_JUMP_GRAVITY_MULT = 2.6;   // extra gravity when jump released early → variable jump height
-const FALL_GRAVITY_MULT = 1.3;       // snappier descent for better game feel
+const FALL_GRAVITY_MULT = 1.55;      // snappier descent for better game feel
 const MAX_FALL = 24;
 const COYOTE_FRAMES = 7;             // grace frames to still jump after leaving the ground
 const JUMP_BUFFER_FRAMES = 8;        // remember a jump pressed just before landing
@@ -30,6 +66,7 @@ const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice dur
 const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
+const SWIPE_THRESHOLD = 28;     // px a touch must travel to commit a swipe gesture
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -42,14 +79,19 @@ function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFF
 const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
   cat:      { w:28, h:42 },
   dog:      { w:44, h:46 },
+  pumpkin:  { w:44, h:44 },   // stumpy round jack-o-lantern
   cone:     { w:32, h:56 },
   hydrant:  { w:34, h:58 },
+  cart:     { w:48, h:56 },   // shopping cart
   newsbox:  { w:36, h:60 },
   gnome:    { w:30, h:62 },
+  flamingo: { w:28, h:64 },   // yard flamingo, tall and slender
   trashcan: { w:36, h:66 },
   mailbox:  { w:36, h:68 },
   bicycle:  { w:46, h:68 },
+  cactus:   { w:22, h:74 },   // tall skinny desert cactus
   stopsign: { w:22, h:88 },
+  barrier:  { w:44, h:170 },  // overhead gantry — collision uses BARRIER_GAP, not this height
 };
 
 // Per-level obstacle pools. Repeated entries bias the random pick, so the mix
@@ -57,23 +99,44 @@ const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
 // dense, with the stopsign showing up more often as the finale approaches.
 const LEVELS = [
   { num:1, name:"Neighborhood Cruise",  target:500,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0,
-    obs:["cat","dog","cone","cat","dog"] as ObstacleType[] },
+    obs:["cat","dog","cone","pumpkin","cat","dog","pumpkin"] as ObstacleType[] },
   { num:2, name:"Shopping District",    target:600,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0,
-    obs:["cat","dog","cone","hydrant","trashcan","cone"] as ObstacleType[] },
+    obs:["cat","dog","pumpkin","hydrant","flamingo","trashcan","cone","cart","barrier"] as ObstacleType[] },
   { num:3, name:"Downtown",             target:650,  theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6,
-    obs:["dog","cone","hydrant","newsbox","gnome","trashcan"] as ObstacleType[] },
+    obs:["dog","cone","hydrant","newsbox","flamingo","gnome","cart","trashcan","barrier"] as ObstacleType[] },
   { num:4, name:"City Center",          target:700,  theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2,
-    obs:["cone","hydrant","newsbox","gnome","trashcan","mailbox"] as ObstacleType[] },
+    obs:["cone","hydrant","newsbox","gnome","flamingo","cart","trashcan","mailbox","barrier"] as ObstacleType[] },
   { num:5, name:"Highway On-Ramp",      target:750,  theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8,
-    obs:["hydrant","newsbox","gnome","trashcan","mailbox","bicycle"] as ObstacleType[] },
+    obs:["hydrant","newsbox","cactus","gnome","trashcan","cart","mailbox","bicycle","barrier"] as ObstacleType[] },
   { num:6, name:"Open Highway",         target:800,  theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4,
-    obs:["newsbox","gnome","trashcan","mailbox","bicycle","stopsign"] as ObstacleType[] },
+    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","stopsign","cactus","barrier","barrier"] as ObstacleType[] },
   { num:7, name:"Mountain Pass",        target:900,  theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0,
-    obs:["gnome","trashcan","mailbox","bicycle","stopsign","stopsign"] as ObstacleType[] },
+    obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","barrier","barrier"] as ObstacleType[] },
   { num:8, name:"Night Drive",          target:1000, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
-    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign"] as ObstacleType[] },
+    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","barrier","barrier"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
+
+// ── Background music tracks ──────────────────────────────────────────────────
+// Four licensed tracks live in public/audio/: `title-theme.mp3` plays on the
+// start/wardrobe menus, and `level-theme-1/2/3.mp3` are shared across the five
+// in-run level themes (there are more themes than tracks, so a couple of
+// themes intentionally reuse the same track). Each theme still gets its own
+// subtle volume character via `leadGain`, layered on top of the isPlaying
+// (menu vs. in-run) and speedMult (level pace) adjustments made in startMusic().
+type MusicThemeId = Theme | "start";
+interface MusicTheme {
+  file: string;
+  leadGain: number; // per-theme loudness character
+}
+const MUSIC_THEMES: Record<MusicThemeId, MusicTheme> = {
+  start:    { file: "title-theme.mp3",  leadGain: 0.85 },
+  suburb:   { file: "level-theme-1.mp3", leadGain: 1.0  },
+  city:     { file: "level-theme-2.mp3", leadGain: 1.0  },
+  highway:  { file: "level-theme-3.mp3", leadGain: 1.05 },
+  mountain: { file: "level-theme-1.mp3", leadGain: 1.1  },
+  night:    { file: "level-theme-2.mp3", leadGain: 1.1  },
+};
 
 // ── Hat catalogue ─────────────────────────────────────────────────────────────
 const HATS: { id: HatId; name: string; emoji: string; unlockLevel: number; cost?: number }[] = [
@@ -103,16 +166,13 @@ const SABERS: Saber[] = [
   { tier:5, name:"Purple Saber", color:"#b14bff", glow:"#d49bff", reach:185, cost:380 },
 ];
 function getSaberDef(tier: number): Saber { return SABERS[Math.min(SABERS.length, Math.max(1, tier)) - 1]; }
-function getSaberLevel(): number {
-  const raw = parseInt(localStorage.getItem("fingerRunnerSaber") || "1", 10);
-  const tier = Number.isFinite(raw) ? raw : 1;
-  return Math.min(SABERS.length, Math.max(1, tier));
-}
-function setSaberLevelLS(n: number) { localStorage.setItem("fingerRunnerSaber", String(n)); }
-
-// ── Kids / easy mode ──────────────────────────────────────────────────────────
-function getKidsMode(): boolean { return localStorage.getItem("fingerRunnerKids") === "1"; }
-function setKidsModeLS(on: boolean) { localStorage.setItem("fingerRunnerKids", on ? "1" : "0"); }
+// ── Legacy persistence wrappers → new save system ───────────────────────────────────────────────────────
+function getSaberLevel(): number { return getSaveValue("saberLevel"); }
+function setSaberLevelLS(n: number) { setSaveValue("saberLevel", n); }
+function getSelectedCharacter(): string { return getSaveValue("selectedCharacter"); }
+function setSelectedCharacterLS(id: string) { setSaveValue("selectedCharacter", id); }
+function getKidsMode(): boolean { return getSaveValue("kidsMode"); }
+function setKidsModeLS(on: boolean) { setSaveValue("kidsMode", on); }
 
 // ── Storyline & dialog ────────────────────────────────────────────────────────
 const STORY_INTRO =
@@ -135,30 +195,55 @@ const RUN_QUIPS = [
   "We were BORN to run!", "Two fingers, one dream.", "Don't look back!",
   "This is the way.", "Knuckle down!", "Living on the edge!", "So bouncy!",
 ];
-const JUMP_QUIPS = ["Hup!", "Boing!", "Up we go!", "Weeee!", "Air time!", "Springy!"];
-const CRASH_QUIPS = [
-  "Should've moisturized.", "Finger down! I repeat, finger down!",
-  "Well, that'll leave a callus.", "Ow. OW. OWWW.", "Tell my thumb I love it…",
-  "That's gonna need a band-aid.", "I regret everything.", "Cramp! It was a cramp!",
-];
-const SLICE_QUIPS = ["Sliced!", "Hi-yah!", "Vzzm!", "Chop chop!", "Take that!", "Zap!", "Force is strong!"];
+// ── Per-character personality voice lines ──────────────────────────────────
+const CHAR_LINES: Record<string, { jump: string[]; slash: string[]; idle: string[]; win: string[]; dead: string[]; start: string[] }> = {
+  apollo: {
+    jump:  ["Up up up!", "I got AIR!", "Watch me fly!", "TO THE SKY!", "Parkour!", "This is my moment!"],
+    slash: ["Hiya!", "Take THAT!", "Pow!", "Vzzzt!", "Back off!", "Too easy.", "Nailed it!"],
+    idle:  ["Catch me if you can!", "I'm not even sweating.", "Don't look back!", "FASTER!", "Apollo doesn't stop!", "This is my track!"],
+    win:   ["YEAH! Apollo wins!", "Let's GO next level!", "I did it!", "Too easy.", "BOOM!", "Champion Apollo!"],
+    dead:  ["Oof... tell Rocco I tripped.", "I'll do better!", "That was so unfair!", "Ouch!!! Replay!", "This isn't over.", "One more try!"],
+    start: ["Let's RUN!", "Apollo's ready!", "Watch this!", "Here we go!", "Full speed ahead!"],
+  },
+  rocco: {
+    jump:  ["Me fly!", "Weeee!", "Up up!", "Me jump good!", "ZOOM!", "Weeee bro!"],
+    slash: ["Pew pew!", "Zappie!", "Me got it!", "Hehe gotcha!", "Bam bam!", "ZAPPIE ZAPPIE!"],
+    idle:  ["Me go fast!", "Where cookie?!", "Vroom vroom!", "ZOOOOOM!", "Rocco no stop!", "Me not tired yet!"],
+    win:   ["ME WIN!!!", "Yay yay yay!", "Cookie please!", "Rocco BEST!", "Hehehe!", "Me did it!!!"],
+    dead:  ["Uh oh!", "Me fell down...", "Oopsie!", "Nooo not fair!", "Me try again!", "Boo boo!!!"],
+    start: ["Me go ZOOM!", "Rocco ready!", "Weeee!", "GO GO GO!", "Vroom vroom!"],
+  },
+  santi: {
+    jump:  ["Woof!", "Arf arf!", "Bork bork!", "Yip yip!", "Bark bark!", "BORK!"],
+    slash: ["Grr got it!", "Ruff ruff!", "Fetch THAT!", "Santi smash!", "Bite! Bite!", "Woof Woof!"],
+    idle:  ["Sniff sniff...", "Where treats?!", "Good boy running!", "Ball? Ball?!", "Nose knows!", "Wanna play?!"],
+    win:   ["BARK BARK BARK!", "Good boy Santi!", "Treat please!", "Woof won!", "Best boy!", "Who's good?! ME!"],
+    dead:  ["Yip!", "Ow ow ow!", "Santi sad...", "No like crash!", "Bad thing bad!", "Whimper..."],
+    start: ["WOOF! Let's go!", "Santi ready!", "Sniff the path!", "BORK!", "Good boy running!"],
+  },
+};
+function charLineFor(event: keyof typeof CHAR_LINES["apollo"]): string[] {
+  const id = getSelectedCharacter();
+  return CHAR_LINES[id]?.[event] || CHAR_LINES.apollo[event];
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
-function getMaxLevel(): number { return parseInt(localStorage.getItem("fingerRunnerMaxLevel") || "1"); }
-function setMaxLevel(n: number) { localStorage.setItem("fingerRunnerMaxLevel", String(n)); }
-function getEquippedHat(): HatId { return (localStorage.getItem("fingerRunnerHat") || "none") as HatId; }
-function setEquippedHat(id: HatId) { localStorage.setItem("fingerRunnerHat", id); }
-function getCoins(): number { return parseInt(localStorage.getItem("fingerRunnerCoins") || "0"); }
-function setCoinsLS(n: number) { localStorage.setItem("fingerRunnerCoins", String(Math.max(0, Math.floor(n)))); }
+function getMaxLevel(): number { return getSaveValue("maxLevel"); }
+function setMaxLevel(n: number) { setSaveValue("maxLevel", n); }
+function getEquippedHat(): HatId { return getSaveValue("equippedHat") as HatId; }
+function setEquippedHat(id: HatId) { setSaveValue("equippedHat", id); }
+function getOwnedOutfits(): HatId[] { return getSaveValue("ownedHats") as HatId[]; }
+function setOwnedOutfits(ids: HatId[]) { setSaveValue("ownedHats", ids); }
+function getCoins(): number { return getSaveValue("totalCoins"); }
+function setCoinsLS(n: number) { setSaveValue("totalCoins", Math.max(0, Math.floor(n))); }
 
 // ── Per-level best scores ──────────────────────────────────────────────────────
 function getLevelBest(levelNum: number): number {
-  return parseInt(localStorage.getItem(`fingerRunnerBest_${levelNum}`) || "0");
+  return getSaveValue("stats").bestLevelScores[levelNum] || 0;
 }
 function saveLevelBest(levelNum: number, score: number) {
-  const prev = getLevelBest(levelNum);
-  if (score > prev) localStorage.setItem(`fingerRunnerBest_${levelNum}`, String(Math.floor(score)));
+  recordLevelScore(levelNum, score);
 }
 // Returns null (no attempt), "bronze", "silver", or "gold"
 // Bronze: best >= 33% of target  Silver: best >= 67%  Gold: completed (best >= 100%)
@@ -174,11 +259,6 @@ function getMedal(levelNum: number): Medal | null {
 }
 const MEDAL_EMOJI: Record<Medal, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
 const MEDAL_COLOR: Record<Medal, string> = { bronze: "#cd7f32", silver: "#c0c0c0", gold: "#ffd700" };
-function getOwnedOutfits(): HatId[] {
-  try { const v = JSON.parse(localStorage.getItem("fingerRunnerOutfits") || "[]"); return Array.isArray(v) ? (v as HatId[]) : []; }
-  catch { return []; }
-}
-function setOwnedOutfits(ids: HatId[]) { localStorage.setItem("fingerRunnerOutfits", JSON.stringify(ids)); }
 // A hat is available if it's a level unlock the player has reached, or a coin
 // outfit they've purchased. Coin outfits use unlockLevel:0 + a cost.
 function isHatUnlocked(hat: { id: HatId; unlockLevel: number; cost?: number }, owned: HatId[]): boolean {
@@ -189,23 +269,32 @@ function isHatUnlocked(hat: { id: HatId; unlockLevel: number; cost?: number }, o
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const charImgsRef = useRef<Record<string, HTMLImageElement>>({});
+  const touchRef = useRef({ active: false, startX: 0, startY: 0, consumed: false });
   const stateRef = useRef({
     gameRunning: false,
     levelComplete: false,
     currentLevel: 1,
     levelScore: 0,
     totalScore: 0,
-    bestScore: parseInt(localStorage.getItem("fingerRunnerBest") || "0"),
+    bestScore: getSaveValue("bestScore"),
     time: 0,
     velocity: 0,
     playerY: 300,
     spawnTimer: 0,
     onGround: true,
+    lane: 0,
+    laneVisual: 0,
+    laneVel: 0,
+    lastObstacleLane: 0,
     jumpsUsed: 0,
     jumpHeld: false,
     coyoteTimer: 0,
     jumpBuffer: 0,
     landImpact: 0,
+    sliding: false,
+    slideTimer: 0,
+    slideQueued: false,
     shake: 0,
     obstacles: [] as Obstacle[],
     particles: [] as Particle[],
@@ -213,6 +302,14 @@ export default function Game() {
     coins: [] as Coin[],
     coinSpawnTimer: 0,
     coinBalance: getCoins(),
+    powerUps: [] as PowerUp[],
+    powerUpSpawnTimer: 0,
+    magnetTimer: 0,
+    multiplierTimer: 0,
+    shieldCharges: 0,
+    comboCount: 0,
+    comboTimer: 0,
+    comboPopup: null as { text: string; life: number; maxLife: number; color: string } | null,
     crashFlash: 0,
     dialog: null as { text: string; life: number; maxLife: number } | null,
     dialogCooldown: 200,
@@ -224,20 +321,36 @@ export default function Game() {
     saberSwing: 0,
     saberCooldown: 0,
     kidsMode: getKidsMode(),
+    worldScroll: 0,
+    boostTimer: 0,
+    boostCooldown: 0,
+    lastRunBonus: 0,
   });
+  const sizeRef = useRef({ width: typeof window !== "undefined" ? window.innerWidth : 1280, height: typeof window !== "undefined" ? window.innerHeight : 720 });
+  const dialogElRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<{
     ctx: AudioContext | null; enabled: boolean;
-    interval: ReturnType<typeof setInterval> | null;
-    melodyOsc: OscillatorNode | null; bassOsc: OscillatorNode | null; kickOsc: OscillatorNode | null; step: number;
-  }>({ ctx:null, enabled:true, interval:null, melodyOsc:null, bassOsc:null, kickOsc:null, step:0 });
+    currentThemeId: MusicThemeId | null; transitionSeq: number;
+  }>({ ctx:null, enabled:isMusicEnabled(), currentThemeId:null, transitionSeq:0 });
+  // Licensed-free generated synthwave pop track that serves as the game's
+  // persistent background music bed. Volume/tempo are nudged per theme/level
+  // via MUSIC_THEMES.leadGain/baseStepMs so it still feels responsive to
+  // menu vs. in-run intensity and level speed, without needing separate
+  // per-theme audio files.
+  const musicElRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number>(0);
 
-  type Screen = "start"|"playing"|"levelComplete"|"dead"|"wardrobe";
+  type Screen = "start"|"playing"|"levelComplete"|"dead"|"wardrobe"|"character";
   const [screen, setScreen] = useState<Screen>("start");
-  const [musicOn, setMusicOn] = useState(true);
+  const [musicOn, setMusicOn] = useState(isMusicEnabled());
   const [currentLevel, setCurrentLevel] = useState(1);
   const [maxLevel, setMaxLevelState] = useState(getMaxLevel());
   const [equippedHat, setEquippedHatState] = useState<HatId>(getEquippedHat());
+  const [selectedCharacter, setSelectedCharacterState] = useState<string>(getSelectedCharacter());
+  const [boostActive, setBoostActive] = useState(false);
+  const [boostReady, setBoostReady] = useState(true);
+  const boostActiveRef = useRef(false);
+  const boostReadyRef = useRef(true);
   const [coinBalance, setCoinBalanceState] = useState(getCoins());
   const [ownedOutfits, setOwnedState] = useState<HatId[]>(getOwnedOutfits());
   const [completedLevel, setCompletedLevel] = useState(0);
@@ -248,6 +361,19 @@ export default function Game() {
   const [saberLevel, setSaberLevelState] = useState(getSaberLevel());
   const [kidsMode, setKidsModeState] = useState(getKidsMode());
 
+  // ── Character sprite preload — base + jump + slash frames ─────────────────
+  useEffect(() => {
+    const chars = ["apollo", "rocco", "santi"];
+    const suffixes = ["", "_jump", "_slash"];
+    chars.forEach(id => {
+      suffixes.forEach(suf => {
+        const img = new Image();
+        img.src = `/chars/${id}${suf}.png`;
+        charImgsRef.current[id + suf] = img;
+      });
+    });
+  }, []);
+
   // ── Audio ──────────────────────────────────────────────────────────────────
   const initAudio = () => {
     const a = audioRef.current;
@@ -255,52 +381,37 @@ export default function Game() {
   };
   const stopMusic = () => {
     const a = audioRef.current;
-    if (a.interval) { clearInterval(a.interval); a.interval = null; }
-    try { if (a.melodyOsc) { a.melodyOsc.stop(); a.melodyOsc = null; } } catch {}
-    try { if (a.bassOsc) { a.bassOsc.stop(); a.bassOsc = null; } } catch {}
-    try { if (a.kickOsc) { a.kickOsc.stop(); a.kickOsc = null; } } catch {}
+    a.transitionSeq++;
+    const el = musicElRef.current;
+    if (el) el.pause();
   };
-  const startMusic = (isPlaying: boolean) => {
+  // Plays the theme's mp3 track (see MUSIC_THEMES). `isPlaying` selects the
+  // louder in-run intensity vs. the quieter menu intensity; `speedMult` (from
+  // the level definition) nudges playback rate slightly faster for later,
+  // faster levels, and each theme's `leadGain` gives a subtle per-level volume
+  // character. Swapping to a different track crossfades cleanly by swapping
+  // `src` and restarting playback only when the underlying file actually changes.
+  const startMusic = (themeId: MusicThemeId, isPlaying: boolean, speedMult: number = 1) => {
     const a = audioRef.current;
     if (!a.enabled) return;
     initAudio();
-    if (a.interval) return;
-    a.step = 0;
-    a.interval = setInterval(() => {
-      const ctx = a.ctx; if (!ctx) return;
-      const running = stateRef.current.gameRunning;
-      const t = ctx.currentTime;
-      const baseNote = 220;
-      const melodyNotes = [0, 4, 7, 12, 7, 4, 0, 2, 5, 9, 5, 2];
-      const note = baseNote * Math.pow(2, melodyNotes[a.step % melodyNotes.length] / 12);
-      try { if (a.melodyOsc) a.melodyOsc.stop(); } catch {}
-      a.melodyOsc = ctx.createOscillator();
-      const mGain = ctx.createGain(); const mFilter = ctx.createBiquadFilter();
-      a.melodyOsc.type = "sawtooth"; a.melodyOsc.frequency.value = note;
-      mFilter.type = "lowpass"; mFilter.frequency.value = 1800;
-      const vol = running ? 0.18 : 0.09; const envTime = running ? 0.38 : 0.55;
-      mGain.gain.value = vol; mGain.gain.setValueAtTime(vol, t); mGain.gain.linearRampToValueAtTime(0.001, t + envTime);
-      a.melodyOsc.connect(mFilter); mFilter.connect(mGain); mGain.connect(ctx.destination);
-      a.melodyOsc.start(t); a.melodyOsc.stop(t + envTime + 0.05);
-      if (a.step % 2 === 0) {
-        try { if (a.bassOsc) a.bassOsc.stop(); } catch {}
-        a.bassOsc = ctx.createOscillator(); const bGain = ctx.createGain();
-        a.bassOsc.type = "sine"; a.bassOsc.frequency.value = baseNote / 2;
-        bGain.gain.value = running ? 0.55 : 0.3; bGain.gain.linearRampToValueAtTime(0.001, t + 0.65);
-        a.bassOsc.connect(bGain); bGain.connect(ctx.destination); a.bassOsc.start(t); a.bassOsc.stop(t + 0.7);
-      }
-      if (a.step % 4 === 0) {
-        try { if (a.kickOsc) a.kickOsc.stop(); } catch {}
-        a.kickOsc = ctx.createOscillator(); const kGain = ctx.createGain(); const kFilter = ctx.createBiquadFilter();
-        a.kickOsc.type = "sine"; a.kickOsc.frequency.value = 95;
-        kFilter.type = "lowpass"; kFilter.frequency.value = 450;
-        kGain.gain.value = 1.1; kGain.gain.linearRampToValueAtTime(0.001, t + 0.45);
-        a.kickOsc.frequency.setValueAtTime(95, t); a.kickOsc.frequency.linearRampToValueAtTime(42, t + 0.25);
-        a.kickOsc.connect(kFilter); kFilter.connect(kGain); kGain.connect(ctx.destination);
-        a.kickOsc.start(t); a.kickOsc.stop(t + 0.5);
-      }
-      a.step++;
-    }, isPlaying ? 185 : 280);
+    const prevThemeId = a.currentThemeId;
+    a.currentThemeId = themeId;
+    const theme = MUSIC_THEMES[themeId];
+    const prevFile = prevThemeId ? MUSIC_THEMES[prevThemeId].file : null;
+    let el = musicElRef.current;
+    if (!el) {
+      el = new Audio();
+      el.loop = true;
+      musicElRef.current = el;
+    }
+    if (prevFile !== theme.file) {
+      el.src = `${import.meta.env.BASE_URL}audio/${theme.file}`;
+    }
+    const rate = Math.min(1.15, Math.max(0.95, 0.97 + (speedMult - 1) * 0.045));
+    el.playbackRate = rate;
+    el.volume = Math.min(1, (isPlaying ? 0.5 : 0.32) * theme.leadGain);
+    if (el.paused) el.play().catch(() => {}); // browsers may block until a user gesture; retried on next interaction
   };
   const playJumpSound = () => {
     const a = audioRef.current; if (!a.enabled || !a.ctx) return;
@@ -507,15 +618,95 @@ export default function Game() {
       osc.connect(og); og.connect(ctx.destination); osc.start(t + i * 0.03); osc.stop(t + 0.22);
     });
   };
+  // ── Funny kid SFX + per-character signature voices ──────────────────────────
+  // Wet, sputtery fart used by the FART BOOST — pitch randomized so it never
+  // sounds the same twice. This is the big laugh.
+  const playFart = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const base = 70 + Math.random() * 55;        // 70–125 Hz per toot
+    const dur = 0.42 + Math.random() * 0.28;
+    const osc = ctx.createOscillator(); const g = ctx.createGain(); const f = ctx.createBiquadFilter();
+    osc.type = "sawtooth"; f.type = "lowpass"; f.frequency.value = 900;
+    osc.frequency.setValueAtTime(base, t);
+    osc.frequency.linearRampToValueAtTime(base * 1.7, t + dur * 0.3);
+    osc.frequency.linearRampToValueAtTime(base * 0.7, t + dur);
+    // square LFO makes it sputter/flutter like a raspberry
+    const lfo = ctx.createOscillator(); const lg = ctx.createGain();
+    lfo.type = "square"; lfo.frequency.setValueAtTime(19, t); lfo.frequency.linearRampToValueAtTime(8, t + dur);
+    lg.gain.value = base * 0.55; lfo.connect(lg); lg.connect(osc.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.34, t + 0.03);
+    g.gain.setValueAtTime(0.3, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(f); f.connect(g); g.connect(ctx.destination);
+    osc.start(t); osc.stop(t + dur + 0.02); lfo.start(t); lfo.stop(t + dur + 0.02);
+    // wet "spray" noise underneath
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 1.2);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const nf = ctx.createBiquadFilter(); nf.type = "bandpass"; nf.frequency.value = 340; nf.Q.value = 0.8;
+    const ng = ctx.createGain(); ng.gain.setValueAtTime(0.13, t); ng.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(nf); nf.connect(ng); ng.connect(ctx.destination); src.start(t);
+    // half the time, a squeaky little finish
+    if (Math.random() < 0.5) {
+      const sq = ctx.createOscillator(); const sg = ctx.createGain();
+      sq.type = "sawtooth"; sq.frequency.setValueAtTime(base * 3, t + dur * 0.72);
+      sq.frequency.linearRampToValueAtTime(base * 6, t + dur);
+      sg.gain.setValueAtTime(0.0001, t + dur * 0.72); sg.gain.linearRampToValueAtTime(0.1, t + dur * 0.8);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + dur + 0.05);
+      sq.connect(sg); sg.connect(ctx.destination); sq.start(t + dur * 0.72); sq.stop(t + dur + 0.06);
+    }
+  };
+  // Apollo → bright, confident "yeah!"
+  const playCheer = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator(); const g = ctx.createGain(); const f = ctx.createBiquadFilter();
+    osc.type = "square"; f.type = "bandpass"; f.Q.value = 4;
+    osc.frequency.setValueAtTime(300, t);
+    osc.frequency.linearRampToValueAtTime(640, t + 0.14);
+    osc.frequency.linearRampToValueAtTime(520, t + 0.34);
+    f.frequency.setValueAtTime(800, t); f.frequency.linearRampToValueAtTime(1750, t + 0.2);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.22, t + 0.05);
+    g.gain.setValueAtTime(0.2, t + 0.24); g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    osc.connect(f); f.connect(g); g.connect(ctx.destination); osc.start(t); osc.stop(t + 0.42);
+  };
+  // Rocco → toddler "hee-hee-hee-hee" giggle
+  const playGiggle = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    const t0 = ctx.currentTime;
+    for (let i = 0; i < 4; i++) {
+      const tt = t0 + i * 0.11;
+      const osc = ctx.createOscillator(); const g = ctx.createGain(); const f = ctx.createBiquadFilter();
+      osc.type = "triangle"; f.type = "bandpass"; f.frequency.value = 1600; f.Q.value = 6;
+      const p = 900 + i * 70;
+      osc.frequency.setValueAtTime(p, tt); osc.frequency.linearRampToValueAtTime(p * 1.3, tt + 0.05);
+      osc.frequency.linearRampToValueAtTime(p * 0.9, tt + 0.09);
+      g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(0.16, tt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, tt + 0.1);
+      osc.connect(f); f.connect(g); g.connect(ctx.destination); osc.start(tt); osc.stop(tt + 0.12);
+    }
+  };
+  // Play a character's signature voice (used when a character is picked).
+  const playCharacterVoice = (id: string) => {
+    const v = getCharacterDef(id).voice;
+    if (v === "giggle") return playGiggle();
+    if (v === "bark") return playBark();
+    return playCheer();
+  };
+
   // Pick the right "defeat" voice for what the blade just sliced.
   const playObstacleSound = (type: ObstacleType) => {
     switch (type) {
       case "cat": return playMeow();
-      case "dog": return playBark();
-      case "bicycle": return playBell();
-      case "trashcan": return playClatter();
+      case "dog": case "flamingo": return playBark();
+      case "bicycle": case "cart": return playBell();
+      case "trashcan": case "pumpkin": return playClatter();
       case "stopsign":
-      case "gnome": return playBoing();
+      case "gnome": case "cactus": return playBoing();
       case "cone": return playHonk();
       default: return playClang(); // mailbox, hydrant, newsbox
     }
@@ -523,10 +714,66 @@ export default function Game() {
 
   // ── Obstacles ──────────────────────────────────────────────────────────────
   const spawnObstacle = (width: number) => {
-    const pool = getLevelDef(stateRef.current.currentLevel).obs;
-    const type = pool[Math.floor(Math.random() * pool.length)];
+    const st = stateRef.current;
+    if (st.obstacles.length >= POOL_OBSTACLES) return;
+    const pool = getLevelDef(st.currentLevel).obs;
+    const pickType = (): ObstacleType => pool[Math.floor(Math.random() * pool.length)];
+
+    // Weighted spawn patterns so dodging left/right is always meaningful:
+    //  38% single random lane (any of -1, 0, 1)
+    //  22% side-only: left or right, guarantees a clear centre gap
+    //  18% opposite-to-last: forces the player to react and switch lanes
+    //  22% gate: block both side lanes (centre gap) or two lanes + one clear side
+    const r = Math.random();
+    let lane: number;
+    if (r < 0.38) {
+      lane = Math.floor(Math.random() * 3) - 1;
+    } else if (r < 0.60) {
+      lane = Math.random() < 0.5 ? -1 : 1;
+    } else if (r < 0.78) {
+      lane = st.lastObstacleLane === 0
+        ? (Math.random() < 0.5 ? -1 : 1)
+        : -st.lastObstacleLane;
+    } else {
+      // Gate pattern: two obstacles at once blocking both sides, clear centre
+      if (st.obstacles.length + 1 < POOL_OBSTACLES) {
+        const tL = pickType(); const dL = OBSTACLE_DIMS[tL];
+        const tR = pickType(); const dR = OBSTACLE_DIMS[tR];
+        st.obstacles.push({ x: width + 80, obsWidth: dL.w, obsHeight: dL.h, type: tL, passed: false, lane: -1 });
+        pushCapped(st.obstacles, POOL_OBSTACLES, { x: width + 80, obsWidth: dR.w, obsHeight: dR.h, type: tR, passed: false, lane: 1 });
+        st.lastObstacleLane = 0;
+        return;
+      }
+      lane = Math.floor(Math.random() * 3) - 1;
+    }
+    const type = pickType();
     const dim = OBSTACLE_DIMS[type];
-    stateRef.current.obstacles.push({ x: width + 80, obsWidth: dim.w, obsHeight: dim.h, type, passed: false });
+    st.lastObstacleLane = lane;
+    st.obstacles.push({ x: width + 80, obsWidth: dim.w, obsHeight: dim.h, type, passed: false, lane });
+  };
+
+  // ── Side-to-side lane movement ───────────────────────────────────────────
+  // Three lanes (-1 left, 0 center, 1 right). Switching lanes is an instant,
+  // logical move (used immediately for collision) — `laneVisual` springs toward
+  // it each frame for the 3D render layer's smooth animated slide.
+  const moveLane = (dir: -1 | 1) => {
+    const st = stateRef.current;
+    if (!st.gameRunning) return;
+    const next = Math.max(-1, Math.min(1, st.lane + dir));
+    if (next === st.lane) return;
+    st.lane = next;
+    // Sideways dust kick — tactile feedback on lane switch
+    const groundY = getGroundY(sizeRef.current.height);
+    for (let i = 0; i < 5; i++) {
+      pushCapped(st.particles, POOL_PARTICLES, {
+        x: 185 + (Math.random() - 0.5) * 18,
+        y: groundY + FINGER_TIP_OFFSET - 6 + Math.random() * 10,
+        vx: -dir * (1.5 + Math.random() * 2.5),
+        vy: -(0.4 + Math.random() * 1.2),
+        life: 12 + Math.random() * 8, size: 3 + Math.random() * 3,
+        color: "#cbb79a", shape: "circle",
+      });
+    }
   };
 
   // ── Game events ────────────────────────────────────────────────────────────
@@ -539,7 +786,7 @@ export default function Game() {
     for (let i = 0; i < 55; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 1.5 + Math.random() * 8;
-      st.particles.push({
+      pushCapped(st.particles, POOL_PARTICLES, {
         x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2.5 - Math.random()*3,
         life: 55 + Math.random()*35, size: 4 + Math.random()*9,
         color: bloodColors[Math.floor(Math.random()*bloodColors.length)],
@@ -551,7 +798,7 @@ export default function Game() {
     for (let i = 0; i < 12; i++) {
       const angle = -Math.PI/2 + (Math.random()-0.5)*Math.PI*1.4;
       const speed = 4 + Math.random() * 7;
-      st.particles.push({
+      pushCapped(st.particles, POOL_PARTICLES, {
         x, y: y - 10 + Math.random()*20,
         vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 3,
         life: 45 + Math.random()*25, size: 5 + Math.random()*7,
@@ -563,21 +810,34 @@ export default function Game() {
     // Skin-chunk debris
     for (let i = 0; i < 10; i++) {
       const angle = Math.random() * Math.PI * 2; const speed = 2 + Math.random()*5;
-      st.particles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
+      pushCapped(st.particles, POOL_PARTICLES, { x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
         life: 35+Math.random()*20, size: 8+Math.random()*10,
         color: ["#c8946f","#d4a07a","#b8804a"][Math.floor(Math.random()*3)], shape:"rect" });
     }
 
     // Blood puddle on the road
-    st.bloodPuddles.push({ x: x + (Math.random()-0.5)*60, y: roadY - 4,
+    pushCapped(st.bloodPuddles, POOL_PUDDLES, { x: x + (Math.random()-0.5)*60, y: roadY - 4,
       rx: 28 + Math.random()*28, ry: 8 + Math.random()*8,
       life: 420, maxLife: 420 });
     // Smaller satellite puddles
     for (let k = 0; k < 3; k++) {
-      st.bloodPuddles.push({ x: x + (Math.random()-0.5)*120, y: roadY - 3,
+      pushCapped(st.bloodPuddles, POOL_PUDDLES, { x: x + (Math.random()-0.5)*120, y: roadY - 3,
         rx: 8 + Math.random()*14, ry: 3 + Math.random()*5,
         life: 360, maxLife: 360 });
     }
+  };
+
+  const showComboPopup = (text: string, color: string = "#ffee00") => {
+    stateRef.current.comboPopup = { text, life: 55, maxLife: 55, color };
+  };
+
+  const activatePowerUp = (type: PowerUpType) => {
+    const st = stateRef.current;
+    playCoinSound();
+    if (type === "magnet") { st.magnetTimer = 480; showComboPopup("MAGNET!", "#ff44ff"); }
+    else if (type === "shield") { st.shieldCharges = Math.min(1, st.shieldCharges + 1); showComboPopup("SHIELD UP!", "#44ddff"); }
+    else if (type === "multiplier") { st.multiplierTimer = 480; showComboPopup("2X SCORE!", "#ffee00"); }
+    st.shake = Math.max(st.shake, 5);
   };
 
   const crash = () => {
@@ -590,18 +850,32 @@ export default function Game() {
     st.crashFlash = 28;
     st.shake = 18;
     st.jumpHeld = false;
-    showDialog(pick(CRASH_QUIPS), 200);
+    showDialog(pick(charLineFor("dead")), 200);
     playCrashSound();
     createCrashExplosion(185, st.playerY + 30, roadY);
     if (st.totalScore > st.bestScore) {
       st.bestScore = Math.floor(st.totalScore);
-      localStorage.setItem("fingerRunnerBest", String(st.bestScore));
+      setSaveValue("bestScore", st.bestScore);
     }
     saveLevelBest(st.currentLevel, st.levelScore);
     setLevelBests(LEVELS.map(lv => getLevelBest(lv.num)));
+    const crashRunBonus = Math.floor(st.levelScore / 100);
+    st.lastRunBonus = crashRunBonus;
+    if (crashRunBonus > 0) {
+      st.coinBalance += crashRunBonus;
+      setCoinsLS(st.coinBalance);
+    }
     stopMusic();
     setCoinBalanceState(st.coinBalance);
-    setTimeout(() => { if (!stateRef.current.gameRunning && audioRef.current.enabled) startMusic(false); }, 600);
+    const seqAtCrash = audioRef.current.transitionSeq;
+    setTimeout(() => {
+      if (seqAtCrash === audioRef.current.transitionSeq && !stateRef.current.gameRunning && audioRef.current.enabled) {
+        const lvl = getLevelDef(st.currentLevel);
+        startMusic(lvl.theme, false, lvl.speedMult);
+      }
+    }, 600);
+    incrementStat("totalDeaths");
+    const unlocked = checkAchievements();
     setScreen("dead");
   };
 
@@ -610,10 +884,24 @@ export default function Game() {
     if (!st.gameRunning || st.levelComplete) return;
     st.gameRunning = false;
     st.levelComplete = true;
+    const lvlCompleteBonus = Math.floor(st.levelScore / 100);
+    st.lastRunBonus = lvlCompleteBonus;
+    if (lvlCompleteBonus > 0) {
+      st.coinBalance += lvlCompleteBonus;
+      setCoinsLS(st.coinBalance);
+    }
+    showDialog(pick(charLineFor("win")), 180);
     playLevelUpSound();
     stopMusic();
     setCoinBalanceState(st.coinBalance);
     const lvl = st.currentLevel;
+    const seqAtComplete = audioRef.current.transitionSeq;
+    setTimeout(() => {
+      if (seqAtComplete === audioRef.current.transitionSeq && !stateRef.current.gameRunning && audioRef.current.enabled) {
+        const lvlDef = getLevelDef(lvl);
+        startMusic(lvlDef.theme, false, lvlDef.speedMult);
+      }
+    }, 600);
     const newMax = Math.max(getMaxLevel(), lvl + 1);
     setMaxLevel(newMax); setMaxLevelState(newMax);
     // Save per-level best before reading previous best for the complete screen
@@ -628,6 +916,7 @@ export default function Game() {
     setCompletedLevel(lvl);
     setCurrentLevel(lvl);
     setTimeout(() => setScreen("levelComplete"), 300);
+    const _ach = checkAchievements(); (void _ach);
   };
 
   const showDialog = (text: string, frames = 150) => {
@@ -637,7 +926,7 @@ export default function Game() {
   const spawnDust = (count: number, spread: number) => {
     const st = stateRef.current;
     for (let i = 0; i < count; i++) {
-      st.particles.push({
+      pushCapped(st.particles, POOL_PARTICLES, {
         x: 170 + Math.random() * 30, y: st.playerY + FINGER_TIP_OFFSET - 4,
         vx: (Math.random() - 0.5) * spread, vy: -1.5 - Math.random() * 2.5,
         life: 20 + Math.random() * 12, size: 4 + Math.random() * 5,
@@ -650,18 +939,22 @@ export default function Game() {
     const st = stateRef.current;
     st.jumpsUsed += 1;
     st.velocity = isDouble ? JUMP_FORCE * 0.9 : JUMP_FORCE;
+    if (isDouble) incrementStat("totalDoubleJumps");
+    incrementStat("totalJumps");
     st.onGround = false;
     st.coyoteTimer = 0;
     st.landImpact = 0;
     playJumpSound();
     spawnDust(isDouble ? 6 : 9, 6);
-    if (Math.random() < 0.18) showDialog(pick(JUMP_QUIPS), 70);
+    if (Math.random() < 0.22) showDialog(pick(charLineFor("jump")), 70);
   };
 
   const jump = () => {
     initAudio();
     const st = stateRef.current;
     if (!st.gameRunning) return;
+    // A jump always cancels an active/queued slide (you can hop out of a duck).
+    st.sliding = false; st.slideTimer = 0; st.slideQueued = false;
     // Release from rope swing — player can bail early
     if (st.activeSwing) {
       const sw = st.activeSwing;
@@ -689,6 +982,25 @@ export default function Game() {
 
   const releaseJump = () => { stateRef.current.jumpHeld = false; };
 
+  // ── Slide / duck ─────────────────────────────────────────────────────────
+  // Swipe down (or ArrowDown/S). On the ground: duck for SLIDE_FRAMES so the
+  // hurtbox head drops below an overhead barrier. In the air: dive to the
+  // ground fast and auto-duck the instant we land (slideQueued).
+  const slide = () => {
+    initAudio();
+    const st = stateRef.current;
+    if (!st.gameRunning || st.activeSwing) return;
+    if (st.onGround || st.coyoteTimer > 0) {
+      st.sliding = true;
+      st.slideTimer = SLIDE_FRAMES;
+      st.slideQueued = false;
+      spawnDust(6, 8);
+    } else {
+      st.slideQueued = true;
+      st.velocity = MAX_FALL; // fast dive toward the ground
+    }
+  };
+
   // ── Lightsaber slash ───────────────────────────────────────────────────────
   const slash = () => {
     initAudio();
@@ -700,6 +1012,19 @@ export default function Game() {
     playSaberSwingSound();
   };
 
+  // ── FART BOOST! ─────────────────────────────────────────────────────────────
+  // 2.5s speed burst (BOOST_MULT) trailing green gas, then a cooldown before it
+  // can fire again. Speed + gas are handled in the game loop; this only arms it.
+  const fartBoost = () => {
+    initAudio();
+    const st = stateRef.current;
+    if (!st.gameRunning) return;
+    if (st.boostTimer > 0 || st.boostCooldown > 0) return;
+    st.boostTimer = BOOST_FRAMES;
+    st.boostCooldown = BOOST_COOLDOWN;
+    playFart();
+  };
+
   // Destroy an obstacle the blade connects with, showering coloured sparks.
   const sliceObstacle = (o: Obstacle, roadY: number) => {
     const st = stateRef.current;
@@ -709,19 +1034,28 @@ export default function Game() {
     st.shake = Math.max(st.shake, 6);
     for (let i = 0; i < 26; i++) {
       const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 7;
-      st.particles.push({ x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2,
+      pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2,
         life: 22 + Math.random() * 18, size: 3 + Math.random() * 5,
         color: Math.random() < 0.5 ? saber.color : saber.glow, shape: "circle" });
     }
     for (let i = 0; i < 8; i++) {
       const ang = Math.random() * Math.PI * 2; const sp = 3 + Math.random() * 6;
-      st.particles.push({ x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5,
+      pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5,
         life: 14 + Math.random() * 10, size: 2 + Math.random() * 3, color: "#ffffff",
         shape: "rect", rot: Math.random() * 6, rotV: (Math.random() - 0.5) * 0.5 });
     }
-    st.coinBalance += 1;
+    st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
+    incrementStat("totalObstaclesSliced"); incrementStat("totalCoinsCollected");
+    const _ach4 = checkAchievements(); (void _ach4);
     setCoinsLS(st.coinBalance);
-    if (Math.random() < 0.5) showDialog(pick(SLICE_QUIPS), 60);
+    st.comboTimer = 100;
+    st.comboCount++;
+    if (st.comboCount >= 3 && st.comboCount % 3 === 0) {
+      showComboPopup(`${st.comboCount}x COMBO!`, "#ff8800");
+      st.coinBalance += 1;
+      setCoinsLS(st.coinBalance);
+    }
+    if (Math.random() < 0.6) showDialog(pick(charLineFor("slash")), 60);
     playSaberHitSound();
     playObstacleSound(o.type);
   };
@@ -740,6 +1074,14 @@ export default function Game() {
     st.bloodPuddles = [];
     st.coins = [];
     st.coinSpawnTimer = 0;
+    st.powerUps = [];
+    st.powerUpSpawnTimer = 0;
+    st.magnetTimer = 0;
+    st.multiplierTimer = 0;
+    st.shieldCharges = 0;
+    st.comboCount = 0;
+    st.comboTimer = 0;
+    st.comboPopup = null;
     st.platforms = [];
     st.platformTimer = 0;
     st.ropes = [];
@@ -747,6 +1089,10 @@ export default function Game() {
     st.activeSwing = null;
     st.saberSwing = 0;
     st.saberCooldown = 0;
+    st.boostTimer = 0;
+    st.boostCooldown = 0;
+    boostActiveRef.current = false; boostReadyRef.current = true;
+    setBoostActive(false); setBoostReady(true);
     st.kidsMode = getKidsMode();
     st.crashFlash = 0;
     st.playerY = groundY;
@@ -757,776 +1103,26 @@ export default function Game() {
     st.coyoteTimer = 0;
     st.jumpBuffer = 0;
     st.landImpact = 0;
+    st.sliding = false;
+    st.slideTimer = 0;
+    st.slideQueued = false;
     st.shake = 0;
     st.spawnTimer = 0;
     st.time = 0;
-    st.dialog = { text: LEVEL_STORY[levelNum] || pick(RUN_QUIPS), life: 200, maxLife: 200 };
+    st.lane = 0;
+    st.laneVisual = 0;
+    st.laneVel = 0;
+    st.lastObstacleLane = 0;
+    st.dialog = { text: LEVEL_STORY[levelNum] || pick(charLineFor("start")), life: 200, maxLife: 200 };
     st.dialogCooldown = 320;
     setCurrentLevel(levelNum);
     setScreen("playing");
+    incrementStat("totalRuns");
     stopMusic();
-    if (audioRef.current.enabled) setTimeout(() => startMusic(true), 80);
-  };
-
-  // ── Background themes ──────────────────────────────────────────────────────
-  const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: number, time: number, theme: Theme) => {
-    const roadTop = height - ROAD_SURFACE_OFFSET;
-    const horizY  = Math.round(height * 0.60);
-    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-
-    if (theme === "suburb") {
-      // SYNTHWAVE SUNSET — deep purple sky, retro striped sun, neon grid, palm silhouettes
-      const g = ctx.createLinearGradient(0, 0, 0, horizY);
-      g.addColorStop(0, "#000018"); g.addColorStop(0.40, "#200040");
-      g.addColorStop(0.75, "#6a0058"); g.addColorStop(1, "#bb2060");
-      ctx.fillStyle = g; ctx.fillRect(0, 0, width, horizY);
-      ctx.fillStyle = "#0a0016"; ctx.fillRect(0, horizY, width, roadTop - horizY);
-      for (let s = 0; s < 60; s++) {
-        const sx = ((s * 213 + time * 0.10) % (width + 60) + width + 60) % (width + 60) - 30;
-        const sy = (s * 127) % (horizY * 0.55);
-        ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 0.025 + s * 0.9);
-        ctx.fillStyle = s % 3 === 0 ? "#ff80ff" : s % 3 === 1 ? "#80ffff" : "#ffff80";
-        ctx.fillRect(Math.round(sx), Math.round(sy), s % 5 === 0 ? 2 : 1, s % 5 === 0 ? 2 : 1);
-      }
-      ctx.globalAlpha = 1;
-      const hg = ctx.createRadialGradient(width / 2, horizY, 0, width / 2, horizY, width * 0.55);
-      hg.addColorStop(0, "rgba(255,100,40,0.65)"); hg.addColorStop(0.25, "rgba(255,40,120,0.35)"); hg.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = hg; ctx.fillRect(0, horizY - 80, width, 160);
-      ctx.save();
-      ctx.beginPath(); ctx.arc(width / 2, horizY, 78, Math.PI, 0); ctx.closePath(); ctx.clip();
-      const sg = ctx.createLinearGradient(0, horizY - 78, 0, horizY);
-      sg.addColorStop(0, "#ffee44"); sg.addColorStop(0.55, "#ff8800"); sg.addColorStop(1, "#ff3300");
-      ctx.fillStyle = sg; ctx.fillRect(width / 2 - 78, horizY - 78, 156, 78);
-      ctx.fillStyle = "#0a0016";
-      [0.22, 0.38, 0.51, 0.61, 0.69, 0.76, 0.82, 0.87].forEach(f => {
-        ctx.fillRect(width / 2 - 78, horizY - 78 * (1 - f), 156, 3.5);
-      });
-      ctx.restore();
-      const gBot = roadTop + 4;
-      for (let gi = 0; gi <= 7; gi++) {
-        const t = gi / 7; const gy = horizY + (gBot - horizY) * (t * t);
-        ctx.strokeStyle = `rgba(255,0,200,${0.12 + t * 0.42})`; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke();
-      }
-      for (let v = -7; v <= 7; v++) {
-        const gxB = width / 2 + v * (width / 5.5);
-        ctx.strokeStyle = "rgba(255,0,200,0.26)"; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(width / 2, horizY + 4); ctx.lineTo(gxB, gBot); ctx.stroke();
-      }
-      const drawPalm = (px: number, ph: number) => {
-        ctx.fillStyle = "#0a0018"; ctx.fillRect(px - 5, horizY - ph, 10, ph);
-        ([ [-40,-20],[-30,-35],[-15,-15],[30,-28],[22,-38],[10,-18] ] as [number,number][]).forEach(([dx,dy]) => {
-          ctx.beginPath(); ctx.moveTo(px, horizY - ph);
-          ctx.quadraticCurveTo(px + dx * 0.5, horizY - ph + dy * 0.4, px + dx, horizY - ph + dy);
-          ctx.strokeStyle = "#0a0018"; ctx.lineWidth = 8; ctx.lineCap = "round"; ctx.stroke();
-        });
-      };
-      drawPalm(55, 75); drawPalm(175, 65); drawPalm(width - 70, 80); drawPalm(width - 190, 70);
-
-    } else if (theme === "city") {
-      // NEON CITY — near-black sky, neon-outlined buildings with glowing windows
-      const g = ctx.createLinearGradient(0, 0, 0, height);
-      g.addColorStop(0, "#000010"); g.addColorStop(0.6, "#030328"); g.addColorStop(1, "#0a003a");
-      ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
-      for (let s = 0; s < 40; s++) {
-        const sx = ((s * 317 + time * 0.07) % (width + 40) + width + 40) % (width + 40) - 20;
-        const sy = (s * 97) % (horizY * 0.38);
-        ctx.globalAlpha = 0.4 + 0.6 * Math.sin(time * 0.02 + s);
-        ctx.fillStyle = ["#00ffff","#ff00ff","#ffff00"][s % 3];
-        ctx.fillRect(Math.round(sx), Math.round(sy), 1.5, 1.5);
-      }
-      ctx.globalAlpha = 1;
-      const ng1 = ctx.createRadialGradient(width * 0.28, horizY, 0, width * 0.28, horizY, 200);
-      ng1.addColorStop(0, "rgba(0,180,255,0.14)"); ng1.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = ng1; ctx.fillRect(0, horizY - 80, width, 160);
-      const ng2 = ctx.createRadialGradient(width * 0.74, horizY, 0, width * 0.74, horizY, 160);
-      ng2.addColorStop(0, "rgba(255,0,200,0.12)"); ng2.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = ng2; ctx.fillRect(0, horizY - 80, width, 160);
-      const nCols = ["#00ffcc","#ff00aa","#ffee00","#00aaff","#ff6622","#aa44ff"];
-      [[0.02,130,48],[0.11,95,35],[0.18,85,52],[0.26,115,32],[0.34,80,44],[0.43,90,38],
-       [0.51,110,30],[0.59,80,46],[0.66,88,54],[0.73,100,28],[0.81,75,40],[0.88,95,36],[0.94,80,42]
-      ].forEach(([bxf,bh,bw], i) => {
-        const bx = bxf * width; const by2 = horizY - bh; const nc = nCols[i % nCols.length];
-        ctx.fillStyle = "#020215"; ctx.fillRect(bx, by2, bw, bh);
-        ctx.shadowColor = nc; ctx.shadowBlur = 8; ctx.strokeStyle = nc; ctx.lineWidth = 1.5;
-        ctx.globalAlpha = 0.65 + 0.35 * Math.sin(time * 0.025 + i * 0.7);
-        ctx.strokeRect(bx, by2, bw, bh); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-        ctx.fillStyle = nc; ctx.globalAlpha = 0.5;
-        for (let wx = 4; wx < bw - 5; wx += 10) {
-          for (let wy = 7; wy < bh - 9; wy += 14) {
-            if ((i + wx * 3 + wy) % 4 !== 0) ctx.fillRect(bx + wx, by2 + wy, 5, 7);
-          }
-        }
-        ctx.globalAlpha = 1;
-      });
-
-    } else if (theme === "highway") {
-      // OUTRUN HIGHWAY — purple-to-orange sky, retro striped sun, cyan perspective grid
-      const g = ctx.createLinearGradient(0, 0, 0, horizY);
-      g.addColorStop(0, "#000018"); g.addColorStop(0.28, "#380055");
-      g.addColorStop(0.60, "#cc3300"); g.addColorStop(0.85, "#ffaa00"); g.addColorStop(1, "#ffdd44");
-      ctx.fillStyle = g; ctx.fillRect(0, 0, width, horizY);
-      ctx.fillStyle = "#080612"; ctx.fillRect(0, horizY, width, height - horizY);
-      ctx.save();
-      ctx.beginPath(); ctx.arc(width / 2, horizY, 90, Math.PI, 0); ctx.closePath(); ctx.clip();
-      const sg2 = ctx.createLinearGradient(0, horizY - 90, 0, horizY);
-      sg2.addColorStop(0, "#ffff88"); sg2.addColorStop(0.5, "#ffaa00"); sg2.addColorStop(1, "#ff4400");
-      ctx.fillStyle = sg2; ctx.fillRect(width / 2 - 90, horizY - 90, 180, 90);
-      ctx.fillStyle = "#000018";
-      [0.18, 0.34, 0.48, 0.60, 0.70, 0.78, 0.85, 0.91].forEach(f => {
-        ctx.fillRect(width / 2 - 90, horizY - 90 * (1 - f), 180, 4);
-      });
-      ctx.restore();
-      for (let gi = 0; gi <= 5; gi++) {
-        const t = gi / 5; const gy = horizY + (roadTop - horizY + 10) * (t * t);
-        ctx.strokeStyle = `rgba(0,220,255,${0.12 + t * 0.32})`; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke();
-      }
-      for (let v = -6; v <= 6; v++) {
-        const gxB = width / 2 + v * (width / 5.5);
-        ctx.strokeStyle = "rgba(0,220,255,0.18)"; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(width / 2, horizY - 5); ctx.lineTo(gxB, roadTop + 8); ctx.stroke();
-      }
-
-    } else if (theme === "mountain") {
-      // PIXEL PEAKS — teal starfield, stepped blocky mountains, neon snow, pixel pines
-      const g = ctx.createLinearGradient(0, 0, 0, height);
-      g.addColorStop(0, "#000820"); g.addColorStop(0.55, "#061838"); g.addColorStop(1, "#081c28");
-      ctx.fillStyle = g; ctx.fillRect(0, 0, width, height);
-      for (let s = 0; s < 80; s++) {
-        const sx = (s * 167 + 11) % width; const sy = (s * 113) % (horizY * 0.70);
-        ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 0.022 + s * 0.65);
-        ctx.fillStyle = s % 5 === 0 ? "#00ffaa" : s % 5 === 1 ? "#ff88ff" : s % 5 === 2 ? "#ffee00" : "#aaffff";
-        ctx.fillRect(Math.floor(sx), Math.floor(sy), s % 6 === 0 ? 2 : 1, s % 6 === 0 ? 2 : 1);
-      }
-      ctx.globalAlpha = 1;
-      ctx.shadowColor = "#44ffcc"; ctx.shadowBlur = 24;
-      ctx.fillStyle = "#bbfff0"; ctx.beginPath(); ctx.arc(width * 0.83, horizY * 0.28, 26, 0, Math.PI * 2); ctx.fill();
-      ctx.shadowBlur = 0; ctx.fillStyle = "#061838";
-      ctx.beginPath(); ctx.arc(width * 0.83 + 9, horizY * 0.28 - 5, 20, 0, Math.PI * 2); ctx.fill();
-      const pixMtn = (mx: number, mh: number, col: string) => {
-        ctx.fillStyle = col;
-        for (let py = 0; py < mh; py += 4) {
-          const w2 = mh * 0.9 * (1 - (py / mh) * (py / mh)) + 4;
-          ctx.fillRect(Math.round(mx - w2), horizY - mh + py, Math.round(w2 * 2), 4);
-        }
-      };
-      pixMtn(width*0.08,120,"#0c2c46"); pixMtn(width*0.26,165,"#0a2440");
-      pixMtn(width*0.44,200,"#0c2c46"); pixMtn(width*0.62,175,"#0a2440");
-      pixMtn(width*0.80,148,"#0c2c46"); pixMtn(width*0.96,188,"#0a2440");
-      ctx.fillStyle = "#aaffee";
-      ([[0.08,120],[0.26,165],[0.44,200],[0.62,175],[0.80,148],[0.96,188]] as [number,number][]).forEach(([mxf,mh]) => {
-        ctx.fillRect(mxf*width-10, horizY-mh, 20, 12); ctx.fillRect(mxf*width-15, horizY-mh+10, 30, 6);
-      });
-      ctx.fillStyle = "#041c30";
-      [0.05,0.09,0.16,0.21,0.48,0.53,0.59,0.65,0.77,0.83,0.89,0.94].forEach(tx => {
-        const px = tx * width; const th = 40 + Math.abs(Math.sin(tx * 17)) * 18;
-        ctx.fillRect(px-3, horizY-th-4, 6, th+4); ctx.fillRect(px-9, horizY-th, 18, 12);
-        ctx.fillRect(px-13, horizY-th+10, 26, 12); ctx.fillRect(px-17, horizY-th+20, 34, 10);
-      });
-
-    } else {
-      // DEEP SPACE (night) — black sky, colorful pixel stars, nebula, neon city outlines
-      ctx.fillStyle = "#000008"; ctx.fillRect(0, 0, width, height);
-      for (let s = 0; s < 100; s++) {
-        const sx = ((s * 193 + time * 0.14) % (width + 60) + width + 60) % (width + 60) - 30;
-        const sy = (s * 137) % (horizY * 0.72);
-        ctx.globalAlpha = 0.45 + 0.55 * Math.sin(time * 0.022 + s);
-        ctx.fillStyle = ["#00ffff","#ff00ff","#ffff44","#ff8844","#88ffaa","#ffffff"][s % 6];
-        const ss = s % 8 === 0 ? 3 : s % 4 === 0 ? 2 : 1;
-        ctx.fillRect(Math.round(sx), Math.round(sy), ss, ss);
-      }
-      ctx.globalAlpha = 1;
-      const neb1 = ctx.createRadialGradient(width*0.22, horizY*0.4, 0, width*0.22, horizY*0.4, 130);
-      neb1.addColorStop(0, "rgba(0,100,255,0.09)"); neb1.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = neb1; ctx.fillRect(0, 0, width, horizY);
-      const neb2 = ctx.createRadialGradient(width*0.72, horizY*0.52, 0, width*0.72, horizY*0.52, 110);
-      neb2.addColorStop(0, "rgba(160,0,255,0.08)"); neb2.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = neb2; ctx.fillRect(0, 0, width, horizY);
-      const nc2 = ["#00ffff","#ff00ff","#ffee00","#ff4422","#00ff88"];
-      [[0.05,90,40],[0.12,140,30],[0.18,80,50],[0.24,120,35],[0.32,100,42],
-       [0.38,160,25],[0.44,70,55],[0.52,130,38],[0.58,90,44],
-       [0.64,150,28],[0.70,110,48],[0.78,80,52],[0.85,140,32],[0.92,100,40]
-      ].forEach(([bxf,bh,bw], i) => {
-        const bx = bxf * width; const by2 = horizY - bh; const nc = nc2[i % nc2.length];
-        ctx.fillStyle = "#000010"; ctx.fillRect(bx, by2, bw, bh);
-        ctx.shadowColor = nc; ctx.shadowBlur = 10; ctx.strokeStyle = nc; ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.75 + 0.25 * Math.sin(time * 0.035 + i);
-        ctx.strokeRect(bx, by2, bw, bh); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-        ctx.fillStyle = nc; ctx.globalAlpha = 0.45 + 0.3 * Math.sin(time * 0.028 + i * 1.5);
-        for (let wx = 3; wx < bw - 4; wx += 9) {
-          for (let wy = 6; wy < bh - 8; wy += 13) {
-            if ((i * 3 + wx + wy) % 4 !== 0) ctx.fillRect(bx + wx, by2 + wy, 4, 6);
-          }
-        }
-        ctx.globalAlpha = 1;
-      });
+    if (audioRef.current.enabled) {
+      const lvlDef = getLevelDef(levelNum);
+      setTimeout(() => startMusic(lvlDef.theme, true, lvlDef.speedMult), 80);
     }
-
-    // ── Shared neon road (all themes) ────────────────────────────────────────
-    const neonAccent = theme === "city"     ? "#00ffcc"
-      : theme === "night"    ? "#00ffff"
-      : theme === "mountain" ? "#44ffcc"
-      : "#ff00cc";
-    ctx.fillStyle = theme === "city" || theme === "night" ? "#04041a" : "#0a0018";
-    ctx.fillRect(0, roadTop, width, 18);
-    ctx.fillStyle = "#060610";
-    ctx.fillRect(0, height - 90, width, 90);
-    ctx.shadowColor = neonAccent; ctx.shadowBlur = 14;
-    ctx.strokeStyle = neonAccent; ctx.lineWidth = 2; ctx.globalAlpha = 0.9;
-    ctx.beginPath(); ctx.moveTo(0, roadTop); ctx.lineTo(width, roadTop); ctx.stroke();
-    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-    ctx.shadowColor = neonAccent; ctx.shadowBlur = 8;
-    ctx.strokeStyle = neonAccent; ctx.lineWidth = 2; ctx.globalAlpha = 0.45;
-    ctx.beginPath(); ctx.moveTo(0, height - 4); ctx.lineTo(width, height - 4); ctx.stroke();
-    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-    const dashClr = theme === "night" ? "#00ffff" : theme === "city" ? "#00ccff" : "#ff44ff";
-    ctx.shadowColor = dashClr; ctx.shadowBlur = 10; ctx.strokeStyle = dashClr; ctx.lineWidth = 3;
-    ctx.globalAlpha = 0.7;
-    for (let i = -1; i < 8; i++) {
-      const xPos = ((time * 4.5) % (width + 180)) + i * (width / 5.5) - 90;
-      ctx.beginPath(); ctx.moveTo(xPos, height - 50); ctx.lineTo(xPos + 55, height - 50); ctx.stroke();
-    }
-    ctx.globalAlpha = 0.45;
-    for (let i = -1; i < 8; i++) {
-      const xPos = ((time * 4.5) % (width + 180)) + i * (width / 5.5) - 90;
-      ctx.beginPath(); ctx.moveTo(xPos, height - 24); ctx.lineTo(xPos + 55, height - 24); ctx.stroke();
-    }
-    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-  };
-
-  // ── Obstacle drawings ──────────────────────────────────────────────────────
-  const drawObstacle = (ctx: CanvasRenderingContext2D, o: Obstacle, height: number) => {
-    const roadY = height - ROAD_SURFACE_OFFSET;
-    const gx = o.x + o.obsWidth / 2;
-    const by = roadY;
-    ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
-
-    if (o.type === "mailbox") {
-      ctx.fillStyle = "#8B5E3C"; ctx.fillRect(gx - 5, by - o.obsHeight, 10, o.obsHeight);
-      ctx.fillStyle = "#b0b8c5"; ctx.beginPath(); ctx.roundRect(gx - 20, by - o.obsHeight, 42, 32, 4); ctx.fill();
-      ctx.fillStyle = "#c8d0db"; ctx.beginPath(); ctx.ellipse(gx + 1, by - o.obsHeight + 2, 21, 12, 0, Math.PI, 0); ctx.fill();
-      ctx.fillStyle = "#888"; ctx.fillRect(gx - 14, by - o.obsHeight + 18, 28, 4);
-      ctx.fillStyle = "#e53935"; ctx.fillRect(gx + 18, by - o.obsHeight + 5, 4, 18); ctx.fillRect(gx + 18, by - o.obsHeight + 5, 14, 10);
-      ctx.fillStyle = "#555"; ctx.font = "bold 9px Arial"; ctx.textAlign = "center"; ctx.fillText("42", gx, by - o.obsHeight + 30);
-
-    } else if (o.type === "hydrant") {
-      const hy = by - o.obsHeight;
-      ctx.fillStyle = "#c62828"; ctx.beginPath(); ctx.ellipse(gx, by - 6, 22, 8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#e53935"; ctx.beginPath(); ctx.roundRect(gx - 16, hy + 14, 32, o.obsHeight - 20, 6); ctx.fill();
-      ctx.fillStyle = "#ff5252"; ctx.beginPath(); ctx.ellipse(gx, hy + 16, 16, 14, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#ffd600"; ctx.beginPath(); ctx.ellipse(gx, hy + 6, 9, 7, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#c62828"; ctx.fillRect(gx - 24, by - 38, 10, 12); ctx.fillRect(gx + 14, by - 38, 10, 12);
-      ctx.fillStyle = "#ffd600"; ctx.beginPath(); ctx.arc(gx - 19, by - 32, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(gx + 19, by - 32, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.beginPath(); ctx.ellipse(gx - 5, hy + 20, 5, 10, -0.3, 0, Math.PI * 2); ctx.fill();
-
-    } else if (o.type === "stopsign") {
-      ctx.fillStyle = "#888"; ctx.fillRect(gx - 4, by - o.obsHeight, 8, o.obsHeight);
-      ctx.fillStyle = "#aaa"; ctx.fillRect(gx - 3, by - o.obsHeight, 4, o.obsHeight);
-      const sr = 22; const sy = by - o.obsHeight + sr + 4;
-      ctx.fillStyle = "#cc0000"; ctx.beginPath();
-      for (let i = 0; i < 8; i++) { const a = (i*Math.PI)/4-Math.PI/8; const px=gx+sr*Math.cos(a); const py=sy+sr*Math.sin(a); i===0?ctx.moveTo(px,py):ctx.lineTo(px,py); }
-      ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5; ctx.stroke();
-      ctx.fillStyle = "#fff"; ctx.font = "bold 11px Arial"; ctx.textAlign = "center"; ctx.fillText("STOP", gx, sy + 4);
-
-    } else if (o.type === "trashcan") {
-      const tw = 40; const th = o.obsHeight;
-      ctx.fillStyle = "#78909c";
-      ctx.beginPath(); ctx.moveTo(gx-tw/2+4,by-th+14); ctx.lineTo(gx+tw/2-4,by-th+14); ctx.lineTo(gx+tw/2+2,by); ctx.lineTo(gx-tw/2-2,by); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = "#546e7a"; ctx.beginPath(); ctx.roundRect(gx-tw/2-4,by-th+4,tw+8,14,4); ctx.fill();
-      ctx.fillStyle = "#78909c"; ctx.fillRect(gx-8,by-th,16,6);
-      ctx.strokeStyle = "#546e7a"; ctx.lineWidth = 2;
-      for (let r=1;r<=3;r++){const ry=by-th+14+r*((th-14)/4);ctx.beginPath();ctx.moveTo(gx-tw/2+2,ry);ctx.lineTo(gx+tw/2-2,ry);ctx.stroke();}
-      ctx.fillStyle="rgba(255,255,255,0.18)"; ctx.fillRect(gx-tw/2+6,by-th+18,8,th-20);
-
-    } else if (o.type === "dog") {
-      const dy = by - o.obsHeight;
-      ctx.fillStyle="#c4954a"; ctx.beginPath(); ctx.ellipse(gx-5,dy+22,32,18,0.1,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#d4a55a"; ctx.beginPath(); ctx.ellipse(gx+28,dy+14,18,16,-0.2,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#b07030"; ctx.beginPath(); ctx.ellipse(gx+34,dy+18,8,14,0.6,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#c4954a"; ctx.beginPath(); ctx.ellipse(gx+44,dy+20,10,8,0,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#333"; ctx.beginPath(); ctx.ellipse(gx+53,dy+17,4,3,0,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#222"; ctx.beginPath(); ctx.arc(gx+36,dy+10,3,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(gx+37,dy+9,1.2,0,Math.PI*2); ctx.fill();
-      ctx.strokeStyle="#b07030"; ctx.lineWidth=6; ctx.beginPath(); ctx.arc(gx-36,dy+12,14,0.2,Math.PI*1.4); ctx.stroke();
-      ctx.fillStyle="#b07030";
-      [gx-18,gx-5,gx+8,gx+20].forEach(lx=>{ctx.fillRect(lx-4,dy+34,8,16);});
-      ctx.fillStyle="#c4954a";
-      [gx-18,gx-5,gx+8,gx+20].forEach(lx=>{ctx.beginPath();ctx.ellipse(lx,dy+50,6,4,0,0,Math.PI*2);ctx.fill();});
-
-    } else if (o.type === "cat") {
-      const cy2 = by - o.obsHeight;
-      ctx.fillStyle="#888"; ctx.beginPath(); ctx.ellipse(gx,cy2+22,16,18,0,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#999"; ctx.beginPath(); ctx.arc(gx,cy2+6,14,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#999";
-      ctx.beginPath();ctx.moveTo(gx-10,cy2);ctx.lineTo(gx-16,cy2-12);ctx.lineTo(gx-2,cy2-4);ctx.fill();
-      ctx.beginPath();ctx.moveTo(gx+10,cy2);ctx.lineTo(gx+16,cy2-12);ctx.lineTo(gx+2,cy2-4);ctx.fill();
-      ctx.fillStyle="#f48fb1";
-      ctx.beginPath();ctx.moveTo(gx-9,cy2-1);ctx.lineTo(gx-13,cy2-9);ctx.lineTo(gx-3,cy2-4);ctx.fill();
-      ctx.beginPath();ctx.moveTo(gx+9,cy2-1);ctx.lineTo(gx+13,cy2-9);ctx.lineTo(gx+3,cy2-4);ctx.fill();
-      ctx.fillStyle="#4caf50";
-      ctx.beginPath();ctx.ellipse(gx-5,cy2+5,4,3,-0.3,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.ellipse(gx+5,cy2+5,4,3,0.3,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#111";
-      ctx.beginPath();ctx.ellipse(gx-5,cy2+5,2,3,0,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.ellipse(gx+5,cy2+5,2,3,0,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#f48fb1";ctx.beginPath();ctx.arc(gx,cy2+10,2,0,Math.PI*2);ctx.fill();
-      ctx.strokeStyle="#bbb";ctx.lineWidth=1;
-      ctx.beginPath();ctx.moveTo(gx-3,cy2+10);ctx.lineTo(gx-14,cy2+9);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(gx+3,cy2+10);ctx.lineTo(gx+14,cy2+9);ctx.stroke();
-      ctx.strokeStyle="#888";ctx.lineWidth=5;
-      ctx.beginPath();ctx.moveTo(gx+14,cy2+28);ctx.quadraticCurveTo(gx+30,cy2+36,gx+22,cy2+44);ctx.stroke();
-
-    } else if (o.type === "bicycle") {
-      const bby=by-12; const wr=30; const lx=o.x+wr+4; const rx=o.x+o.obsWidth-wr-4; const axleY=bby-wr;
-      [lx,rx].forEach(wx=>{
-        ctx.strokeStyle="#222";ctx.lineWidth=6;ctx.beginPath();ctx.arc(wx,axleY,wr,0,Math.PI*2);ctx.stroke();
-        ctx.strokeStyle="#999";ctx.lineWidth=2;ctx.beginPath();ctx.arc(wx,axleY,wr-4,0,Math.PI*2);ctx.stroke();
-        ctx.strokeStyle="#aaa";ctx.lineWidth=1.5;
-        for(let sp=0;sp<6;sp++){const a=(sp*Math.PI)/3;ctx.beginPath();ctx.moveTo(wx,axleY);ctx.lineTo(wx+(wr-5)*Math.cos(a),axleY+(wr-5)*Math.sin(a));ctx.stroke();}
-        ctx.fillStyle="#888";ctx.beginPath();ctx.arc(wx,axleY,5,0,Math.PI*2);ctx.fill();
-      });
-      ctx.strokeStyle="#e53935";ctx.lineWidth=5;
-      ctx.beginPath();ctx.moveTo(lx,axleY);ctx.lineTo(gx-2,axleY-wr+6);ctx.lineTo(rx,axleY);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(gx-2,axleY-wr+6);ctx.lineTo(rx,axleY);ctx.stroke();
-      ctx.strokeStyle="#888";ctx.lineWidth=4;
-      ctx.beginPath();ctx.moveTo(rx,axleY);ctx.lineTo(rx-2,axleY-18);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(rx-8,axleY-18);ctx.lineTo(rx+8,axleY-18);ctx.stroke();
-      ctx.fillStyle="#333";ctx.beginPath();ctx.roundRect(gx-18,axleY-wr+2,32,8,4);ctx.fill();
-
-    } else if (o.type === "gnome") {
-      const gy=by-o.obsHeight;
-      ctx.fillStyle="#1565c0";ctx.fillRect(gx-12,gy+42,9,24);ctx.fillRect(gx+3,gy+42,9,24);
-      ctx.fillStyle="#4e342e";ctx.beginPath();ctx.ellipse(gx-8,by-4,10,6,0,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.ellipse(gx+8,by-4,10,6,0,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#c62828";
-      ctx.beginPath();ctx.moveTo(gx-16,gy+44);ctx.quadraticCurveTo(gx-18,gy+22,gx,gy+18);ctx.quadraticCurveTo(gx+18,gy+22,gx+16,gy+44);ctx.closePath();ctx.fill();
-      ctx.fillStyle="#4e342e";ctx.fillRect(gx-14,gy+38,28,6);
-      ctx.fillStyle="#ffd600";ctx.beginPath();ctx.roundRect(gx-5,gy+37,10,8,2);ctx.fill();
-      ctx.fillStyle="#ffcc80";ctx.beginPath();ctx.arc(gx,gy+14,13,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#fff";
-      ctx.beginPath();ctx.moveTo(gx-10,gy+18);ctx.quadraticCurveTo(gx,gy+28,gx+10,gy+18);ctx.quadraticCurveTo(gx,gy+34,gx-10,gy+18);ctx.fill();
-      ctx.fillStyle="#333";ctx.beginPath();ctx.arc(gx-4,gy+12,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(gx+4,gy+12,2,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#c62828";ctx.beginPath();ctx.moveTo(gx,gy-4);ctx.lineTo(gx-13,gy+4);ctx.lineTo(gx+13,gy+4);ctx.closePath();ctx.fill();
-      ctx.fillStyle="#fff";ctx.beginPath();ctx.ellipse(gx,gy+4,15,5,0,0,Math.PI*2);ctx.fill();
-
-    } else if (o.type === "cone") {
-      ctx.fillStyle="rgba(0,0,0,0.15)";ctx.beginPath();ctx.ellipse(gx,by-3,22,6,0,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle="#f57c00";ctx.beginPath();ctx.moveTo(gx,by-o.obsHeight);ctx.lineTo(gx-22,by-5);ctx.lineTo(gx+22,by-5);ctx.closePath();ctx.fill();
-      ctx.fillStyle="#fff";
-      for(let s=0;s<2;s++){const sy2=by-o.obsHeight+(o.obsHeight*0.4)+s*(o.obsHeight*0.22);const sw=5+s*10;ctx.beginPath();ctx.moveTo(gx-sw,sy2);ctx.lineTo(gx+sw,sy2);ctx.lineTo(gx+sw+4,sy2+10);ctx.lineTo(gx-sw-4,sy2+10);ctx.closePath();ctx.fill();}
-      ctx.fillStyle="#e65100";ctx.beginPath();ctx.roundRect(gx-24,by-8,48,8,2);ctx.fill();
-
-    } else if (o.type === "newsbox") {
-      const nw=46;const nh=o.obsHeight;
-      ctx.fillStyle="#555";ctx.fillRect(gx-14,by-20,6,20);ctx.fillRect(gx+8,by-20,6,20);
-      ctx.fillStyle="#1976d2";ctx.beginPath();ctx.roundRect(gx-nw/2,by-nh,nw,nh-14,5);ctx.fill();
-      ctx.fillStyle="#bbdefb";ctx.beginPath();ctx.roundRect(gx-nw/2+4,by-nh+4,nw-8,nh-28,3);ctx.fill();
-      ctx.fillStyle="#fff";ctx.beginPath();ctx.roundRect(gx-nw/2+6,by-nh+7,nw-12,nh-34,2);ctx.fill();
-      ctx.fillStyle="#333";ctx.font="bold 8px Arial";ctx.textAlign="center";ctx.fillText("NEWS",gx,by-nh+16);
-      ctx.fillStyle="#666";ctx.font="6px Arial";ctx.fillText("DAILY",gx,by-nh+24);
-      ctx.fillStyle="#0d47a1";ctx.fillRect(gx-nw/2+6,by-nh+nh-22,nw-12,6);
-      ctx.fillStyle="#1565c0";ctx.fillRect(gx-4,by-nh+nh-22,8,6);
-    }
-    ctx.restore();
-  };
-
-  // ── Hat drawing (local coords — called inside palm's save/rotate context) ──
-  const drawHat = (ctx: CanvasRenderingContext2D, hatId: HatId) => {
-    if (hatId === "none") return;
-    ctx.save();
-    if (hatId === "tophat") {
-      // Brim
-      ctx.fillStyle = "#1a1a1a";
-      ctx.beginPath(); ctx.roundRect(-22, -30, 44, 7, 2); ctx.fill();
-      // Crown
-      ctx.fillStyle = "#111";
-      ctx.beginPath(); ctx.roundRect(-14, -30 - 34, 28, 34, 3); ctx.fill();
-      // Band
-      ctx.fillStyle = "#2ecc71";
-      ctx.fillRect(-13, -30 - 12, 26, 7);
-      // Shine
-      ctx.fillStyle = "rgba(255,255,255,0.08)";
-      ctx.beginPath(); ctx.roundRect(-10, -30 - 32, 6, 30, 2); ctx.fill();
-
-    } else if (hatId === "cap") {
-      // Dome
-      ctx.fillStyle = "#e74c3c";
-      ctx.beginPath(); ctx.ellipse(0, -27, 21, 15, 0, Math.PI, 0); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(-21, -27, 42, 8, [0,0,4,4]); ctx.fill();
-      // Bill
-      ctx.fillStyle = "#c0392b";
-      ctx.beginPath(); ctx.ellipse(20, -24, 16, 6, 0.25, 0, Math.PI*2); ctx.fill();
-      // Stitching line
-      ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(-18, -36); ctx.lineTo(0, -42); ctx.lineTo(18, -36); ctx.stroke();
-      // Button
-      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, -42, 3, 0, Math.PI*2); ctx.fill();
-
-    } else if (hatId === "crown") {
-      // Crown body
-      ctx.fillStyle = "#ffd700";
-      ctx.beginPath();
-      ctx.moveTo(-18, -26); ctx.lineTo(-18, -46); ctx.lineTo(-9, -37);
-      ctx.lineTo(0, -51);   ctx.lineTo(9, -37);
-      ctx.lineTo(18, -46);  ctx.lineTo(18, -26); ctx.closePath(); ctx.fill();
-      // Outline
-      ctx.strokeStyle = "#e6ac00"; ctx.lineWidth = 1.5; ctx.stroke();
-      // Base band
-      ctx.fillStyle = "#e6ac00";
-      ctx.fillRect(-18, -30, 36, 6);
-      // Gems
-      ctx.fillStyle = "#e74c3c"; ctx.beginPath(); ctx.arc(0, -40, 4, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "#3498db"; ctx.beginPath(); ctx.arc(-12, -29, 3, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(12, -29, 3, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.beginPath(); ctx.arc(-0.5, -41.5, 1.5, 0, Math.PI*2); ctx.fill();
-
-    } else if (hatId === "cowboy") {
-      // Dome
-      ctx.fillStyle = "#8B6914";
-      ctx.beginPath(); ctx.ellipse(0, -30, 18, 16, 0, Math.PI, 0); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(-18, -30, 36, 8, [0,0,4,4]); ctx.fill();
-      // Wide brim
-      ctx.fillStyle = "#7A5C0E";
-      ctx.beginPath(); ctx.ellipse(0, -28, 32, 9, 0, 0, Math.PI*2); ctx.fill();
-      // Brim curl up on sides
-      ctx.fillStyle = "#8B6914";
-      ctx.beginPath(); ctx.ellipse(-26, -26, 7, 5, -0.4, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(26, -26, 7, 5, 0.4, 0, Math.PI*2); ctx.fill();
-      // Band
-      ctx.fillStyle = "#8B0000"; ctx.fillRect(-17, -34, 34, 6);
-      // Belt buckle
-      ctx.fillStyle = "#ffd700"; ctx.beginPath(); ctx.roundRect(-4, -35, 8, 8, 1); ctx.fill();
-
-    } else if (hatId === "viking") {
-      // Helmet dome
-      ctx.fillStyle = "#888";
-      ctx.beginPath(); ctx.ellipse(0, -30, 20, 17, 0, Math.PI, 0); ctx.fill();
-      ctx.fillStyle = "#777"; ctx.beginPath(); ctx.roundRect(-20, -30, 40, 8, [0,0,4,4]); ctx.fill();
-      // Nose guard
-      ctx.fillStyle = "#777"; ctx.fillRect(-3, -30, 6, 14);
-      // Rivets
-      ctx.fillStyle = "#aaa";
-      [-12, 0, 12].forEach(rx => { ctx.beginPath(); ctx.arc(rx, -32, 2.5, 0, Math.PI*2); ctx.fill(); });
-      // Horns
-      ctx.fillStyle = "#f0e8d0";
-      ctx.beginPath(); ctx.moveTo(-19, -36); ctx.quadraticCurveTo(-36, -52, -28, -66); ctx.quadraticCurveTo(-20, -50, -12, -38); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(19, -36); ctx.quadraticCurveTo(36, -52, 28, -66); ctx.quadraticCurveTo(20, -50, 12, -38); ctx.closePath(); ctx.fill();
-      // Horn tips
-      ctx.fillStyle = "#d4c0a0";
-      ctx.beginPath(); ctx.ellipse(-28, -66, 4, 3, 0.3, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(28, -66, 4, 3, -0.3, 0, Math.PI*2); ctx.fill();
-
-    } else if (hatId === "beanie") {
-      // Knit dome
-      ctx.fillStyle = "#e8567a";
-      ctx.beginPath(); ctx.ellipse(0, -26, 21, 16, 0, Math.PI, 0); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(-21, -27, 42, 7, [0,0,3,3]); ctx.fill();
-      // Folded brim
-      ctx.fillStyle = "#c93f63"; ctx.beginPath(); ctx.roundRect(-23, -29, 46, 10, 5); ctx.fill();
-      // Knit lines
-      ctx.strokeStyle = "rgba(255,255,255,0.20)"; ctx.lineWidth = 1.5;
-      for (let kx = -14; kx <= 14; kx += 7) { ctx.beginPath(); ctx.moveTo(kx, -27); ctx.lineTo(kx, -41); ctx.stroke(); }
-      // Pom-pom
-      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(0, -45, 6, 0, Math.PI*2); ctx.fill();
-
-    } else if (hatId === "party") {
-      // Cone
-      ctx.fillStyle = "#ff5ea8";
-      ctx.beginPath(); ctx.moveTo(-16, -26); ctx.lineTo(0, -66); ctx.lineTo(16, -26); ctx.closePath(); ctx.fill();
-      // Zigzag stripes
-      ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 3; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.moveTo(-12, -34); ctx.lineTo(12, -34); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-9, -44); ctx.lineTo(9, -44); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-6, -54); ctx.lineTo(6, -54); ctx.stroke();
-      // Dots
-      ctx.fillStyle = "#fff";
-      [[-6,-30],[5,-40],[-2,-50]].forEach(([dx,dy]) => { ctx.beginPath(); ctx.arc(dx, dy, 2, 0, Math.PI*2); ctx.fill(); });
-      // Pom-pom top
-      ctx.fillStyle = "#4ee0ff"; ctx.beginPath(); ctx.arc(0, -66, 5, 0, Math.PI*2); ctx.fill();
-
-    } else if (hatId === "wizard") {
-      // Brim
-      ctx.fillStyle = "#3b2a73"; ctx.beginPath(); ctx.ellipse(0, -26, 27, 8, 0, 0, Math.PI*2); ctx.fill();
-      // Curved cone
-      ctx.fillStyle = "#4b3699";
-      ctx.beginPath(); ctx.moveTo(-18, -28); ctx.quadraticCurveTo(-6, -56, 4, -72);
-      ctx.quadraticCurveTo(12, -52, 18, -28); ctx.closePath(); ctx.fill();
-      // Band
-      ctx.fillStyle = "#ffd700"; ctx.fillRect(-17, -33, 35, 5);
-      // Stars (small diamonds)
-      ctx.fillStyle = "#ffe066";
-      [[-4,-42,3],[6,-54,2.4],[-8,-50,2]].forEach(([sx,sy,sr]) => {
-        ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.PI/4);
-        ctx.fillRect(-sr, -sr, sr*2, sr*2); ctx.restore();
-      });
-
-    } else if (hatId === "propeller") {
-      // Dome
-      ctx.fillStyle = "#2d98da";
-      ctx.beginPath(); ctx.ellipse(0, -27, 20, 15, 0, Math.PI, 0); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(-20, -27, 40, 7, [0,0,3,3]); ctx.fill();
-      // Colored panels
-      ctx.fillStyle = "#f7b731"; ctx.beginPath(); ctx.moveTo(0, -42); ctx.lineTo(-20, -23); ctx.lineTo(-7, -23); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = "#eb3b5a"; ctx.beginPath(); ctx.moveTo(0, -42); ctx.lineTo(20, -23); ctx.lineTo(7, -23); ctx.closePath(); ctx.fill();
-      // Propeller blades
-      ctx.save(); ctx.translate(0, -46);
-      ctx.fillStyle = "#eb3b5a"; ctx.beginPath(); ctx.ellipse(-13, 0, 13, 4, 0.25, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "#20bf6b"; ctx.beginPath(); ctx.ellipse(13, 0, 13, 4, -0.25, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "#f7b731"; ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-
-    } else if (hatId === "halo") {
-      // Glowing floating ring
-      ctx.save();
-      ctx.strokeStyle = "#ffe066"; ctx.lineWidth = 5;
-      ctx.shadowColor = "rgba(255,224,102,0.9)"; ctx.shadowBlur = 14;
-      ctx.beginPath(); ctx.ellipse(0, -46, 16, 6, 0, 0, Math.PI*2); ctx.stroke();
-      ctx.restore();
-    }
-    ctx.restore();
-  };
-
-  // ── Collectible coin ───────────────────────────────────────────────────────
-  const drawCoin = (ctx: CanvasRenderingContext2D, c: Coin, time: number) => {
-    const bob = Math.sin(time * 0.12 + c.phase) * 3;
-    // Spinning illusion — width oscillates to fake a flipping coin
-    const w = COIN_R * Math.abs(Math.cos(time * 0.09 + c.phase)) + 3;
-    ctx.save();
-    ctx.translate(c.x, c.y + bob);
-    ctx.shadowColor = "rgba(255,200,40,0.85)"; ctx.shadowBlur = 12;
-    ctx.fillStyle = "#e0a700";
-    ctx.beginPath(); ctx.ellipse(0, 0, w, COIN_R, 0, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "#ffcf33";
-    ctx.beginPath(); ctx.ellipse(0, 0, Math.max(1.5, w - 2.5), COIN_R - 2.5, 0, 0, Math.PI*2); ctx.fill();
-    if (w > COIN_R * 0.6) {
-      ctx.fillStyle = "#c98a00"; ctx.font = "bold 15px Arial";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText("★", 0, 1);
-      ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
-    }
-    ctx.restore();
-  };
-
-  // ── Character drawing ──────────────────────────────────────────────────────
-  // Skin / nail palette (shared across body + legs)
-  const SKIN    = "#f2b079";
-  const SKIN_D  = "#d88a4e";
-  const SKIN_DD = "#b86c34";
-  const SKIN_HI = "#ffd6a8";
-  const NAIL    = "#fdeee2";
-  const NAIL_D  = "#e6c2a8";
-
-  // A single anatomically-readable finger used as a leg: proximal + distal
-  // phalanges, a bulging knuckle joint with a crease, a fingertip pad and nail.
-  const drawFingerLeg = (
-    ctx: CanvasRenderingContext2D, hipX: number, hipY: number, swing: number, front: boolean,
-  ) => {
-    const seg1 = 30, seg2 = 30;
-    const kneeX = hipX + Math.sin(swing) * seg1;
-    const kneeY = hipY + Math.cos(swing) * seg1;
-    const bend  = swing * 0.5 + (swing > 0 ? 0.34 : -0.12);
-    const tipX  = kneeX + Math.sin(bend) * seg2;
-    const tipY  = kneeY + Math.cos(bend) * seg2;
-    const sk  = front ? SKIN : SKIN_D;
-    const skd = front ? SKIN_D : SKIN_DD;
-
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    // proximal phalange (fat upper segment)
-    ctx.strokeStyle = skd; ctx.lineWidth = 22; ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
-    ctx.strokeStyle = sk;  ctx.lineWidth = 17; ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
-    // knuckle joint bulge
-    ctx.fillStyle = skd; ctx.beginPath(); ctx.arc(kneeX, kneeY, 11, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = sk;  ctx.beginPath(); ctx.arc(kneeX, kneeY, 8.5, 0, Math.PI * 2); ctx.fill();
-    // knuckle crease across the joint
-    const ka = Math.atan2(kneeY - hipY, kneeX - hipX) + Math.PI / 2;
-    ctx.strokeStyle = "rgba(150,80,40,0.40)"; ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(kneeX + Math.cos(ka) * 7, kneeY + Math.sin(ka) * 7);
-    ctx.lineTo(kneeX - Math.cos(ka) * 7, kneeY - Math.sin(ka) * 7);
-    ctx.stroke();
-    // distal phalange (tapering lower segment)
-    ctx.strokeStyle = skd; ctx.lineWidth = 18; ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(tipX, tipY); ctx.stroke();
-    ctx.strokeStyle = sk;  ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(tipX, tipY); ctx.stroke();
-    // fingertip pad
-    ctx.fillStyle = skd; ctx.beginPath(); ctx.arc(tipX, tipY, 9, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = sk;  ctx.beginPath(); ctx.arc(tipX, tipY, 7, 0, Math.PI * 2); ctx.fill();
-    // fingernail, oriented along the finger
-    const nd = Math.atan2(tipY - kneeY, tipX - kneeX);
-    ctx.save(); ctx.translate(tipX, tipY); ctx.rotate(nd - Math.PI / 2);
-    ctx.fillStyle = NAIL_D; ctx.beginPath(); ctx.roundRect(-5.5, -10, 11, 11, 4); ctx.fill();
-    ctx.fillStyle = NAIL;   ctx.beginPath(); ctx.roundRect(-4.5, -9, 9, 8.5, 3); ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.beginPath(); ctx.roundRect(-3.5, -8.5, 3, 6, 2); ctx.fill();
-    ctx.restore();
-  };
-
-  const drawFinger = (
-    ctx: CanvasRenderingContext2D, playerY: number, time: number, _height: number,
-    gameRunning: boolean, hatId: HatId, stretchX = 1, stretchY = 1,
-    saber: Saber | null = null, saberSwing = 0,
-  ) => {
-    const cx = 185;
-    const strideSpeed = gameRunning ? 0.26 : 0.05;
-    const stride = Math.sin(time * strideSpeed);
-    const bodyBob = gameRunning ? Math.abs(stride) * -6 : Math.sin(time * 0.05) * 2;
-    const palmY = playerY + bodyBob;
-    const footY = playerY + FINGER_TIP_OFFSET;
-
-    // Ground shadow (drawn unscaled, shrinks as the hand rises for fake depth)
-    const lift = Math.max(0, footY - (palmY + 64));
-    const shScale = Math.max(0.5, 1 - lift * 0.004);
-    ctx.fillStyle = `rgba(0,0,0,${0.20 * shScale})`;
-    ctx.beginPath(); ctx.ellipse(cx, footY + 6, 34 * shScale, 7 * shScale, 0, 0, Math.PI * 2); ctx.fill();
-
-    // Squash & stretch — scale the whole character around the foot contact point
-    ctx.save();
-    ctx.translate(cx, footY);
-    ctx.scale(stretchX, stretchY);
-    ctx.translate(-cx, -footY);
-
-    const baseY = palmY + 22;
-    const indexSwing  =  stride * 0.6;
-    const middleSwing = -stride * 0.6;
-
-    // Back leg (middle finger) first for depth
-    drawFingerLeg(ctx, cx + 11, baseY, middleSwing, false);
-
-    // ── Fist / hand body ──
-    ctx.save();
-    ctx.translate(cx, palmY);
-    ctx.rotate(-0.06 + stride * 0.05);
-
-    // main mass (back of a relaxed fist)
-    ctx.fillStyle = SKIN_D;  ctx.beginPath(); ctx.roundRect(-34, -30, 68, 60, 20); ctx.fill();
-    ctx.fillStyle = SKIN;    ctx.beginPath(); ctx.roundRect(-32, -30, 62, 55, 18); ctx.fill();
-    // soft top highlight
-    ctx.fillStyle = SKIN_HI; ctx.beginPath(); ctx.roundRect(-30, -30, 54, 15, [16, 16, 6, 6]); ctx.fill();
-
-    // curled ring & pinky tucked along the right side
-    ctx.strokeStyle = SKIN_D; ctx.lineCap = "round"; ctx.lineWidth = 13;
-    ctx.beginPath(); ctx.arc(20, -8, 13, Math.PI * 1.15, Math.PI * 1.95); ctx.stroke();
-    ctx.lineWidth = 11; ctx.beginPath(); ctx.arc(24, 8, 11, Math.PI * 1.1, Math.PI * 1.95); ctx.stroke();
-    ctx.strokeStyle = "rgba(150,80,40,0.30)"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(8, -16); ctx.lineTo(30, -12); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(10, 2); ctx.lineTo(32, 6); ctx.stroke();
-
-    // thumb wrapping across the lower-left front
-    ctx.fillStyle = SKIN_D; ctx.beginPath(); ctx.ellipse(-30, 9, 13, 17, -0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = SKIN;   ctx.beginPath(); ctx.ellipse(-31, 6, 9.5, 13, -0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.save(); ctx.translate(-37, -3); ctx.rotate(-0.55);
-    ctx.fillStyle = NAIL_D; ctx.beginPath(); ctx.roundRect(-5, -7, 10, 11, 3); ctx.fill();
-    ctx.fillStyle = NAIL;   ctx.beginPath(); ctx.roundRect(-4, -6, 8, 9, 2); ctx.fill();
-    ctx.restore();
-
-    // friendly eyes (gives the hand a face for its dialog)
-    const blink = (Math.floor(time / 8) % 24 === 0) ? 0.15 : 1;
-    const lookX = gameRunning ? 2.5 : 0;
-    ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.ellipse(-10, -2, 7, 8 * blink, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(8, -2, 7, 8 * blink, 0, 0, Math.PI * 2); ctx.fill();
-    if (blink > 0.5) {
-      ctx.fillStyle = "#2a2a2a";
-      ctx.beginPath(); ctx.arc(-10 + lookX, -1, 3.4, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(8 + lookX, -1, 3.4, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.beginPath(); ctx.arc(-11 + lookX, -2.5, 1.3, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(7 + lookX, -2.5, 1.3, 0, Math.PI * 2); ctx.fill();
-    }
-    // determined eyebrows
-    ctx.strokeStyle = SKIN_DD; ctx.lineWidth = 2.6; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(-16, -12); ctx.lineTo(-5, -10); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(16, -12); ctx.lineTo(5, -10); ctx.stroke();
-
-    // hat (drawn in palm-local coords, sits on top)
-    drawHat(ctx, hatId);
-    ctx.restore();
-
-    // Front leg (index finger) on top
-    drawFingerLeg(ctx, cx - 11, baseY, indexSwing, true);
-
-    // ── Lightsaber wielded by the front hand ──
-    if (saber) {
-      const pivotX = cx - 6;
-      const pivotY = palmY + 12;
-      // Idle: blade held up and forward with a gentle bob. Swing: sweep up→down-forward.
-      let ang = -1.12 + Math.sin(time * 0.08) * 0.05;
-      if (saberSwing > 0) {
-        const p = 1 - saberSwing / SABER_SWING_FRAMES;     // 0 → 1 across the swing
-        const ease = 1 - Math.pow(1 - p, 2);
-        ang = -1.95 + ease * 2.55;                          // arc from overhead to down-forward
-      }
-      const hiltLen = 22;
-      const bladeLen = saber.reach * 0.85;
-      const dx = Math.cos(ang), dy = Math.sin(ang);
-      const hiltBaseX = pivotX - dx * 7, hiltBaseY = pivotY - dy * 7;
-      const emitX = pivotX + dx * hiltLen, emitY = pivotY + dy * hiltLen;
-      const tipX = emitX + dx * bladeLen, tipY = emitY + dy * bladeLen;
-
-      ctx.save();
-      ctx.lineCap = "round";
-      // swing trail — a large fan arc behind the blade
-      if (saberSwing > 0) {
-        ctx.globalAlpha = 0.22 * (saberSwing / SABER_SWING_FRAMES);
-        ctx.strokeStyle = saber.glow; ctx.lineWidth = bladeLen * 0.85;
-        ctx.beginPath();
-        ctx.arc(pivotX, pivotY, hiltLen + bladeLen * 0.5, ang - 0.65, ang + 0.22);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      // metal hilt
-      ctx.strokeStyle = "#777"; ctx.lineWidth = 10;
-      ctx.beginPath(); ctx.moveTo(hiltBaseX, hiltBaseY); ctx.lineTo(emitX, emitY); ctx.stroke();
-      ctx.strokeStyle = "#cfcfcf"; ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.moveTo(hiltBaseX, hiltBaseY); ctx.lineTo(emitX, emitY); ctx.stroke();
-      ctx.fillStyle = "#3a3a3a"; ctx.beginPath(); ctx.arc(emitX, emitY, 4, 0, Math.PI * 2); ctx.fill();
-      // glowing blade — outer aura
-      ctx.shadowColor = saber.glow; ctx.shadowBlur = 32;
-      ctx.strokeStyle = saber.glow; ctx.lineWidth = 18;
-      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      // mid layer
-      ctx.shadowBlur = 22;
-      ctx.strokeStyle = saber.color; ctx.lineWidth = 10;
-      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      // white-hot core
-      ctx.shadowBlur = 14;
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      // crisp inner line
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(emitX, emitY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.restore();
-  };
-
-  // ── Speech bubble for in-game dialog ───────────────────────────────────────
-  const drawSpeechBubble = (ctx: CanvasRenderingContext2D, x: number, y: number, text: string, alpha: number) => {
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-    const AF = "'Press Start 2P', 'Courier New', monospace";
-    ctx.font = `11px ${AF}`;
-    const w = Math.min(340, ctx.measureText(text).width + 28);
-    const h = 36;
-    const bx = x - w / 2; const by = y - h;
-    ctx.fillStyle = "#000012";
-    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 3); ctx.fill();
-    ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 10;
-    ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 3); ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "#000012";
-    ctx.beginPath(); ctx.moveTo(x - 7, by + h - 1); ctx.lineTo(x + 7, by + h - 1); ctx.lineTo(x, by + h + 11); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x - 7, by + h - 1); ctx.lineTo(x, by + h + 11); ctx.lineTo(x + 7, by + h - 1); ctx.stroke();
-    ctx.fillStyle = "#00ffcc"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(text, x, by + h / 2);
-    ctx.textBaseline = "alphabetic";
-    ctx.restore();
   };
 
   // ── Main game loop ─────────────────────────────────────────────────────────
@@ -1535,20 +1131,55 @@ export default function Game() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
 
-    const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const resize = () => {
+      canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+      sizeRef.current.width = canvas.width; sizeRef.current.height = canvas.height;
+    };
     resize();
     window.addEventListener("resize", resize);
+
+    // ── Bloom test shortcut (?bloomtest=<1-8>) ─────────────────────────────
+    // Opens `/?bloomtest=8` (or any level 1-8) in a real GPU-equipped browser
+    // to jump straight into Night theme without unlocking levels first.
+    // This lets reviewers immediately verify bloom acceptance criteria:
+    //   level 8 = Night / Overdrive Midnight (strongest bloom, intensity 1.15)
+    //   level 5 = Highway (weakest bloom, intensity 0.5 — good for comparison)
+    // The param is NOT stripped automatically; remove it from the URL bar
+    // when done testing (or use history.replaceState if needed). It only
+    // bypasses the level-lock check; nothing else changes in gameplay.
+    const bloomTestLevel = Number(new URLSearchParams(window.location.search).get("bloomtest"));
+    const isBloomTest = bloomTestLevel >= 1 && bloomTestLevel <= 8;
+    if (isBloomTest) {
+      setTimeout(() => startLevel(bloomTestLevel), 80);
+    }
 
     const onKey = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.code === "ArrowUp") {
         e.preventDefault();
         if (e.repeat) return; // ignore OS key-repeat so holding doesn't burn the double jump
-        jump();
-      } else if (e.code === "KeyF" || e.code === "KeyJ" || e.code === "ArrowDown"
+        const st = stateRef.current;
+        if (!st.gameRunning && !st.levelComplete && st.totalScore > 0) {
+          startLevel(st.currentLevel); // quick restart from the GAME OVER screen
+        } else {
+          jump();
+        }
+      } else if (e.code === "ArrowDown" || e.code === "KeyS") {
+        e.preventDefault();
+        if (e.repeat) return;
+        slide();
+      } else if (e.code === "KeyF" || e.code === "KeyJ"
                  || e.code === "ShiftLeft" || e.code === "ShiftRight") {
         e.preventDefault();
         if (e.repeat) return;
         slash();
+      } else if (e.code === "ArrowLeft" || e.code === "KeyA") {
+        e.preventDefault();
+        if (e.repeat) return;
+        moveLane(-1);
+      } else if (e.code === "ArrowRight" || e.code === "KeyD") {
+        e.preventDefault();
+        if (e.repeat) return;
+        moveLane(1);
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -1567,6 +1198,7 @@ export default function Game() {
 
       if (st.gameRunning) {
         st.time++;
+        if (st.time % 60 === 0) incrementStat("playTimeSeconds");
         const scoreGain = 0.6;
         st.levelScore += scoreGain;
         st.totalScore += scoreGain;
@@ -1579,6 +1211,14 @@ export default function Game() {
         // Saber swing / cooldown timers
         if (st.saberSwing > 0) st.saberSwing--;
         if (st.saberCooldown > 0) st.saberCooldown--;
+
+        // Spring-based lane visual — accelerates toward the target lane then
+        // overshoots slightly for a "weighted" feel. Collision always uses the
+        // instant `st.lane`; laneVisual is purely cosmetic for the 3D layer.
+        st.laneVel += (st.lane - st.laneVisual) * 0.22;
+        st.laneVel *= 0.74;
+        st.laneVisual += st.laneVel;
+        st.laneVisual = Math.max(-1.3, Math.min(1.3, st.laneVisual));
 
         // Physics — variable jump height + snappy fall
         let g = GRAVITY;
@@ -1598,6 +1238,7 @@ export default function Game() {
           }
           st.playerY = groundY; st.velocity = 0; st.onGround = true;
           st.jumpsUsed = 0; st.coyoteTimer = COYOTE_FRAMES;
+          if (st.slideQueued) { st.sliding = true; st.slideTimer = SLIDE_FRAMES; st.slideQueued = false; spawnDust(6, 8); }
         } else {
           st.onGround = false;
           if (st.coyoteTimer > 0) st.coyoteTimer--;
@@ -1610,13 +1251,15 @@ export default function Game() {
           if (st.onGround) { doJump(false); st.jumpBuffer = 0; }
         }
         if (st.landImpact > 0) st.landImpact--;
+        // Slide/duck countdown — end the ducked pose after SLIDE_FRAMES.
+        if (st.sliding) { st.slideTimer--; if (st.slideTimer <= 0) { st.sliding = false; st.slideTimer = 0; } }
 
         // Dialog — periodic quirky one-liners while running
         if (st.dialog && st.dialog.life > 0) st.dialog.life--;
         st.dialogCooldown--;
         if (st.dialogCooldown <= 0 && (!st.dialog || st.dialog.life <= 0)) {
-          showDialog(pick(RUN_QUIPS), 130);
-          st.dialogCooldown = 260 + Math.floor(Math.random() * 220);
+          showDialog(Math.random() < 0.6 ? pick(charLineFor("idle")) : pick(RUN_QUIPS), 130);
+          st.dialogCooldown = 240 + Math.floor(Math.random() * 200);
         }
         if (st.shake > 0) { st.shake *= 0.86; if (st.shake < 0.4) st.shake = 0; }
 
@@ -1635,14 +1278,38 @@ export default function Game() {
           const baseY = heights[Math.floor(Math.random() * heights.length)];
           const n = 1 + Math.floor(Math.random() * 3);
           for (let k = 0; k < n; k++) {
-            st.coins.push({ x: width + 40 + k * 40, y: baseY, phase: Math.random() * Math.PI * 2 });
+            pushCapped(st.coins, POOL_COINS, { x: width + 40 + k * 40, y: baseY, phase: Math.random() * Math.PI * 2 });
           }
         }
 
         // Obstacles + collision
         const fingerLeft = 168; const fingerRight = 202;
         const fingerTipY = st.playerY + FINGER_TIP_OFFSET - 8;
-        const speed = (BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001) * kidsSpeedMult;
+        if (st.boostTimer > 0) st.boostTimer--;
+        if (st.boostCooldown > 0) st.boostCooldown--;
+        const boostMult = st.boostTimer > 0 ? BOOST_MULT : 1;
+        // Reflect boost state to the on-screen button (only re-renders on change).
+        const boostActiveNow = st.boostTimer > 0;
+        const boostReadyNow = st.boostCooldown === 0;
+        if (boostActiveNow !== boostActiveRef.current) { boostActiveRef.current = boostActiveNow; setBoostActive(boostActiveNow); }
+        if (boostReadyNow !== boostReadyRef.current) { boostReadyRef.current = boostReadyNow; setBoostReady(boostReadyNow); }
+        const speed = (BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.0014) * kidsSpeedMult * boostMult;
+        st.worldScroll += speed; // visual-only: drives 3D background/road scroll, no gameplay effect
+        // Fart-boost green gas trail — puffs out behind the runner while boosting.
+        // Uses shape "gas" (not "circle") + upward vy so it floats and never gets
+        // pinned by the road floor-clamp (which only freezes "circle" droplets).
+        if (st.boostTimer > 0) {
+          const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
+          for (let g = 0; g < 2; g++) {
+            pushCapped(st.particles, POOL_PARTICLES, {
+              x: 185 + (Math.random() - 0.5) * 16, y: gasBaseY + Math.random() * 10,
+              vx: 1.1 + Math.random() * 1.8, vy: -(0.7 + Math.random() * 1.3),
+              life: 28 + Math.random() * 12, size: 5 + Math.random() * 5,
+              color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
+              shape: "gas",
+            });
+          }
+        }
         const saberReach = getSaberDef(getSaberLevel()).reach;
         let didCrash = false;
         for (let i = st.obstacles.length - 1; i >= 0; i--) {
@@ -1655,16 +1322,42 @@ export default function Game() {
           const obsTopSlice = roadY - o.obsHeight;
           const vReach = saberReach * 0.6;
           const fingerHigh = fingerTipY - vReach;
-          if (st.saberSwing > 0 && !didCrash
+          if (st.saberSwing > 0 && !didCrash && o.type !== "barrier" && o.lane === st.lane
               && o.x + o.obsWidth >= fingerLeft - 6 && o.x <= fingerRight + saberReach
               && fingerHigh <= roadY && fingerTipY + vReach >= obsTopSlice) {
             sliceObstacle(o, roadY);
             st.obstacles.splice(i, 1);
             continue;
           }
-          if (!didCrash) {
-            const obsTop = roadY - o.obsHeight;
-            if (fingerRight > o.x && fingerLeft < o.x + o.obsWidth && fingerTipY > obsTop) {
+          if (!didCrash && o.lane === st.lane) {
+            // Slightly tighter hitbox than the visual — avoids cheap corner-clip
+            // deaths while keeping collisions fair and predictable.
+            const xOverlap = fingerRight - 4 > o.x && fingerLeft + 4 < o.x + o.obsWidth;
+            let hit: boolean;
+            if (o.type === "barrier") {
+              // Overhead beam: crash if the head pokes above the gap ceiling
+              // (standing or jumping into it); sliding drops the head below.
+              const headY = st.sliding ? st.playerY + SLIDE_DUCK : st.playerY;
+              hit = xOverlap && headY < roadY - BARRIER_GAP;
+            } else {
+              // 88% of visual height to forgive very top-edge grazes
+              hit = xOverlap && fingerTipY > roadY - o.obsHeight * 0.88;
+            }
+            if (hit) {
+              if (st.shieldCharges > 0) {
+                st.shieldCharges--;
+                st.shake = Math.max(st.shake, 10);
+                showComboPopup("SHIELD BROKEN!", "#44ddff");
+                for (let s = 0; s < 14; s++) {
+                  const a = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 5;
+                  pushCapped(st.particles, POOL_PARTICLES, { x: o.x + o.obsWidth / 2, y: roadY - o.obsHeight / 2,
+                    vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5, life: 20 + Math.random() * 14,
+                    size: 3 + Math.random() * 4, color: "#44ddff", shape: "circle" });
+                }
+                playSaberHitSound();
+                st.obstacles.splice(i, 1);
+                continue;
+              }
               crash(); didCrash = true;
             }
           }
@@ -1677,14 +1370,19 @@ export default function Game() {
         const coinBottom = st.playerY + FINGER_TIP_OFFSET;
         for (let i = st.coins.length - 1; i >= 0; i--) {
           const c = st.coins[i];
+          if (st.magnetTimer > 0) {
+            const dx = 185 - c.x; const dy = (st.playerY + 30) - c.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 280 && dist > 1) { c.x += (dx / dist) * 15; c.y += (dy / dist) * 15; }
+          }
           c.x -= speed;
           if (c.x + COIN_R > 156 && c.x - COIN_R < 214 && c.y + COIN_R > coinTop && c.y - COIN_R < coinBottom) {
-            st.coinBalance++;
+            st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
             setCoinsLS(st.coinBalance);
             playCoinSound();
             for (let s = 0; s < 8; s++) {
               const a = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 3;
-              st.particles.push({ x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.2,
+              pushCapped(st.particles, POOL_PARTICLES, { x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.2,
                 life: 22 + Math.random() * 12, size: 3 + Math.random() * 4, color: "#ffe27a", shape: "circle" });
             }
             st.coins.splice(i, 1);
@@ -1692,6 +1390,31 @@ export default function Game() {
           }
           if (c.x < -40) st.coins.splice(i, 1);
         }
+
+        // Power-ups — spawn, move, collect on overlap with the finger
+        st.powerUpSpawnTimer++;
+        if (st.powerUpSpawnTimer > 560 + Math.random() * 420) {
+          st.powerUpSpawnTimer = 0;
+          const types: PowerUpType[] = ["magnet", "shield", "multiplier"];
+          const type = types[Math.floor(Math.random() * types.length)];
+          const heights = [roadY - 70, roadY - 150];
+          const py = heights[Math.floor(Math.random() * heights.length)];
+          pushCapped(st.powerUps, POOL_POWERUPS, { x: width + 60, y: py, type, phase: Math.random() * Math.PI * 2 });
+        }
+        for (let i = st.powerUps.length - 1; i >= 0; i--) {
+          const p = st.powerUps[i];
+          p.x -= speed;
+          if (p.x + 20 > 150 && p.x - 20 < 220 && p.y + 20 > coinTop - 10 && p.y - 20 < coinBottom + 10) {
+            activatePowerUp(p.type);
+            st.powerUps.splice(i, 1);
+            continue;
+          }
+          if (p.x < -60) st.powerUps.splice(i, 1);
+        }
+        if (st.magnetTimer > 0) st.magnetTimer--;
+        if (st.multiplierTimer > 0) st.multiplierTimer--;
+        if (st.comboTimer > 0) { st.comboTimer--; if (st.comboTimer === 0) st.comboCount = 0; }
+        if (st.comboPopup && st.comboPopup.life > 0) st.comboPopup.life--;
 
         // ── Active rope swing ───────────────────────────────────────────────────
         if (st.activeSwing) {
@@ -1710,7 +1433,7 @@ export default function Game() {
             st.jumpsUsed = 0;
             st.activeSwing = null;
             spawnDust(12, 14);
-            if (Math.random() < 0.7) showDialog(pick(JUMP_QUIPS), 70);
+            if (Math.random() < 0.7) showDialog(pick(charLineFor("jump")), 70);
           }
         }
 
@@ -1736,7 +1459,7 @@ export default function Game() {
         st.ropeTimer++;
         if (st.ropeTimer > 720 + Math.floor(Math.random() * 400)) {
           st.ropeTimer = 0;
-          st.ropes.push({ x: width + 90, anchorY: 70 + Math.floor(Math.random() * 90), length: 210 + Math.floor(Math.random() * 100) });
+          pushCapped(st.ropes, POOL_ROPES, { x: width + 90, anchorY: 70 + Math.floor(Math.random() * 90), length: 210 + Math.floor(Math.random() * 100) });
         }
 
         // ── Platforms: scroll + collision + spawn ───────────────────────────────
@@ -1759,7 +1482,7 @@ export default function Game() {
         st.platformTimer++;
         if (st.platformTimer > 450 + Math.floor(Math.random() * 180)) {
           st.platformTimer = 0;
-          st.platforms.push({ x: width + 60, y: roadY - 130 - Math.floor(Math.random() * 100), w: 100 + Math.floor(Math.random() * 110) });
+          pushCapped(st.platforms, POOL_PLATFORMS, { x: width + 60, y: roadY - 130 - Math.floor(Math.random() * 100), w: 100 + Math.floor(Math.random() * 110) });
         }
 
         // Particles
@@ -1772,7 +1495,7 @@ export default function Game() {
           if (p.life <= 0) st.particles.splice(i, 1);
         }
         // Blood puddles — scroll with the world, slow fade
-        const scrollSpeed = BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001;
+        const scrollSpeed = (BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001) * boostMult;
         for (let i = st.bloodPuddles.length - 1; i >= 0; i--) {
           const bp = st.bloodPuddles[i];
           bp.x -= scrollSpeed;
@@ -1807,169 +1530,93 @@ export default function Game() {
         if (!st.gameRunning) st.playerY = getGroundY(height);
       }
 
-      // ── Draw ────────────────────────────────────────────────────────────────
-      drawBackground(ctx, width, height, st.time, theme);
+      // ── Draw (HUD only — the game world is now rendered by <Scene3D/> in true 3D) ─
+      ctx.clearRect(0, 0, width, height);
 
-      // Screen shake — applied to the foreground only (background already fills the canvas)
-      ctx.save();
-      if (st.shake > 0) {
-        ctx.translate((Math.random() - 0.5) * st.shake, (Math.random() - 0.5) * st.shake);
-      }
-
-      // Blood puddles (behind obstacles and character)
-      for (const bp of st.bloodPuddles) {
-        const alpha = Math.min(0.82, (bp.life / bp.maxLife) * 0.82);
-        ctx.globalAlpha = alpha;
-        const pg = ctx.createRadialGradient(bp.x, bp.y, 0, bp.x, bp.y, bp.rx);
-        pg.addColorStop(0, "#8B0000"); pg.addColorStop(0.6, "#6B0000"); pg.addColorStop(1, "rgba(50,0,0,0)");
-        ctx.fillStyle = pg;
-        ctx.beginPath(); ctx.ellipse(bp.x, bp.y, bp.rx, bp.ry, 0, 0, Math.PI * 2); ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-
-      for (const o of st.obstacles) drawObstacle(ctx, o, height);
-
-      // Draw floating platforms — neon electric style
-      ctx.save();
-      for (const plat of st.platforms) {
-        const pw = plat.w;
-        ctx.fillStyle = "#001428";
-        ctx.beginPath(); ctx.roundRect(plat.x, plat.y, pw, 16, [3, 3, 2, 2]); ctx.fill();
-        ctx.shadowColor = "#00ccff"; ctx.shadowBlur = 14;
-        ctx.fillStyle = "#00aaff";
-        ctx.beginPath(); ctx.roundRect(plat.x, plat.y, pw, 5, [3, 3, 0, 0]); ctx.fill();
-        ctx.strokeStyle = "#00ccff"; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.roundRect(plat.x, plat.y, pw, 16, [3, 3, 2, 2]); ctx.stroke();
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = "#005588";
-        for (let px2 = plat.x + 8; px2 < plat.x + pw - 8; px2 += 16) {
-          ctx.fillRect(px2, plat.y + 7, 8, 2);
-          ctx.fillRect(px2, plat.y + 11, 8, 2);
-        }
-      }
-      ctx.restore();
-
-      // Draw ropes — electric neon style
-      ctx.save();
-      ctx.lineCap = "round";
-      const drawRopeVisual = (ax: number, ay: number, ex: number, ey: number) => {
-        // Anchor beam
-        ctx.fillStyle = "#1a0a00";
-        ctx.beginPath(); ctx.roundRect(ax - 22, ay - 10, 44, 14, 3); ctx.fill();
-        ctx.shadowColor = "#ffaa00"; ctx.shadowBlur = 10;
-        ctx.strokeStyle = "#ffaa00"; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.roundRect(ax - 22, ay - 10, 44, 14, 3); ctx.stroke();
-        ctx.shadowBlur = 0;
-        // Rope glow (outer)
-        ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 18;
-        ctx.strokeStyle = "#aa6600"; ctx.lineWidth = 8;
-        ctx.beginPath(); ctx.moveTo(ax, ay + 4); ctx.lineTo(ex, ey); ctx.stroke();
-        // Rope bright core
-        ctx.strokeStyle = "#ffdd00"; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(ax, ay + 4); ctx.lineTo(ex, ey); ctx.stroke();
-        ctx.shadowBlur = 0;
-        // White gleam
-        ctx.strokeStyle = "rgba(255,255,200,0.6)"; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(ax + 1, ay + 4); ctx.lineTo(ex + 1, ey); ctx.stroke();
-        // Grab knot
-        ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 16;
-        ctx.fillStyle = "#884400"; ctx.beginPath(); ctx.arc(ex, ey, 12, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#ffcc00"; ctx.beginPath(); ctx.arc(ex, ey, 7, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#ffee88"; ctx.beginPath(); ctx.arc(ex - 2, ey - 2, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.shadowBlur = 0;
-      };
-      for (const rope of st.ropes) {
-        drawRopeVisual(rope.x, rope.anchorY, rope.x, rope.anchorY + rope.length);
-      }
-      if (st.activeSwing) {
-        const sw = st.activeSwing;
-        // Draw from anchor to player grip (top of character body)
-        drawRopeVisual(sw.anchorX, sw.anchorY, 185, st.playerY + 10);
-      }
-      ctx.restore();
-
-      // Collectible coins
-      for (const c of st.coins) drawCoin(ctx, c, st.time);
-
-      // Particles — drawn by shape
-      ctx.shadowBlur = 0;
-      for (const p of st.particles) {
-        const alpha = Math.max(0.08, p.life / 70);
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = p.color;
-        if (p.shape === "circle") {
-          ctx.beginPath(); ctx.arc(p.x, p.y, (p.size||6)/2, 0, Math.PI*2); ctx.fill();
-        } else if (p.shape === "bone") {
-          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot || 0);
-          const r = (p.size||6)/2;
-          ctx.fillRect(-r, -r*0.35, r*2, r*0.7);
-          ctx.beginPath(); ctx.arc(-r, 0, r*0.5, 0, Math.PI*2); ctx.fill();
-          ctx.beginPath(); ctx.arc( r, 0, r*0.5, 0, Math.PI*2); ctx.fill();
+      // ── Character sprite — animated: run bob, jump, slash, slide ────────────
+      {
+        const charId = getSelectedCharacter();
+        // Pick frame: slash > jump > base (run/slide)
+        const getImg = (key: string) => {
+          const m = charImgsRef.current[key];
+          return m && m.complete && m.naturalWidth > 0 ? m : null;
+        };
+        const img = (st.saberSwing > 0 ? getImg(charId + "_slash") : null)
+          ?? (!st.onGround ? getImg(charId + "_jump") : null)
+          ?? getImg(charId);
+        if (img) {
+          const feetY = st.playerY + 90;
+          // Run cycle bob — subtle up/down oscillation while on ground
+          const runBob = (st.gameRunning && st.onGround && !st.sliding)
+            ? Math.sin(st.time * 0.38) * 4 : 0;
+          // Lean angle: forward lean when running, back lean when airborne, flat + forward rotate when sliding
+          const tilt = st.sliding ? 0.42
+            : (!st.onGround ? -0.07 : (st.gameRunning ? 0.05 : 0));
+          // Squash/stretch on landing impact
+          const landK = Math.min(1, (st.landImpact || 0) / 10);
+          const scaleX = 1 + 0.22 * landK;
+          const scaleY = Math.max(0.55, 1 - 0.28 * landK);
+          // Sprite size — squash down when sliding
+          const spriteH = st.sliding ? 68 : 118;
+          const spriteW = img.naturalWidth * (spriteH / img.naturalHeight);
+          ctx.save();
+          ctx.translate(185, feetY + runBob);
+          ctx.rotate(tilt);
+          ctx.scale(scaleX, scaleY);
+          ctx.drawImage(img, -spriteW / 2, -spriteH, spriteW, spriteH);
           ctx.restore();
-        } else {
-          ctx.fillRect(p.x, p.y, p.size||6, p.size||6);
         }
       }
-      ctx.globalAlpha = 1;
 
-      // Read hat from localStorage each frame so it updates live
-      const hat = (localStorage.getItem("fingerRunnerHat") || "none") as HatId;
-      // Squash & stretch from vertical motion / landing impact
-      let stretchY = 1, stretchX = 1;
-      if (st.gameRunning && !st.onGround) {
-        stretchY = 1 + Math.max(-0.10, Math.min(0.16, -st.velocity * 0.011));
-        stretchX = 1 - (stretchY - 1) * 0.55;
-      }
-      if (st.landImpact > 0) {
-        const k = st.landImpact / 10;
-        stretchY = 1 - 0.26 * k;
-        stretchX = 1 + 0.26 * k;
-      }
-      const saberDefRender = getSaberDef(getSaberLevel());
-      drawFinger(ctx, st.playerY, st.time, height, st.gameRunning, hat, stretchX, stretchY, saberDefRender, st.saberSwing);
-
-      // Dialog speech bubble above the character
-      if (st.dialog && st.dialog.life > 0) {
+      // Dialog speech bubble banner — imperative DOM update, no React re-render
+      if (dialogElRef.current) {
         const d = st.dialog;
-        const fadeIn = Math.min(1, (d.maxLife - d.life) / 8);
-        const fadeOut = Math.min(1, d.life / 20);
-        const bubbleY = st.playerY - 120 + Math.sin(st.time * 0.1) * 2;
-        drawSpeechBubble(ctx, 185, bubbleY, d.text, Math.min(fadeIn, fadeOut));
+        if (d && d.life > 0) {
+          const fadeIn = Math.min(1, (d.maxLife - d.life) / 8);
+          const fadeOut = Math.min(1, d.life / 20);
+          dialogElRef.current.textContent = d.text;
+          dialogElRef.current.style.opacity = String(Math.min(fadeIn, fadeOut));
+        } else {
+          dialogElRef.current.style.opacity = "0";
+        }
       }
-
-      ctx.restore(); // end screen shake
 
       // HUD — retro arcade style
       const AF = "'Press Start 2P', 'Courier New', monospace";
       ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
 
       // Score (6-digit zero-padded)
-      ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 16;
+      ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 22;
       ctx.fillStyle = "#00ffff"; ctx.font = `bold 44px ${AF}`;
       ctx.fillText(String(Math.floor(st.levelScore)).padStart(6, "0"), 20, 68);
       ctx.shadowBlur = 0;
 
       // Best score
-      ctx.shadowColor = "#ff00ff"; ctx.shadowBlur = 10;
+      ctx.shadowColor = "#ff00ff"; ctx.shadowBlur = 14;
       ctx.fillStyle = "#ff00ff"; ctx.font = `10px ${AF}`;
       ctx.fillText("BEST " + st.bestScore, 22, 90);
       ctx.shadowBlur = 0;
 
-      // Coin counter (top-right)
+      // Coin counter (top-right) — shows progress toward the next saber unlock
+      const nextSaber = getNextUnlockableSaber();
+      const coinText = nextSaber
+        ? "\u2605 " + st.coinBalance + " / " + nextSaber.cost
+        : "\u2605 " + st.coinBalance;
       ctx.textAlign = "right";
-      ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 12;
+      ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 16;
       ctx.fillStyle = "#ffee00"; ctx.font = `11px ${AF}`;
-      ctx.fillText("\u2605 " + st.coinBalance, width - 20, 90);
+      ctx.fillText(coinText, width - 20, 90);
       ctx.shadowBlur = 0; ctx.textAlign = "left";
 
-      // Level pill
+      // Level pill — chrome-edged for the Overdrive HUD refresh
       const lvlText = `LV${st.currentLevel}`;
       ctx.font = `10px ${AF}`;
       const lvlW = ctx.measureText(lvlText).width + 22;
       ctx.fillStyle = "rgba(0,0,0,0.75)";
-      ctx.strokeStyle = "#00ffcc"; ctx.lineWidth = 2;
+      ctx.strokeStyle = "#e6e6f0"; ctx.lineWidth = 2;
+      ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 6;
       ctx.beginPath(); ctx.roundRect(20, 102, lvlW, 22, 3); ctx.fill(); ctx.stroke();
-      ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 8;
+      ctx.shadowColor = "#00ffcc"; ctx.shadowBlur = 12;
       ctx.fillStyle = "#00ffcc"; ctx.textAlign = "center";
       ctx.fillText(lvlText, 20 + lvlW / 2, 118);
       ctx.shadowBlur = 0; ctx.textAlign = "left";
@@ -1988,13 +1635,51 @@ export default function Game() {
         ctx.shadowBlur = 0;
       }
 
+      // Active power-up status pills (below the progress bar)
+      if (st.gameRunning) {
+        let pillY = 152;
+        const drawStatusPill = (label: string, color: string, glow: string) => {
+          ctx.font = `9px ${AF}`;
+          const w = ctx.measureText(label).width + 18;
+          ctx.fillStyle = "rgba(0,0,0,0.75)";
+          ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.roundRect(barX, pillY, w, 18, 3); ctx.fill(); ctx.stroke();
+          ctx.shadowColor = glow; ctx.shadowBlur = 8;
+          ctx.fillStyle = color; ctx.textAlign = "left";
+          ctx.fillText(label, barX + 9, pillY + 13);
+          ctx.shadowBlur = 0;
+          pillY += 24;
+        };
+        if (st.magnetTimer > 0) drawStatusPill(`MAGNET ${Math.ceil(st.magnetTimer / 60)}s`, "#ff44ff", "rgba(255,68,255,0.8)");
+        if (st.multiplierTimer > 0) drawStatusPill(`2X SCORE ${Math.ceil(st.multiplierTimer / 60)}s`, "#ffee00", "rgba(255,238,0,0.8)");
+        if (st.shieldCharges > 0) drawStatusPill("SHIELD READY", "#44ddff", "rgba(68,221,255,0.8)");
+      }
+
+      // Combo / power-up pickup popup — floats up and fades near the top of the play area
+      if (st.comboPopup && st.comboPopup.life > 0) {
+        const cp = st.comboPopup;
+        const t = 1 - cp.life / cp.maxLife;
+        const alpha = Math.min(1, cp.life / 18);
+        const popY = height * 0.32 - t * 40;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = "center";
+        ctx.shadowColor = cp.color; ctx.shadowBlur = 18;
+        ctx.fillStyle = cp.color; ctx.font = `bold 20px ${AF}`;
+        ctx.fillText(cp.text, width / 2, popY);
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        ctx.textAlign = "left";
+      }
+
       // Game over panel — GAME OVER arcade style
       if (!st.gameRunning && !st.levelComplete && st.totalScore > 0) {
+        const deadPanelH = 296 + (st.lastRunBonus > 0 ? 28 : 0);
         ctx.fillStyle = "rgba(0,0,0,0.88)";
         ctx.strokeStyle = "#ff0044"; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.roundRect(width/2-220, height/2-148, 440, 296, 4); ctx.fill();
-        ctx.shadowColor = "#ff0044"; ctx.shadowBlur = 24; ctx.stroke(); ctx.shadowBlur = 0;
-        ctx.shadowColor = "#ff0044"; ctx.shadowBlur = 20;
+        ctx.beginPath(); ctx.roundRect(width/2-220, height/2-148, 440, deadPanelH, 4); ctx.fill();
+        ctx.shadowColor = "#ff0044"; ctx.shadowBlur = 32; ctx.stroke(); ctx.shadowBlur = 0;
+        ctx.shadowColor = "#ff0044"; ctx.shadowBlur = 26;
         ctx.fillStyle = "#ff0044"; ctx.textAlign = "center";
         ctx.font = `24px ${AF}`; ctx.fillText("GAME OVER", width/2, height/2 - 86);
         ctx.shadowBlur = 0;
@@ -2004,14 +1689,21 @@ export default function Game() {
         ctx.fillText(`${Math.floor(st.levelScore)} / ${lvlDef.target} m`, width/2, height/2 - 24);
         ctx.fillStyle = "#555555"; ctx.font = `9px ${AF}`;
         ctx.fillText(`TOTAL: ${Math.floor(st.totalScore)} m`, width/2, height/2 + 6);
+        if (st.lastRunBonus > 0) {
+          ctx.shadowColor = "#4eff91"; ctx.shadowBlur = 10;
+          ctx.fillStyle = "#4eff91"; ctx.font = `9px ${AF}`;
+          ctx.fillText(`+${st.lastRunBonus} \u2605 RUN BONUS`, width/2, height/2 + 32);
+          ctx.shadowBlur = 0;
+        }
+        const bonusOff = st.lastRunBonus > 0 ? 28 : 0;
         if (Math.floor(st.totalScore) >= st.bestScore && st.totalScore > 5) {
           ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 16;
           ctx.fillStyle = "#ffee00"; ctx.font = `10px ${AF}`;
-          ctx.fillText("\u2605 NEW RECORD \u2605", width/2, height/2 + 46);
+          ctx.fillText("\u2605 NEW RECORD \u2605", width/2, height/2 + 46 + bonusOff);
           ctx.shadowBlur = 0;
         }
         ctx.fillStyle = "#444444"; ctx.font = `8px ${AF}`;
-        ctx.fillText("PRESS SPACE TO RETRY", width/2, height/2 + 106);
+        ctx.fillText("PRESS SPACE TO RETRY", width/2, height/2 + 106 + bonusOff);
         ctx.textAlign = "left";
       }
 
@@ -2026,7 +1718,10 @@ export default function Game() {
     };
 
     rafRef.current = requestAnimationFrame(loop);
-    setTimeout(() => { if (audioRef.current.enabled) startMusic(false); }, 650);
+    // Guard: skip start-menu music if bloomtest already launched a run
+    // (the run's own startLevel() call queues level music at +80ms, so this
+    // 650ms timeout would otherwise overwrite it with the menu track).
+    setTimeout(() => { if (audioRef.current.enabled && !isBloomTest) startMusic("start", false); }, 650);
 
     return () => {
       cancelAnimationFrame(rafRef.current);
@@ -2046,10 +1741,50 @@ export default function Game() {
       startLevel(st.currentLevel);
     }
   };
+  // ── Touch gestures ─────────────────────────────────────────────────────────
+  // Commit-on-threshold so a swipe never also fires a tap-jump: pointerdown
+  // only records the origin; dragging past SWIPE_THRESHOLD on the dominant axis
+  // commits swipe up=jump (held for variable height), down=slide, left/right=
+  // lane; a release under the threshold counts as a tap (jump / retry).
+  const onCanvasPointerDown = (e: ReactPointerEvent) => {
+    const t = touchRef.current;
+    t.active = true; t.startX = e.clientX; t.startY = e.clientY; t.consumed = false;
+  };
+  const onCanvasPointerMove = (e: ReactPointerEvent) => {
+    const t = touchRef.current;
+    if (!t.active || t.consumed) return;
+    const dx = e.clientX - t.startX; const dy = e.clientY - t.startY;
+    if (Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) return;
+    t.consumed = true;
+    if (Math.abs(dx) > Math.abs(dy)) moveLane(dx > 0 ? 1 : -1);
+    else if (dy < 0) { if (stateRef.current.gameRunning) jump(); }
+    else slide();
+  };
+  const onCanvasPointerUp = () => {
+    const t = touchRef.current;
+    const wasConsumed = t.consumed;
+    t.active = false; t.consumed = true;
+    releaseJump();
+    if (!wasConsumed) handleCanvasClick(); // pure tap
+  };
+  const onCanvasPointerCancel = () => {
+    touchRef.current.active = false; touchRef.current.consumed = true;
+    releaseJump();
+  };
   const handleToggleMusic = () => {
     const newVal = !audioRef.current.enabled;
-    audioRef.current.enabled = newVal; setMusicOn(newVal);
-    if (newVal) startMusic(stateRef.current.gameRunning); else stopMusic();
+    audioRef.current.enabled = newVal; setMusicOn(newVal); toggleMusic();
+    if (newVal) {
+      const st = stateRef.current;
+      const lvlDef = getLevelDef(st.currentLevel);
+      const themeId: MusicThemeId = st.gameRunning ? lvlDef.theme : (screen === "start" || screen === "wardrobe" ? "start" : lvlDef.theme);
+      startMusic(themeId, st.gameRunning, lvlDef.speedMult);
+    } else stopMusic();
+  };
+  const goToMenu = () => {
+    stopMusic();
+    if (audioRef.current.enabled) startMusic("start", false);
+    setScreen("start");
   };
   const handleEquipHat = (id: HatId) => {
     setEquippedHat(id); setEquippedHatState(id);
@@ -2064,15 +1799,15 @@ export default function Game() {
     owned.push(hat.id); setOwnedOutfits(owned); setOwnedState([...owned]);
     // Auto-equip the freshly bought outfit
     setEquippedHat(hat.id); setEquippedHatState(hat.id);
+    const _ach2 = checkAchievements(); (void _ach2);
   };
-  const handleUpgradeSaber = () => {
-    const cur = getSaberLevel();
-    if (cur >= SABERS.length) return;
-    const next = getSaberDef(cur + 1);
-    if (getCoins() < next.cost) return;
-    const newBal = getCoins() - next.cost;
-    setCoinsLS(newBal); setCoinBalanceState(newBal); stateRef.current.coinBalance = newBal;
-    setSaberLevelLS(next.tier); setSaberLevelState(next.tier);
+  const handleBuySaber = (tier: number) => {
+    if (!isSaberOwned(tier) && buySaber(tier)) {
+      setCoinBalanceState(getCoins());
+      setSaberLevelState(getSaberLevel());
+      stateRef.current.coinBalance = getCoins();
+      const _ach = checkAchievements(); (void _ach);
+    }
   };
   const handleToggleKids = () => {
     const v = !getKidsMode();
@@ -2083,6 +1818,14 @@ export default function Game() {
     setOwnedState(getOwnedOutfits());
     setSaberLevelState(getSaberLevel());
     setScreen("wardrobe");
+  };
+  const openCharacterSelect = () => {
+    setSelectedCharacterState(getSelectedCharacter());
+    setScreen("character");
+  };
+  const handlePickCharacter = (id: string) => {
+    setSelectedCharacterLS(id); setSelectedCharacterState(id);
+    initAudio(); playCharacterVoice(id);
   };
 
   // ── Shared button style helpers ────────────────────────────────────────────
@@ -2103,10 +1846,35 @@ export default function Game() {
     alignItems:"center", justifyContent:"center", zIndex:10, fontFamily:font,
   };
 
+  const currentTheme = getLevelDef(currentLevel).theme as unknown as Theme3D;
+  const currentChar = getCharacterDef(selectedCharacter);
+  const currentSaber = getSaberDef(saberLevel);
+
   return (
-    <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#000008", touchAction:"none" }}>
-      <canvas ref={canvasRef} style={{ display:"block" }} onPointerDown={handleCanvasClick}
-        onPointerUp={() => releaseJump()} onPointerLeave={() => releaseJump()} onPointerCancel={() => releaseJump()} />
+    <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
+      <Scene3DBoundary>
+        <Suspense fallback={null}>
+          <Scene3D
+            stateRef={stateRef as unknown as React.MutableRefObject<GameSceneState>}
+            sizeRef={sizeRef}
+            theme={currentTheme}
+            hat={equippedHat}
+            saber={{ color: currentChar.saberColor, glow: currentChar.saberGlow, reach: currentSaber.reach }}
+            skin={{ backHand: currentChar.backHand, finger: currentChar.finger, knuckle: currentChar.knuckle, nail: currentChar.nail }}
+            accent={currentChar.saberGlow}
+          />
+        </Suspense>
+      </Scene3DBoundary>
+      <canvas ref={canvasRef} style={{ display:"block", position:"absolute", inset:0, zIndex:2, touchAction:"none" }}
+        onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove}
+        onPointerUp={onCanvasPointerUp} onPointerLeave={onCanvasPointerCancel} onPointerCancel={onCanvasPointerCancel} />
+      <div ref={dialogElRef} style={{
+        position:"absolute", top:"18%", left:"50%", transform:"translateX(-50%)", zIndex:6,
+        fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:"0.62rem", color:"#00ffcc",
+        textShadow:"0 0 8px #00ffcc", background:"rgba(0,0,18,0.75)", border:"2px solid #00ffcc",
+        borderRadius:4, padding:"8px 16px", maxWidth:"70vw", textAlign:"center", opacity:0,
+        transition:"opacity 0.15s", pointerEvents:"none",
+      }} />
       <div className="arcade-vignette" />
       <div className="arcade-scanlines" />
 
@@ -2120,7 +1888,7 @@ export default function Game() {
             {STORY_INTRO}
           </p>
           <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff88ff", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff88ff", textAlign:"center" }}>
-            TAP / SPACE TO JUMP · DOUBLE TAP = DOUBLE JUMP
+            SWIPE ↑ JUMP · ↓ SLIDE · ← → SWITCH LANES · TAP = JUMP
           </p>
           <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff5555", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff5555", textAlign:"center" }}>
             ⚔ SLASH BUTTON / F TO SWING THE LIGHTSABER
@@ -2129,13 +1897,21 @@ export default function Game() {
             {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked · collect ★ coins
           </p>
           <div style={{ display:"flex", gap:16, marginTop:20 }}>
-            <button onClick={() => startLevel(1)} className="retro-btn"
+            <button onClick={() => startLevel(1)} className="retro-btn retro-btn-chrome"
               style={{ padding:"14px 30px", fontSize:"0.78rem", fontFamily:retroFont,
                 background:"transparent", color:"#ff4444",
                 border:"3px solid #ff4444",
                 boxShadow:"0 0 14px #ff4444, inset 0 0 14px rgba(255,68,68,0.08)",
                 cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
               ▶ START
+            </button>
+            <button onClick={openCharacterSelect} className="retro-btn"
+              style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
+                background:"transparent", color:"#3dff5e",
+                border:"3px solid #3dff5e",
+                boxShadow:"0 0 14px #3dff5e, inset 0 0 14px rgba(61,255,94,0.08)",
+                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
+              RUNNER
             </button>
             <button onClick={openWardrobe} className="retro-btn"
               style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
@@ -2146,6 +1922,17 @@ export default function Game() {
               WARDROBE
             </button>
           </div>
+          {/* Endless mode */}
+          {isEndlessUnlocked() && (
+            <button onClick={() => startLevel(9)} className="retro-btn"
+              style={{ marginTop:12, padding:"10px 20px", fontSize:"0.62rem", fontFamily:retroFont,
+                background:"rgba(255,68,68,0.10)", color:"#ff4444",
+                border:"3px solid #ff4444",
+                boxShadow:"0 0 14px rgba(255,68,68,0.35)",
+                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
+              ∞ ENDLESS MODE
+            </button>
+          )}
           {/* Easy / kids mode toggle */}
           <button onClick={handleToggleKids} className="retro-btn"
             style={{ marginTop:14, padding:"10px 20px", fontSize:"0.62rem", fontFamily:retroFont,
@@ -2194,113 +1981,33 @@ export default function Game() {
 
       {/* ── Wardrobe screen ── */}
       {screen === "wardrobe" && (
-        <div style={{ ...overlay, background:"rgba(0,0,10,0.94)" }}>
-          <div style={{ background:"rgba(0,255,204,0.03)", border:"2px solid #00ffcc44", boxShadow:"0 0 30px rgba(0,255,204,0.12)", borderRadius:3, padding:"26px 32px", maxWidth:540, width:"90%" }}>
-            <h2 style={{ fontSize:"0.85rem", margin:"0 0 6px 0", color:"#00ffcc", textAlign:"center", fontFamily:retroFont, textShadow:"0 0 12px #00ffcc", letterSpacing:"0.06em" }}>WARDROBE</h2>
-            <p style={{ color:"#555", textAlign:"center", margin:"0 0 12px 0", fontFamily:font, fontSize:"0.75rem" }}>Level up or spend ★ coins to unlock outfits</p>
-            <div style={{ textAlign:"center", margin:"0 0 14px 0" }}>
-              <span style={{ display:"inline-block", background:"rgba(255,238,0,0.08)", border:"2px solid #ffee00",
-                boxShadow:"0 0 10px rgba(255,238,0,0.25)", borderRadius:2, padding:"5px 16px", fontSize:"0.72rem", fontFamily:retroFont, color:"#ffee00" }}>
-                ★ {coinBalance} COINS
-              </span>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, maxHeight:"50vh", overflowY:"auto" }}>
-              {HATS.map(hat => {
-                const owned = isHatUnlocked(hat, ownedOutfits);
-                const isCoin = hat.cost != null;
-                const equipped = equippedHat === hat.id;
-                const affordable = coinBalance >= (hat.cost ?? 0);
-                const subtitle = isCoin
-                  ? (owned ? "Owned" : `Buy: ★ ${hat.cost}`)
-                  : (hat.unlockLevel === 0 ? "Always available" : `Unlock: Level ${hat.unlockLevel}`);
-                return (
-                  <div key={hat.id}
-                    style={{ background: equipped ? "rgba(0,255,204,0.07)" : "rgba(255,255,255,0.02)",
-                      border: `2px solid ${equipped ? "#00ffcc" : owned ? "#333" : "#222"}`,
-                      boxShadow: equipped ? "0 0 10px rgba(0,255,204,0.22)" : "none",
-                      borderRadius:3, padding:"11px 13px", display:"flex", alignItems:"center", gap:10,
-                      opacity: owned ? 1 : 0.55 }}>
-                    <span style={{ fontSize:"1.8rem" }}>{hat.emoji}</span>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontWeight:"bold", fontSize:"0.62rem", fontFamily:retroFont, color:"#fff", lineHeight:1.9 }}>{hat.name}</div>
-                      <div style={{ fontSize:"0.6rem", color:"#555", fontFamily:font }}>{subtitle}</div>
-                    </div>
-                    {owned ? (
-                      <button onClick={() => handleEquipHat(hat.id)} className="retro-btn"
-                        style={{ padding:"5px 10px", fontSize:"0.58rem", fontFamily:retroFont,
-                          background: equipped ? "rgba(0,255,204,0.18)" : "transparent",
-                          color: equipped ? "#00ffcc" : "#777",
-                          border:`2px solid ${equipped ? "#00ffcc" : "#444"}`,
-                          boxShadow: equipped ? "0 0 8px rgba(0,255,204,0.35)" : "none",
-                          cursor:"pointer", lineHeight:2 }}>
-                        {equipped ? "✓ ON" : "EQUIP"}
-                      </button>
-                    ) : isCoin ? (
-                      <button onClick={() => affordable && handleBuyOutfit(hat)} className={affordable ? "retro-btn" : undefined}
-                        disabled={!affordable}
-                        style={{ padding:"5px 10px", fontSize:"0.58rem", fontFamily:retroFont,
-                          background: affordable ? "rgba(255,238,0,0.12)" : "transparent",
-                          color: affordable ? "#ffee00" : "#444",
-                          border:`2px solid ${affordable ? "#ffee00" : "#333"}`,
-                          boxShadow: affordable ? "0 0 8px rgba(255,238,0,0.25)" : "none",
-                          cursor: affordable ? "pointer" : "not-allowed", lineHeight:2 }}>
-                        ★ {hat.cost}
-                      </button>
-                    ) : (
-                      <span style={{ fontSize:"0.52rem", color:"#444", fontFamily:retroFont, lineHeight:2 }}>🔒 LV{hat.unlockLevel}</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {/* Lightsaber upgrades */}
-            <h3 style={{ fontSize:"0.7rem", margin:"18px 0 4px 0", color:"#ff5555", textAlign:"center", fontFamily:retroFont, textShadow:"0 0 10px #ff5555", letterSpacing:"0.06em" }}>⚔ LIGHTSABER</h3>
-            <p style={{ color:"#555", textAlign:"center", margin:"0 0 10px 0", fontFamily:font, fontSize:"0.72rem" }}>Slash obstacles mid-run — upgrade for a longer, brighter blade</p>
-            <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
-              {SABERS.map(s => {
-                const owned = saberLevel >= s.tier;
-                const equipped = saberLevel === s.tier;
-                const isNext = s.tier === saberLevel + 1;
-                const affordable = coinBalance >= s.cost;
-                return (
-                  <div key={s.tier}
-                    style={{ width:96, background: equipped ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.015)",
-                      border:`2px solid ${equipped ? s.color : owned ? "#333" : isNext ? s.color+"88" : "#222"}`,
-                      boxShadow: equipped ? `0 0 12px ${s.color}66` : "none",
-                      borderRadius:3, padding:"10px 6px", display:"flex", flexDirection:"column", alignItems:"center", gap:6,
-                      opacity: owned || isNext ? 1 : 0.45 }}>
-                    {/* blade preview */}
-                    <div style={{ width:5, height:38, borderRadius:3, background:s.color,
-                      boxShadow:`0 0 10px ${s.glow}, 0 0 18px ${s.glow}` }} />
-                    <div style={{ fontSize:"0.46rem", fontFamily:retroFont, color:"#ccc", lineHeight:1.8, textAlign:"center" }}>{s.name.replace(" Saber","")}</div>
-                    {equipped ? (
-                      <span style={{ fontSize:"0.46rem", fontFamily:retroFont, color:s.color, lineHeight:1.8 }}>✓ ACTIVE</span>
-                    ) : owned ? (
-                      <span style={{ fontSize:"0.46rem", fontFamily:retroFont, color:"#666", lineHeight:1.8 }}>OWNED</span>
-                    ) : isNext ? (
-                      <button onClick={() => affordable && handleUpgradeSaber()} className={affordable ? "retro-btn" : undefined}
-                        disabled={!affordable}
-                        style={{ padding:"4px 8px", fontSize:"0.46rem", fontFamily:retroFont,
-                          background: affordable ? "rgba(255,238,0,0.12)" : "transparent",
-                          color: affordable ? "#ffee00" : "#444",
-                          border:`2px solid ${affordable ? "#ffee00" : "#333"}`,
-                          cursor: affordable ? "pointer" : "not-allowed", lineHeight:1.8 }}>
-                        ★ {s.cost}
-                      </button>
-                    ) : (
-                      <span style={{ fontSize:"0.5rem", fontFamily:retroFont, color:"#444", lineHeight:1.8 }}>🔒</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <button onClick={() => setScreen("start")} className="retro-btn"
-              style={{ marginTop:18, width:"100%", padding:"11px", fontSize:"0.66rem", fontFamily:retroFont,
-                background:"transparent", color:"#444", border:"2px solid #333", cursor:"pointer", letterSpacing:"0.05em" }}>
-              ← BACK
-            </button>
-          </div>
-        </div>
+        <Suspense fallback={null}>
+          <WardrobeScreen
+            coinBalance={coinBalance}
+            equippedHat={equippedHat}
+            ownedOutfits={ownedOutfits}
+            saberLevel={saberLevel}
+            musicOn={musicOn}
+            onEquipHat={handleEquipHat}
+            onBuyOutfit={handleBuyOutfit}
+            onBuySaber={handleBuySaber}
+            onToggleMusic={handleToggleMusic}
+            onToggleKids={handleToggleKids}
+            onClose={() => setScreen("start")}
+          />
+        </Suspense>
+      )}
+
+      {/* ── Character select screen ── */}
+      {screen === "character" && (
+        <Suspense fallback={null}>
+          <CharacterSelectScreen
+            selectedId={selectedCharacter}
+            onPick={handlePickCharacter}
+            onStart={() => startLevel(1)}
+            onClose={() => setScreen("start")}
+          />
+        </Suspense>
       )}
 
       {/* ── Level Complete screen ── */}
@@ -2370,7 +2077,7 @@ export default function Game() {
                   ★ KEEP GOING
                 </button>
               )}
-              <button onClick={() => setScreen("start")} className="retro-btn"
+              <button onClick={goToMenu} className="retro-btn"
                 style={{ padding:"13px 16px", fontSize:"0.68rem", fontFamily:retroFont,
                   background:"transparent", color:"#444", border:"2px solid #333", cursor:"pointer", lineHeight:1.8 }}>
                 MENU
@@ -2382,7 +2089,7 @@ export default function Game() {
 
       {/* ── On-screen SLASH button (during play) ── */}
       {screen === "playing" && (() => {
-        const s = getSaberDef(saberLevel);
+        const s = { color: currentChar.saberColor, glow: currentChar.saberGlow };
         return (
           <button
             onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); slash(); }}
@@ -2400,6 +2107,31 @@ export default function Game() {
           </button>
         );
       })()}
+
+      {/* ── On-screen FART BOOST button (during play) ── */}
+      {screen === "playing" && (
+        <button
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); fartBoost(); }}
+          className="retro-btn"
+          disabled={!boostReady && !boostActive}
+          style={{ position:"absolute", bottom:24, left:24, zIndex:25,
+            width:96, height:96, borderRadius:"50%",
+            fontSize:"0.5rem", fontFamily:retroFont, touchAction:"none",
+            background: boostActive
+              ? "radial-gradient(circle at 50% 40%, rgba(124,252,0,0.4), rgba(0,0,0,0.85))"
+              : boostReady
+                ? "radial-gradient(circle at 50% 40%, rgba(61,255,94,0.22), rgba(0,0,0,0.85))"
+                : "radial-gradient(circle at 50% 40%, rgba(51,51,51,0.25), rgba(0,0,0,0.9))",
+            color:"#fff",
+            border:`3px solid ${boostActive ? "#7CFC00" : boostReady ? "#3dff5e" : "#333"}`,
+            boxShadow: boostActive ? "0 0 22px #7CFC00" : boostReady ? "0 0 16px #3dff5e" : "none",
+            opacity: (boostReady || boostActive) ? 1 : 0.5,
+            cursor: boostReady ? "pointer" : "default", letterSpacing:"0.02em", lineHeight:1.5,
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3 }}>
+          <span style={{ fontSize:"1.5rem", lineHeight:1 }}>💨</span>
+          {boostActive ? "BOOST!" : boostReady ? "FART" : "···"}
+        </button>
+      )}
 
       {/* ── Music toggle ── */}
       <button onClick={handleToggleMusic} className="retro-btn"
