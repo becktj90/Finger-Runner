@@ -17,26 +17,38 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # vite.config.ts requires these; custom domain (play.beckify.com) serves
+      # from the root, so the base path is "/".
+      PORT: "3000"
+      BASE_PATH: "/"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 10
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build project
-        run: pnpm build --prefix artifacts/finger-runner
+      - name: Build finger-runner
+        # Build only the finger-runner package's own `vite build` script.
+        # The root `build` script runs a workspace-wide typecheck that includes
+        # unrelated packages (api-server, etc.), which is not needed to ship the
+        # game and would fail the deploy.
+        run: pnpm --filter @workspace/finger-runner-engine run build
+
+      - name: Preserve custom domain
+        run: cp CNAME artifacts/finger-runner/dist/public/CNAME
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
