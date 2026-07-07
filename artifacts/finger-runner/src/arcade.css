@@ -41,6 +41,14 @@
 .retro-btn {
   transition: filter 0.05s, transform 0.05s;
   cursor: pointer;
+  position: relative;
 }
-.retro-btn:hover  { filter: brightness(1.35) drop-shadow(0 0 8px currentColor); }
+.retro-btn:hover  { filter: brightness(1.4) drop-shadow(0 0 10px currentColor); }
 .retro-btn:active { transform: translateY(2px); filter: brightness(0.8); }
+
+/* Chrome/metallic sheen used sparingly on key CTA buttons for the
+   Neon Synthwave Overdrive redesign — a thin diagonal highlight, not a
+   full material change, so it stays cheap and readable at small sizes. */
+.retro-btn-chrome {
+  background-image: linear-gradient(135deg, rgba(230,230,240,0.16) 0%, rgba(230,230,240,0) 30%);
+}
