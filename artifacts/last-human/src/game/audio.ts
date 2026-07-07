@@ -2,6 +2,9 @@ export class AudioSystem {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private droneGain: GainNode | null = null;
+  private musicGain: GainNode | null = null;
+  private musicBuffer: AudioBuffer | null = null;
+  private musicSource: AudioBufferSourceNode | null = null;
   private muted = false;
   private started = false;
 
@@ -9,6 +12,9 @@ export class AudioSystem {
     this.muted = m;
     if (this.master) {
       this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.now(), 0.05);
+    }
+    if (this.musicGain) {
+      this.musicGain.gain.setTargetAtTime(m ? 0 : 0.7, this.now(), 0.05);
     }
   }
 
@@ -34,11 +40,45 @@ export class AudioSystem {
       this.master = this.ctx.createGain();
       this.master.gain.value = this.muted ? 0 : 0.9;
       this.master.connect(this.ctx.destination);
+
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.value = this.muted ? 0 : 0.7;
+      this.musicGain.connect(this.master);
+
       this.started = true;
       this.startDrone();
+      this.loadMusic();
     } catch {
       this.ctx = null;
     }
+  }
+
+  private async loadMusic() {
+    if (!this.ctx || !this.musicGain) return;
+    try {
+      const response = await fetch("/music.mp3");
+      const arrayBuffer = await response.arrayBuffer();
+      this.musicBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+      this.playMusic();
+    } catch (e) {
+      console.error("Failed to load music:", e);
+    }
+  }
+
+  private playMusic() {
+    if (!this.ctx || !this.musicGain || !this.musicBuffer) return;
+    if (this.musicSource) {
+      try {
+        this.musicSource.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.musicSource = this.ctx.createBufferSource();
+    this.musicSource.buffer = this.musicBuffer;
+    this.musicSource.loop = true;
+    this.musicSource.connect(this.musicGain);
+    this.musicSource.start(0);
   }
 
   private startDrone() {
@@ -137,6 +177,13 @@ export class AudioSystem {
   }
 
   destroy() {
+    if (this.musicSource) {
+      try {
+        this.musicSource.stop();
+      } catch {
+        /* ignore */
+      }
+    }
     if (this.ctx) {
       try {
         void this.ctx.close();
@@ -147,6 +194,8 @@ export class AudioSystem {
     this.ctx = null;
     this.master = null;
     this.droneGain = null;
+    this.musicGain = null;
+    this.musicSource = null;
     this.started = false;
   }
 }
