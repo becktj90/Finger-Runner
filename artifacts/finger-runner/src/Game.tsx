@@ -1891,69 +1891,76 @@ export default function Game() {
         onPointerUp={onCanvasPointerUp} onPointerLeave={onCanvasPointerCancel} onPointerCancel={onCanvasPointerCancel} />
 
       {/* Mobile control buttons for lane movement - always visible during gameplay */}
-      {stateRef.current.gameRunning && (
+      {screen === "game" && (
         <div style={{
           position: "fixed",
-          bottom: "30px",
-          left: "10px",
-          right: "10px",
+          bottom: "80px",
+          left: "12px",
+          right: "12px",
           display: "flex",
-          gap: "8px",
+          gap: "10px",
           justifyContent: "center",
           alignItems: "center",
-          zIndex: 10,
+          zIndex: 7,
           pointerEvents: "auto",
-          padding: "0 10px",
         }}>
           <button
             onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              moveLane(-1);
+              if (stateRef.current.gameRunning) moveLane(-1);
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              if (stateRef.current.gameRunning) moveLane(-1);
             }}
             style={{
               flex: 1,
-              maxWidth: "120px",
-              padding: "16px 12px",
-              background: "rgba(255, 80, 80, 0.95)",
-              border: "3px solid #ff4040",
+              maxWidth: "140px",
+              padding: "14px 16px",
+              background: "rgba(255, 60, 60, 1)",
+              border: "3px solid #ff2020",
               color: "white",
-              fontSize: "18px",
+              fontSize: "16px",
               fontWeight: "bold",
-              borderRadius: "12px",
-              cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(255, 64, 64, 0.5)",
+              borderRadius: "10px",
+              boxShadow: "0 6px 16px rgba(255, 0, 0, 0.6)",
               userSelect: "none",
               WebkitUserSelect: "none" as any,
               WebkitTouchCallout: "none" as any,
+              opacity: stateRef.current.gameRunning ? 1 : 0.6,
             }}
           >
-            ← LEFT
+            ◀ LEFT
           </button>
           <button
             onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              moveLane(1);
+              if (stateRef.current.gameRunning) moveLane(1);
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              if (stateRef.current.gameRunning) moveLane(1);
             }}
             style={{
               flex: 1,
-              maxWidth: "120px",
-              padding: "16px 12px",
-              background: "rgba(80, 80, 255, 0.95)",
-              border: "3px solid #4040ff",
+              maxWidth: "140px",
+              padding: "14px 16px",
+              background: "rgba(60, 60, 255, 1)",
+              border: "3px solid #2020ff",
               color: "white",
-              fontSize: "18px",
+              fontSize: "16px",
               fontWeight: "bold",
-              borderRadius: "12px",
-              cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(64, 64, 255, 0.5)",
+              borderRadius: "10px",
+              boxShadow: "0 6px 16px rgba(0, 0, 255, 0.6)",
               userSelect: "none",
               WebkitUserSelect: "none" as any,
               WebkitTouchCallout: "none" as any,
+              opacity: stateRef.current.gameRunning ? 1 : 0.6,
             }}
           >
-            RIGHT →
+            RIGHT ▶
           </button>
         </div>
       )}
