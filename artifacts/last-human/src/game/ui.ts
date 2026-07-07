@@ -44,6 +44,7 @@ export interface UIHandlers {
   onShowScores: () => void;
   onCloseCodex: () => void;
   onBoost: (held: boolean) => void;
+  onToggleFullscreen: () => void;
 }
 
 function el(tag: string, cls?: string, html?: string): HTMLElement {
@@ -184,9 +185,16 @@ export class UI {
     ) as HTMLButtonElement;
     this.muteBtn = mute;
     mute.onclick = () => this.h.onToggleMute();
+    const fullscreen = el(
+      "button",
+      "lh-btn lh-btn--ghost",
+      "⛶ Fullscreen",
+    ) as HTMLButtonElement;
+    fullscreen.onclick = () => this.h.onToggleFullscreen();
     btns2.appendChild(scores);
     btns2.appendChild(codex);
     btns2.appendChild(mute);
+    btns2.appendChild(fullscreen);
     wrap.appendChild(btns2);
 
     const help = el(

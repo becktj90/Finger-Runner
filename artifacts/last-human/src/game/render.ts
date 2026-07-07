@@ -362,6 +362,42 @@ export class Renderer {
 
     ctx.rotate(p.angle + Math.PI / 2);
 
+    // running legs animation
+    const speed = Math.hypot(p.vx, p.vy);
+    const isRunning = speed > 10;
+    if (isRunning) {
+      ctx.save();
+      ctx.strokeStyle = "#a8c5e0";
+      ctx.lineWidth = 2;
+      const legPhase = (t * speed * 0.5) % (Math.PI * 2);
+      const legSwing = Math.sin(legPhase) * 6;
+
+      // left leg
+      ctx.beginPath();
+      ctx.moveTo(-4, 8);
+      ctx.lineTo(-4 + legSwing, 14);
+      ctx.stroke();
+
+      // right leg
+      ctx.beginPath();
+      ctx.moveTo(4, 8);
+      ctx.lineTo(4 - legSwing, 14);
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      // standing legs
+      ctx.strokeStyle = "#a8c5e0";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-4, 8);
+      ctx.lineTo(-4, 14);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(4, 8);
+      ctx.lineTo(4, 14);
+      ctx.stroke();
+    }
+
     // red light saber
     ctx.save();
     ctx.globalCompositeOperation = "lighter";

@@ -130,6 +130,7 @@ export class Game {
       onShowScores: () => this.ui.showScores(this.save),
       onCloseCodex: () => this.goToMenu(),
       onBoost: (held) => this.input.setBoostButton(held),
+      onToggleFullscreen: () => this.toggleFullscreen(),
     });
 
     window.addEventListener("resize", this.resize);
@@ -164,6 +165,27 @@ export class Game {
     this.save.settings.muted = m;
     writeSave(this.save);
     this.ui.setMuteLabel(m);
+  }
+
+  private toggleFullscreen() {
+    const elem = document.documentElement;
+    if (!document.fullscreenElement) {
+      elem.requestFullscreen?.().catch(() => {
+        try {
+          (elem as any).webkitRequestFullscreen?.();
+        } catch {
+          /* ignore */
+        }
+      });
+    } else {
+      document.exitFullscreen?.().catch(() => {
+        try {
+          (document as any).webkitExitFullscreen?.();
+        } catch {
+          /* ignore */
+        }
+      });
+    }
   }
 
   private resize = () => {
