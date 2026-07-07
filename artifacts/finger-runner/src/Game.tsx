@@ -66,7 +66,7 @@ const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice dur
 const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
-const SWIPE_THRESHOLD = 28;     // px a touch must travel to commit a swipe gesture
+const SWIPE_THRESHOLD = 18;     // px a touch must travel to commit a swipe gesture (lowered for better mobile feel)
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -1773,7 +1773,11 @@ export default function Game() {
     const dx = e.clientX - t.startX; const dy = e.clientY - t.startY;
     if (Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) return;
     t.consumed = true;
-    if (Math.abs(dx) > Math.abs(dy)) moveLane(dx > 0 ? 1 : -1);
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const direction = dx > 0 ? 1 : -1;
+      console.log(`[Finger Runner] Swipe detected: ${direction > 0 ? 'RIGHT' : 'LEFT'}`);
+      moveLane(direction);
+    }
     else if (dy < 0) { if (stateRef.current.gameRunning) jump(); }
     else slide();
   };
@@ -1885,6 +1889,55 @@ export default function Game() {
       <canvas ref={canvasRef} style={{ display:"block", position:"absolute", inset:0, zIndex:2, touchAction:"none" }}
         onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove}
         onPointerUp={onCanvasPointerUp} onPointerLeave={onCanvasPointerCancel} onPointerCancel={onCanvasPointerCancel} />
+
+      {/* Mobile control buttons for lane movement */}
+      {stateRef.current.gameRunning && (
+        <div style={{
+          position: "fixed",
+          bottom: "20px",
+          left: "20px",
+          right: "20px",
+          display: "flex",
+          gap: "10px",
+          justifyContent: "space-between",
+          zIndex: 5,
+          pointerEvents: "auto",
+        }}>
+          <button
+            onPointerDown={() => { moveLane(-1); }}
+            style={{
+              flex: 1,
+              padding: "12px",
+              background: "rgba(255, 100, 100, 0.7)",
+              border: "2px solid #ff6464",
+              color: "white",
+              fontSize: "20px",
+              fontWeight: "bold",
+              borderRadius: "8px",
+              cursor: "pointer",
+            }}
+          >
+            ← LEFT
+          </button>
+          <button
+            onPointerDown={() => { moveLane(1); }}
+            style={{
+              flex: 1,
+              padding: "12px",
+              background: "rgba(100, 100, 255, 0.7)",
+              border: "2px solid #6464ff",
+              color: "white",
+              fontSize: "20px",
+              fontWeight: "bold",
+              borderRadius: "8px",
+              cursor: "pointer",
+            }}
+          >
+            RIGHT →
+          </button>
+        </div>
+      )}
+
       <div ref={dialogElRef} style={{
         position:"absolute", top:"18%", left:"50%", transform:"translateX(-50%)", zIndex:6,
         fontFamily:"'Press Start 2P', 'Courier New', monospace", fontSize:"0.62rem", color:"#00ffcc",
