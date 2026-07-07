@@ -1585,15 +1585,23 @@ export default function Game() {
       const AF = "'Press Start 2P', 'Courier New', monospace";
       ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
 
-      // Score (6-digit zero-padded)
-      ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 22;
-      ctx.fillStyle = "#00ffff"; ctx.font = `bold 44px ${AF}`;
+      // Score (6-digit zero-padded) — dark stroke + softer glow keeps the digits
+      // readable against the pale Ghibli sky (previous 22px cyan bloom smeared
+      // into unreadable green mush over the daylight backdrop).
+      ctx.font = `bold 44px ${AF}`;
+      ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,20,0.85)";
+      ctx.strokeText(String(Math.floor(st.levelScore)).padStart(6, "0"), 20, 68);
+      ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 8;
+      ctx.fillStyle = "#00ffff";
       ctx.fillText(String(Math.floor(st.levelScore)).padStart(6, "0"), 20, 68);
       ctx.shadowBlur = 0;
 
-      // Best score
-      ctx.shadowColor = "#ff00ff"; ctx.shadowBlur = 14;
-      ctx.fillStyle = "#ff00ff"; ctx.font = `10px ${AF}`;
+      // Best score — same treatment, smaller footprint
+      ctx.font = `10px ${AF}`;
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,20,0.85)";
+      ctx.strokeText("BEST " + st.bestScore, 22, 90);
+      ctx.shadowColor = "#ff00ff"; ctx.shadowBlur = 5;
+      ctx.fillStyle = "#ff00ff";
       ctx.fillText("BEST " + st.bestScore, 22, 90);
       ctx.shadowBlur = 0;
 
@@ -1896,8 +1904,11 @@ export default function Game() {
           <p style={{ fontSize:"0.52rem", fontFamily:retroFont, margin:"0 0 4px", color:"#555", lineHeight:2.5, textAlign:"center" }}>
             {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked · collect ★ coins
           </p>
-          <div style={{ display:"flex", gap:16, marginTop:20 }}>
-            <button onClick={() => startLevel(1)} className="retro-btn retro-btn-chrome"
+          <div style={{ display:"flex", gap:16, marginTop:20, flexWrap:"wrap", justifyContent:"center" }}>
+            {/* Primary path: START routes through character select so first-time
+                players actually see Apollo/Rocco/Santi and their taglines
+                before jumping into gameplay. */}
+            <button onClick={openCharacterSelect} className="retro-btn retro-btn-chrome"
               style={{ padding:"14px 30px", fontSize:"0.78rem", fontFamily:retroFont,
                 background:"transparent", color:"#ff4444",
                 border:"3px solid #ff4444",
@@ -1905,13 +1916,14 @@ export default function Game() {
                 cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
               ▶ START
             </button>
-            <button onClick={openCharacterSelect} className="retro-btn"
+            {/* Quick-play with the last selected runner */}
+            <button onClick={() => startLevel(1)} className="retro-btn"
               style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
                 background:"transparent", color:"#3dff5e",
                 border:"3px solid #3dff5e",
                 boxShadow:"0 0 14px #3dff5e, inset 0 0 14px rgba(61,255,94,0.08)",
                 cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
-              RUNNER
+              QUICK PLAY
             </button>
             <button onClick={openWardrobe} className="retro-btn"
               style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
