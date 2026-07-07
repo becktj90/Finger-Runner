@@ -41,7 +41,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'artifacts/finger-runner/dist'
+          path: 'artifacts/finger-runner/dist/public'
 
   deploy:
     environment:
