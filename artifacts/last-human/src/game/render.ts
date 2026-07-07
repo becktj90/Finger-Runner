@@ -362,6 +362,28 @@ export class Renderer {
 
     ctx.rotate(p.angle + Math.PI / 2);
 
+    // red light saber
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const saberLength = 28 + Math.sin(t * 6) * 2;
+    const saberGrd = ctx.createLinearGradient(0, -13, 0, -13 - saberLength);
+    saberGrd.addColorStop(0, "rgba(255, 100, 100, 0.9)");
+    saberGrd.addColorStop(0.4, "rgba(255, 50, 50, 0.7)");
+    saberGrd.addColorStop(0.7, "rgba(200, 20, 20, 0.4)");
+    saberGrd.addColorStop(1, "rgba(200, 20, 20, 0)");
+    ctx.strokeStyle = saberGrd;
+    ctx.lineWidth = 4;
+    ctx.shadowColor = "#ff3333";
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.moveTo(0, -13);
+    ctx.lineTo(0, -13 - saberLength);
+    ctx.stroke();
+    ctx.lineWidth = 6;
+    ctx.globalAlpha = 0.4;
+    ctx.stroke();
+    ctx.restore();
+
     // thruster flame
     if (p.thrusting) {
       ctx.save();
