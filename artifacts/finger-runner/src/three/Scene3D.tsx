@@ -6,7 +6,7 @@
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
-import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 import {
   FINGER_CENTER_X, LANE_X, LANE_OFFSET, worldZ, worldY, roadYOld, THEME_COLORS,
@@ -291,27 +291,27 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
             <meshStandardMaterial color="#888888" />
           </mesh>
           <mesh ref={(r) => { if (r) cylRefs.current[i] = r; }} castShadow>
-            <cylinderGeometry args={[1, 1, 1, 12]} />
+            <cylinderGeometry args={[1, 1, 1, 20]} />
             <meshStandardMaterial color="#888888" />
           </mesh>
           <mesh ref={(r) => { if (r) coneRefs.current[i] = r; }} castShadow>
-            <coneGeometry args={[1, 1, 10]} />
+            <coneGeometry args={[1, 1, 16]} />
             <meshStandardMaterial color="#e8720c" />
           </mesh>
           <mesh ref={(r) => { if (r) headRefs.current[i] = r; }} castShadow>
-            <sphereGeometry args={[1, 8, 8]} />
+            <sphereGeometry args={[1, 16, 14]} />
             <meshStandardMaterial color="#c9a876" />
           </mesh>
           <mesh ref={(r) => { if (r) accentRefs.current[i] = r; }} castShadow>
-            <cylinderGeometry args={[1, 1, 1, 8]} />
+            <cylinderGeometry args={[1, 1, 1, 16]} />
             <meshStandardMaterial color="#c8c8c8" />
           </mesh>
           <mesh ref={(r) => { if (r) wheelLRefs.current[i] = r; }} castShadow>
-            <torusGeometry args={[0.7, 0.12, 8, 16]} />
+            <torusGeometry args={[0.7, 0.12, 10, 24]} />
             <meshStandardMaterial color="#111111" />
           </mesh>
           <mesh ref={(r) => { if (r) wheelRRefs.current[i] = r; }} castShadow>
-            <torusGeometry args={[0.7, 0.12, 8, 16]} />
+            <torusGeometry args={[0.7, 0.12, 10, 24]} />
             <meshStandardMaterial color="#111111" />
           </mesh>
         </group>
@@ -338,8 +338,8 @@ function CoinPool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; s
     <>
       {Array.from({ length: N_COINS }).map((_, i) => (
         <mesh key={i} ref={(r) => { if (r) refs.current[i] = r; }} position={[0, 0, HIDE_Z]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.24, 0.24, 0.06, 16]} />
-          <meshStandardMaterial color="#ffd700" emissive="#ffaa00" emissiveIntensity={0.6} metalness={0.85} roughness={0.15} />
+          <cylinderGeometry args={[0.27, 0.27, 0.07, 24]} />
+          <meshStandardMaterial color="#ffe033" emissive="#ffcc00" emissiveIntensity={1.1} metalness={0.95} roughness={0.08} />
         </mesh>
       ))}
     </>
@@ -401,8 +401,8 @@ function ParticlePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
     <>
       {Array.from({ length: N_PARTICLES }).map((_, i) => (
         <mesh key={i} ref={(r) => { if (r) refs.current[i] = r; }} position={[0, 0, HIDE_Z]}>
-          <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color="#ffffff" transparent opacity={1} />
+          <dodecahedronGeometry args={[1, 0]} />
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.4} transparent opacity={1} />
         </mesh>
       ))}
     </>
@@ -456,7 +456,7 @@ function PlatformPool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
       {Array.from({ length: N_PLATFORMS }).map((_, i) => (
         <mesh key={i} ref={(r) => { if (r) refs.current[i] = r; }} position={[0, 0, HIDE_Z]} castShadow receiveShadow>
           <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color="#00aaff" emissive="#0088cc" emissiveIntensity={0.5} />
+          <meshStandardMaterial color="#00ccff" emissive="#00aaff" emissiveIntensity={1.2} metalness={0.5} roughness={0.3} />
         </mesh>
       ))}
     </>
@@ -1116,12 +1116,13 @@ function NeonBloom({ theme }: { theme: Theme3D }) {
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
       <Bloom
-        intensity={cfg.intensity}
+        intensity={cfg.intensity * 1.35}
         luminanceThreshold={cfg.threshold}
         luminanceSmoothing={cfg.smoothing}
         mipmapBlur
-        radius={0.6}
+        radius={0.72}
       />
+      <Vignette eskil={false} offset={0.18} darkness={0.62} />
     </EffectComposer>
   );
 }
@@ -1129,8 +1130,8 @@ function NeonBloom({ theme }: { theme: Theme3D }) {
 export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent }: Scene3DProps) {
   return (
     <Canvas
-      dpr={[1, 1.6]}
-      gl={{ antialias: false, alpha: true, powerPreference: "default", failIfMajorPerformanceCaveat: false }}
+      dpr={[1, 2]}
+      gl={{ antialias: true, alpha: true, powerPreference: "high-performance", failIfMajorPerformanceCaveat: false }}
       style={{ position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none" }}
     >
       <PerspectiveCamera makeDefault position={[0, 2.35, 5.4]} fov={62} near={0.1} far={80} />

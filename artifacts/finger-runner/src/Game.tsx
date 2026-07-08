@@ -164,7 +164,7 @@ function setKidsModeLS(on: boolean) { setSaveValue("kidsMode", on); }
 
 // ── Storyline & dialog ────────────────────────────────────────────────────────
 const STORY_INTRO =
-  "Trapped in a boring sedan on the world's longest road trip, two restless fingers — Lefty & Middy — spot a cracked-open window and make a break for it. Eight wild stretches of road stand between them and freedom.";
+  "Two butt-shaped scooter legends — Lefty Cheek & Middy Buns — are blasting down the world's most ridiculous road on their trusty boosted scooters. Eight wild stretches of pavement, countless ridiculous obstacles, and one legendary destination: freedom (and snacks).";
 
 const LEVEL_STORY: Record<number, string> = {
   1: "Day one of freedom — the open suburb awaits!",
@@ -2304,8 +2304,8 @@ export default function Game() {
       {/* ── Start screen ── */}
       {screen === "start" && (
         <div style={{ ...overlay, background:"rgba(0,0,0,0.82)" }}>
-          <div className="arcade-neon-pulse" style={{ fontFamily:retroFont, fontSize:"1.7rem", color:"#ffee00", marginBottom:8, letterSpacing:"0.04em", textAlign:"center", textShadow:"0 0 12px #ffee00, 0 0 30px #ff8800" }}>
-            👆 FINGER RUNNER
+          <div className="arcade-neon-pulse" style={{ fontFamily:retroFont, fontSize:"1.4rem", color:"#ffee00", marginBottom:8, letterSpacing:"0.04em", textAlign:"center", textShadow:"0 0 12px #ffee00, 0 0 30px #ff8800" }}>
+            🛵 BOOTY BUTT SCOOTER
           </div>
           <p style={{ fontSize:"0.58rem", fontFamily:retroFont, margin:"8px auto 4px", maxWidth:500, lineHeight:2.5, color:"#00ffcc", textShadow:"0 0 8px #00ffcc", textAlign:"center" }}>
             {STORY_INTRO}

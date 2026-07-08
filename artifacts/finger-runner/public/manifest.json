@@ -1,7 +1,7 @@
 {
-  "name": "Finger Runner",
-  "short_name": "FingerRunner",
-  "description": "An endless runner where finger characters dodge obstacles and slice them with lightsabers.",
+  "name": "Booty Butt Scooter",
+  "short_name": "BBS",
+  "description": "An endless scooter runner — dodge obstacles, slice them with lightsabers, and ride in style!",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000018",
