@@ -15,7 +15,7 @@ import {
   POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
-  getCharacterDef, BOOST_FRAMES, BOOST_COOLDOWN, BOOST_GAS_COLORS,
+  getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
 } from "./three/coords";
 
 // Lazily loaded: these pull in the Three.js/R3F render stack and the
@@ -59,6 +59,8 @@ const MAX_FALL = 24;
 const COYOTE_FRAMES = 7;             // grace frames to still jump after leaving the ground
 const JUMP_BUFFER_FRAMES = 8;        // remember a jump pressed just before landing
 const BASE_SPEED = 2.0;
+const SCORE_RAMP_CAP = 1.8;     // caps only the within-level score ramp — level base speeds stay intact
+const SIM_STEP_MS = 1000 / 60;  // fixed-timestep: sim always runs at 60 steps/sec on any display Hz
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
 const COIN_R = 13;
@@ -67,7 +69,6 @@ const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
 const SWIPE_THRESHOLD = 18;     // px a touch must travel to commit a swipe gesture (lowered for better mobile feel)
-const TURBO_BOOST_MULT = 1.85;  // fart-turbo speed multiplier — punchier than the shared BOOST_MULT for a real "blast" feel
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -759,17 +760,10 @@ export default function Game() {
   // it each frame for the 3D render layer's smooth animated slide.
   const moveLane = (dir: -1 | 1) => {
     const st = stateRef.current;
-    if (!st.gameRunning) {
-      console.log('[Finger Runner] Cannot move lanes - game is not running');
-      return;
-    }
+    if (!st.gameRunning) return;
     const next = Math.max(-1, Math.min(1, st.lane + dir));
-    if (next === st.lane) {
-      console.log(`[Finger Runner] Lane boundary reached (lane: ${st.lane})`);
-      return;
-    }
+    if (next === st.lane) return;
     st.lane = next;
-    console.log(`[Finger Runner] Moved to lane ${st.lane}`);
     // Sideways dust kick — tactile feedback on lane switch
     const groundY = getGroundY(sizeRef.current.height);
     for (let i = 0; i < 5; i++) {
@@ -1030,21 +1024,6 @@ export default function Game() {
     if (st.boostTimer > 0 || st.boostCooldown > 0) return;
     st.boostTimer = BOOST_FRAMES;
     st.boostCooldown = BOOST_COOLDOWN;
-    // Ignition blast — one big green cloud punched out the back the instant the
-    // turbo fires, so activation feels explosive rather than a slow build-up.
-    const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
-    for (let g = 0; g < 22; g++) {
-      const spread = Math.random() * Math.PI - Math.PI / 2; // fan out backward/up
-      const sp = 3 + Math.random() * 6;
-      pushCapped(st.particles, POOL_PARTICLES, {
-        x: 176 + (Math.random() - 0.5) * 18, y: gasBaseY + (Math.random() - 0.5) * 16,
-        vx: Math.cos(spread) * sp + 2, vy: -Math.abs(Math.sin(spread)) * sp - 0.5,
-        life: 30 + Math.random() * 18, size: 8 + Math.random() * 10,
-        color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
-        shape: "gas",
-      });
-    }
-    st.shake = Math.max(st.shake, 7); // kick of acceleration
     playFart();
   };
 
@@ -1054,18 +1033,17 @@ export default function Game() {
     const saber = getSaberDef(getSaberLevel());
     const cxo = o.x + o.obsWidth / 2;
     const cyo = roadY - o.obsHeight / 2;
-    st.shake = Math.max(st.shake, 8);
-    // Enhanced saber particles - more satisfying explosion
-    for (let i = 0; i < 32; i++) {
-      const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 8;
+    st.shake = Math.max(st.shake, 6);
+    for (let i = 0; i < 26; i++) {
+      const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 7;
       pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2,
-        life: 24 + Math.random() * 20, size: 3 + Math.random() * 5,
+        life: 22 + Math.random() * 18, size: 3 + Math.random() * 5,
         color: Math.random() < 0.5 ? saber.color : saber.glow, shape: "circle" });
     }
-    for (let i = 0; i < 12; i++) {
-      const ang = Math.random() * Math.PI * 2; const sp = 3 + Math.random() * 7;
+    for (let i = 0; i < 8; i++) {
+      const ang = Math.random() * Math.PI * 2; const sp = 3 + Math.random() * 6;
       pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5,
-        life: 16 + Math.random() * 12, size: 2 + Math.random() * 3.5, color: "#ffffff",
+        life: 14 + Math.random() * 10, size: 2 + Math.random() * 3, color: "#ffffff",
         shape: "rect", rot: Math.random() * 6, rotV: (Math.random() - 0.5) * 0.5 });
     }
     st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
@@ -1199,12 +1177,10 @@ export default function Game() {
       } else if (e.code === "ArrowLeft" || e.code === "KeyA") {
         e.preventDefault();
         if (e.repeat) return;
-        console.log('[Finger Runner] Left key pressed');
         moveLane(-1);
       } else if (e.code === "ArrowRight" || e.code === "KeyD") {
         e.preventDefault();
         if (e.repeat) return;
-        console.log('[Finger Runner] Right key pressed');
         moveLane(1);
       }
     };
@@ -1214,6 +1190,13 @@ export default function Game() {
     document.addEventListener("keydown", onKey);
     document.addEventListener("keyup", onKeyUp);
 
+    // Fixed-timestep accumulator (Unity FixedUpdate pattern): the sim always
+    // advances at exactly 60 steps/sec regardless of display refresh rate.
+    // Without this, 120Hz iPhones (ProMotion) run the whole game at 2× speed
+    // and throttled 30fps devices at half speed.
+    let simLast = performance.now();
+    let simAcc = 0;
+
     const loop = () => {
       const st = stateRef.current;
       const width = canvas.width; const height = canvas.height;
@@ -1222,6 +1205,7 @@ export default function Game() {
       const lvlDef = getLevelDef(st.currentLevel);
       const theme = lvlDef.theme;
 
+      const stepSim = () => {
       if (st.gameRunning) {
         st.time++;
         if (st.time % 60 === 0) incrementStat("playTimeSeconds");
@@ -1313,26 +1297,26 @@ export default function Game() {
         const fingerTipY = st.playerY + FINGER_TIP_OFFSET - 8;
         if (st.boostTimer > 0) st.boostTimer--;
         if (st.boostCooldown > 0) st.boostCooldown--;
-        const boostMult = st.boostTimer > 0 ? TURBO_BOOST_MULT : 1;
+        const boostMult = st.boostTimer > 0 ? BOOST_MULT : 1;
         // Reflect boost state to the on-screen button (only re-renders on change).
         const boostActiveNow = st.boostTimer > 0;
         const boostReadyNow = st.boostCooldown === 0;
         if (boostActiveNow !== boostActiveRef.current) { boostActiveRef.current = boostActiveNow; setBoostActive(boostActiveNow); }
         if (boostReadyNow !== boostReadyRef.current) { boostReadyRef.current = boostReadyNow; setBoostReady(boostReadyNow); }
-        const speed = (BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.0014) * kidsSpeedMult * boostMult;
+        // Speed = level base + score ramp (ramp alone capped — Runner-2 maxSpeed
+        // pattern, but level base speeds stay intact), then kids/boost multipliers.
+        const speed = (BASE_SPEED * lvlDef.speedMult + Math.min(st.levelScore * 0.0014, SCORE_RAMP_CAP)) * kidsSpeedMult * boostMult;
         st.worldScroll += speed; // visual-only: drives 3D background/road scroll, no gameplay effect
         // Fart-boost green gas trail — puffs out behind the runner while boosting.
         // Uses shape "gas" (not "circle") + upward vy so it floats and never gets
         // pinned by the road floor-clamp (which only freezes "circle" droplets).
         if (st.boostTimer > 0) {
           const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
-          // Thick green plume blasting backward out the runner — more, bigger,
-          // faster puffs than a gentle trail so the turbo reads as a jet blast.
-          for (let g = 0; g < 5; g++) {
+          for (let g = 0; g < 2; g++) {
             pushCapped(st.particles, POOL_PARTICLES, {
-              x: 178 + (Math.random() - 0.5) * 20, y: gasBaseY + Math.random() * 14,
-              vx: 2.6 + Math.random() * 3.4, vy: -(0.4 + Math.random() * 1.8),
-              life: 26 + Math.random() * 16, size: 7 + Math.random() * 8,
+              x: 185 + (Math.random() - 0.5) * 16, y: gasBaseY + Math.random() * 10,
+              vx: 1.1 + Math.random() * 1.8, vy: -(0.7 + Math.random() * 1.3),
+              life: 28 + Math.random() * 12, size: 5 + Math.random() * 5,
               color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
               shape: "gas",
             });
@@ -1389,28 +1373,7 @@ export default function Game() {
               crash(); didCrash = true;
             }
           }
-          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) {
-            o.passed = true;
-            // Near-miss effect: sparkle burst when narrowly avoiding an obstacle
-            if (!didCrash && o.lane === st.lane) {
-              const numParticles = 6 + Math.floor(Math.random() * 4);
-              for (let p = 0; p < numParticles; p++) {
-                const ang = Math.random() * Math.PI * 2;
-                const sp = 1.5 + Math.random() * 3;
-                const colors = ["#ffff66", "#ffff99", "#ffcc00", "#ffff44"];
-                pushCapped(st.particles, POOL_PARTICLES, {
-                  x: fingerLeft - 8 + Math.random() * 16,
-                  y: st.playerY + 40 + Math.random() * 30,
-                  vx: Math.cos(ang) * sp + (Math.random() - 0.5) * 1,
-                  vy: Math.sin(ang) * sp - 1,
-                  life: 12 + Math.random() * 12,
-                  size: 1.5 + Math.random() * 2.5,
-                  color: colors[Math.floor(Math.random() * colors.length)],
-                  shape: "circle"
-                });
-              }
-            }
-          }
+          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) o.passed = true;
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
 
@@ -1423,6 +1386,13 @@ export default function Game() {
             const dx = 185 - c.x; const dy = (st.playerY + 30) - c.y;
             const dist = Math.hypot(dx, dy);
             if (dist < 280 && dist > 1) { c.x += (dx / dist) * 15; c.y += (dy / dist) * 15; }
+          } else {
+            // Soft baseline magnet — nearby coins ease toward the rider even
+            // without the powerup (Runner-2 trigger-lerp pattern). Small radius
+            // so it forgives near-misses without trivialising coin lines.
+            const dx = 185 - c.x; const dy = (st.playerY + 30) - c.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 85 && dist > 1) { c.x += (dx / dist) * 5.5; c.y += (dy / dist) * 5.5; }
           }
           c.x -= speed;
           if (c.x + COIN_R > 156 && c.x - COIN_R < 214 && c.y + COIN_R > coinTop && c.y - COIN_R < coinBottom) {
@@ -1544,7 +1514,7 @@ export default function Game() {
           if (p.life <= 0) st.particles.splice(i, 1);
         }
         // Blood puddles — scroll with the world, slow fade
-        const scrollSpeed = (BASE_SPEED * lvlDef.speedMult + st.levelScore * 0.001) * boostMult;
+        const scrollSpeed = (BASE_SPEED * lvlDef.speedMult + Math.min(st.levelScore * 0.001, SCORE_RAMP_CAP)) * boostMult;
         for (let i = st.bloodPuddles.length - 1; i >= 0; i--) {
           const bp = st.bloodPuddles[i];
           bp.x -= scrollSpeed;
@@ -1578,53 +1548,174 @@ export default function Game() {
         }
         if (!st.gameRunning) st.playerY = getGroundY(height);
       }
+      }; // end stepSim
+
+      // Drive the sim: run 0..N fixed steps depending on real elapsed time.
+      // Clamp elapsed to 100ms so a backgrounded tab doesn't cause a
+      // catch-up spiral when the player returns.
+      const nowMs = performance.now();
+      simAcc += Math.min(nowMs - simLast, 100);
+      simLast = nowMs;
+      while (simAcc >= SIM_STEP_MS) { stepSim(); simAcc -= SIM_STEP_MS; }
 
       // ── Draw (HUD only — the game world is now rendered by <Scene3D/> in true 3D) ─
       ctx.clearRect(0, 0, width, height);
 
-      // ── Character sprite — animated: run bob, jump, slash, slide ────────────
+      // ── Vespa scooter + rider — drawn in canvas 2D (rear/behind view) ───────
       {
         const charId = getSelectedCharacter();
-        // Pick frame: slash > jump > base (run/slide)
-        const getImg = (key: string) => {
-          const m = charImgsRef.current[key];
-          return m && m.complete && m.naturalWidth > 0 ? m : null;
-        };
-        const img = (st.saberSwing > 0 ? getImg(charId + "_slash") : null)
-          ?? (!st.onGround ? getImg(charId + "_jump") : null)
-          ?? getImg(charId);
-        if (img) {
-          const feetY = st.playerY + 90;
-          // ── Run cycle ──────────────────────────────────────────────────────
-          // Only one static sprite frame exists per character, so the run is
-          // sold procedurally: a springy footfall bounce, a rhythmic lean that
-          // rocks the body left/right with each stride, and a squash as each
-          // foot plants. strideT advances two footfalls per full period.
-          const running = st.gameRunning && st.onGround && !st.sliding;
-          const strideT = st.time * 0.55;
-          // Bounce: the body pushes UP off each foot (abs(sin) => one hop per step)
-          const runBob = running ? -Math.abs(Math.sin(strideT)) * 9 : 0;
-          // Rhythmic body rock — alternates direction every stride
-          const runWobble = running ? Math.sin(strideT * 2) * 0.07 : 0;
-          // Lean angle: forward lean when running, back lean when airborne, flat + forward rotate when sliding
-          const tilt = (st.sliding ? 0.42
-            : (!st.onGround ? -0.07 : (st.gameRunning ? 0.05 : 0))) + runWobble;
-          // Foot-plant squash synced to the stride (max as bounce bottoms out)
-          const plantK = running ? Math.max(0, Math.cos(strideT)) * 0.08 : 0;
-          // Squash/stretch on landing impact
-          const landK = Math.min(1, (st.landImpact || 0) / 10);
-          const scaleX = 1 + 0.22 * landK + plantK * 0.6;
-          const scaleY = Math.max(0.55, (1 - 0.28 * landK) - plantK);
-          // Sprite size — squash down when sliding
-          const spriteH = st.sliding ? 68 : 118;
-          const spriteW = img.naturalWidth * (spriteH / img.naturalHeight);
+        const charDef = getCharacterDef(charId);
+        const bodyCol   = charDef.backHand;   // scooter body color
+        const trimCol   = charDef.finger;      // fender trim / accent
+        const jacketCol = charDef.saberColor;  // rider jacket color
+        const glowCol   = charDef.saberGlow;
+        const chrome    = "#c8cad6";
+        const wheelCol  = "#1e1e22";
+        const hubCol    = chrome;
+
+        const feetY = st.playerY + 90;
+        const runBob = (st.gameRunning && st.onGround && !st.sliding)
+          ? Math.sin(st.time * 0.38) * 3.5 : 0;
+        const tilt = st.sliding ? 0.38
+          : (!st.onGround ? -0.06 : (st.gameRunning ? 0.04 : 0));
+        const landK = Math.min(1, (st.landImpact || 0) / 10);
+        const scaleX = 1 + 0.18 * landK;
+        const scaleY = Math.max(0.55, 1 - 0.24 * landK);
+
+        // Lane offset: laneVisual moves between -1 and +1; scale to canvas pixels
+        const lanePixels = sizeRef.current.width * 0.19; // ~74px on 390px iPhone
+        ctx.save();
+        ctx.translate(185 + st.laneVisual * lanePixels, feetY + runBob);
+        ctx.rotate(tilt);
+        ctx.scale(scaleX, scaleY);
+
+        // All drawing below is in local space: (0,0) = ground/feet contact
+
+        // ── Rear wheel ──────────────────────────────────────────────────────
+        const WY = -21, WR = 21;
+        // Tyre
+        ctx.beginPath(); ctx.arc(0, WY, WR, 0, Math.PI*2);
+        ctx.fillStyle = wheelCol; ctx.fill();
+        // Inner tyre (lighter)
+        ctx.beginPath(); ctx.arc(0, WY, WR - 5, 0, Math.PI*2);
+        ctx.fillStyle = "#2e2e36"; ctx.fill();
+        // Spokes (spin with time)
+        const spinAngle = st.gameRunning ? st.time * 0.3 : 0;
+        ctx.strokeStyle = hubCol; ctx.lineWidth = 2;
+        for (let s = 0; s < 5; s++) {
+          const a = spinAngle + (s / 5) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a)*5, WY + Math.sin(a)*5);
+          ctx.lineTo(Math.cos(a)*13, WY + Math.sin(a)*13);
+          ctx.stroke();
+        }
+        // Hub
+        ctx.beginPath(); ctx.arc(0, WY, 6, 0, Math.PI*2);
+        ctx.fillStyle = hubCol; ctx.fill();
+
+        // ── Vespa body (rear panel) ─────────────────────────────────────────
+        // Lower rear panel — wide shield covering wheel
+        ctx.beginPath();
+        ctx.ellipse(0, -36, 26, 16, 0, 0, Math.PI*2);
+        ctx.fillStyle = bodyCol; ctx.fill();
+        // Mid body slab
+        ctx.beginPath();
+        ctx.moveTo(-22, -44); ctx.lineTo(22, -44);
+        ctx.lineTo(18, -66); ctx.lineTo(-18, -66);
+        ctx.closePath();
+        ctx.fillStyle = bodyCol; ctx.fill();
+        // Fender trim ring
+        ctx.beginPath();
+        ctx.ellipse(0, -36, 27, 17, 0, 0, Math.PI*2);
+        ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+        // Chrome carrier / rack
+        ctx.beginPath();
+        ctx.rect(-25, -50, 50, 5);
+        ctx.fillStyle = chrome; ctx.fill();
+        // Back light strip
+        ctx.beginPath();
+        ctx.rect(-16, -54, 32, 5);
+        ctx.fillStyle = "#ff2020"; ctx.fill();
+
+        // ── Seat ─────────────────────────────────────────────────────────────
+        ctx.beginPath();
+        ctx.ellipse(0, -68, 16, 7, 0, 0, Math.PI*2);
+        ctx.fillStyle = "#111"; ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(0, -69, 14, 5, 0, 0, Math.PI*2);
+        ctx.fillStyle = "#2a2a2a"; ctx.fill();
+
+        // ── Rider ────────────────────────────────────────────────────────────
+        const slide = st.sliding;
+        const riderTopY = slide ? -85 : -100;
+
+        // Rider legs (straddle the seat — two short pillars either side)
+        ctx.fillStyle = "#334";
+        ctx.beginPath(); ctx.rect(-13, -76, 9, 14); ctx.fill();
+        ctx.beginPath(); ctx.rect(4,  -76, 9, 14); ctx.fill();
+
+        // Jacket / torso
+        ctx.beginPath();
+        ctx.moveTo(-13, -76); ctx.lineTo(13, -76);
+        ctx.lineTo(11, riderTopY); ctx.lineTo(-11, riderTopY);
+        ctx.closePath();
+        ctx.fillStyle = jacketCol; ctx.fill();
+        // Jacket shoulder seam
+        ctx.beginPath();
+        ctx.rect(-13, -76, 26, 4);
+        ctx.fillStyle = trimCol; ctx.fill();
+
+        // Arms to handlebar
+        const barY = slide ? -90 : -104;
+        ctx.lineWidth = 7; ctx.lineCap = "round";
+        ctx.strokeStyle = jacketCol;
+        ctx.beginPath(); ctx.moveTo(-10, -78); ctx.lineTo(-30, barY+2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo( 10, -78); ctx.lineTo( 30, barY+2); ctx.stroke();
+        ctx.lineCap = "butt";
+
+        // Handlebar
+        ctx.beginPath();
+        ctx.rect(-34, barY, 68, 7);
+        ctx.fillStyle = chrome; ctx.fill();
+        // Grips
+        ctx.fillStyle = "#111";
+        ctx.beginPath(); ctx.rect(-38, barY-2, 8, 11); ctx.fill();
+        ctx.beginPath(); ctx.rect(30,  barY-2, 8, 11); ctx.fill();
+
+        // Helmet
+        const helmetY = slide ? -100 : -115;
+        ctx.beginPath();
+        ctx.arc(0, helmetY, 14, 0, Math.PI*2);
+        ctx.fillStyle = bodyCol; ctx.fill();
+        // Helmet visor
+        ctx.beginPath();
+        ctx.ellipse(0, helmetY+3, 9, 6, 0, Math.PI*0.05, Math.PI*0.95);
+        ctx.fillStyle = "#1a3050"; ctx.fill();
+        // Helmet trim stripe
+        ctx.beginPath();
+        ctx.arc(0, helmetY, 14, Math.PI*0.65, Math.PI*2.35);
+        ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+
+        // ── Saber (right arm, only when swinging or airborne) ───────────────
+        if (st.saberSwing > 0 || !st.onGround) {
+          const prog = st.saberSwing > 0 ? 1 - st.saberSwing/16 : 0;
+          const saberAngle = st.saberSwing > 0 ? -1.3 + prog*2.5 : -0.7;
+          const bladeH = 60;
           ctx.save();
-          ctx.translate(185, feetY + runBob);
-          ctx.rotate(tilt);
-          ctx.scale(scaleX, scaleY);
-          ctx.drawImage(img, -spriteW / 2, -spriteH, spriteW, spriteH);
+          ctx.translate(32, barY+4);
+          ctx.rotate(saberAngle);
+          // Handle
+          ctx.fillStyle = chrome;
+          ctx.beginPath(); ctx.rect(-3, -4, 6, 12); ctx.fill();
+          // Blade
+          ctx.shadowColor = glowCol; ctx.shadowBlur = 12;
+          ctx.fillStyle = jacketCol;
+          ctx.beginPath(); ctx.rect(-2, -4-bladeH, 4, bladeH); ctx.fill();
+          ctx.shadowBlur = 0;
           ctx.restore();
         }
+
+        ctx.restore();
       }
 
       // Dialog speech bubble banner — imperative DOM update, no React re-render
@@ -1825,7 +1916,6 @@ export default function Game() {
     t.consumed = true;
     if (Math.abs(dx) > Math.abs(dy)) {
       const direction = dx > 0 ? 1 : -1;
-      console.log(`[Finger Runner] Swipe detected: ${direction > 0 ? 'RIGHT' : 'LEFT'}`);
       moveLane(direction);
     }
     else if (dy < 0) { if (stateRef.current.gameRunning) jump(); }
@@ -1851,16 +1941,6 @@ export default function Game() {
       const themeId: MusicThemeId = st.gameRunning ? lvlDef.theme : (screen === "start" || screen === "wardrobe" ? "start" : lvlDef.theme);
       startMusic(themeId, st.gameRunning, lvlDef.speedMult);
     } else stopMusic();
-  };
-  const toggleFullscreen = () => {
-    const elem = document.documentElement;
-    if (!document.fullscreenElement) {
-      elem.requestFullscreen?.().catch(() => {
-        console.log('Fullscreen not available on this device');
-      });
-    } else {
-      document.exitFullscreen?.();
-    }
   };
   const goToMenu = () => {
     stopMusic();
@@ -1932,7 +2012,7 @@ export default function Game() {
   const currentSaber = getSaberDef(saberLevel);
 
   return (
-    <div style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden", background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
+    <div style={{ position:"fixed", inset:0, background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
       <Scene3DBoundary>
         <Suspense fallback={null}>
           <Scene3D
@@ -1951,68 +2031,39 @@ export default function Game() {
         onPointerUp={onCanvasPointerUp} onPointerLeave={onCanvasPointerCancel} onPointerCancel={onCanvasPointerCancel} />
 
       {/* Mobile control buttons for lane movement - always visible during gameplay */}
-      {/* Fullscreen button - always visible */}
-      <button
-        onClick={toggleFullscreen}
-        style={{
-          position: "fixed",
-          top: "20px",
-          right: "20px",
-          zIndex: 9,
-          padding: "10px 14px",
-          background: "rgba(100, 150, 255, 0.9)",
-          border: "2px solid #6496ff",
-          color: "white",
-          fontSize: "18px",
-          borderRadius: "8px",
-          cursor: "pointer",
-          boxShadow: "0 4px 12px rgba(100, 150, 255, 0.5)",
-          fontWeight: "bold",
-        }}
-        title="Toggle fullscreen"
-      >
-        ⛶
-      </button>
-
       {screen === "playing" && (
         <div style={{
           position: "fixed",
-          bottom: "150px",
-          left: "0",
-          right: "0",
+          bottom: "80px",
+          left: "12px",
+          right: "12px",
           display: "flex",
-          justifyContent: "space-between",
+          gap: "10px",
+          justifyContent: "center",
           alignItems: "center",
-          padding: "0 14px",
-          zIndex: 8,
-          pointerEvents: "none",
+          zIndex: 7,
+          pointerEvents: "auto",
         }}>
           <button
             onPointerDown={(e) => {
               e.preventDefault();
-              e.stopPropagation();
-              if (stateRef.current.gameRunning) moveLane(-1);
-            }}
-            onTouchStart={(e) => {
-              e.preventDefault();
               if (stateRef.current.gameRunning) moveLane(-1);
             }}
             style={{
-              width: "104px",
-              padding: "16px 12px",
-              background: "rgba(255, 60, 60, 0.9)",
+              flex: 1,
+              maxWidth: "140px",
+              padding: "14px 16px",
+              background: "rgba(255, 60, 60, 1)",
               border: "3px solid #ff2020",
               color: "white",
-              fontSize: "18px",
+              fontSize: "16px",
               fontWeight: "bold",
-              borderRadius: "12px",
-              boxShadow: "0 6px 16px rgba(255, 0, 0, 0.55)",
+              borderRadius: "10px",
+              boxShadow: "0 6px 16px rgba(255, 0, 0, 0.6)",
               userSelect: "none",
               WebkitUserSelect: "none" as any,
               WebkitTouchCallout: "none" as any,
-              touchAction: "none",
-              pointerEvents: "auto",
-              opacity: stateRef.current.gameRunning ? 1 : 0.6,
+              opacity: 1,
             }}
           >
             ◀ LEFT
@@ -2020,29 +2071,23 @@ export default function Game() {
           <button
             onPointerDown={(e) => {
               e.preventDefault();
-              e.stopPropagation();
-              if (stateRef.current.gameRunning) moveLane(1);
-            }}
-            onTouchStart={(e) => {
-              e.preventDefault();
               if (stateRef.current.gameRunning) moveLane(1);
             }}
             style={{
-              width: "104px",
-              padding: "16px 12px",
-              background: "rgba(60, 60, 255, 0.9)",
+              flex: 1,
+              maxWidth: "140px",
+              padding: "14px 16px",
+              background: "rgba(60, 60, 255, 1)",
               border: "3px solid #2020ff",
               color: "white",
-              fontSize: "18px",
+              fontSize: "16px",
               fontWeight: "bold",
-              borderRadius: "12px",
-              boxShadow: "0 6px 16px rgba(0, 0, 255, 0.55)",
+              borderRadius: "10px",
+              boxShadow: "0 6px 16px rgba(0, 0, 255, 0.6)",
               userSelect: "none",
               WebkitUserSelect: "none" as any,
               WebkitTouchCallout: "none" as any,
-              touchAction: "none",
-              pointerEvents: "auto",
-              opacity: stateRef.current.gameRunning ? 1 : 0.6,
+              opacity: 1,
             }}
           >
             RIGHT ▶
@@ -2318,17 +2363,6 @@ export default function Game() {
           {boostActive ? "BOOST!" : boostReady ? "FART" : "···"}
         </button>
       )}
-
-      {/* ── Fullscreen toggle ── */}
-      <button onClick={toggleFullscreen} className="retro-btn"
-        style={{ position:"absolute", top:18, right:110, zIndex:20,
-          padding:"8px 14px", fontSize:"0.52rem", fontFamily:retroFont,
-          background:"rgba(0,0,0,0.8)", color:"#6496ff",
-          border:"2px solid #6496ff",
-          boxShadow:"0 0 10px rgba(100,150,255,0.38)",
-          cursor:"pointer", letterSpacing:"0.05em", lineHeight:2 }}>
-        ⛶
-      </button>
 
       {/* ── Music toggle ── */}
       <button onClick={handleToggleMusic} className="retro-btn"

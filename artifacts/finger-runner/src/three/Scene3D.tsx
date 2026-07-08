@@ -447,23 +447,24 @@ function RopePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; s
   );
 }
 
-// ── Runner character (Lefty & Middy) ─────────────────────────────────────
-// HAT_COLORS comes from the shared coords.ts re-export (see import above).
+// ── Vespa scooter + rider ────────────────────────────────────────────────
+// Replaces the running-finger Runner. Same position/animation contract:
+// group is placed at footY (ground level), leans into lane switches,
+// squashes on land impact, tilts forward on slide. The rider sits on top
+// and holds the saber. Skin colors map: backHand→body, finger→fender/trim,
+// knuckle→wheel hubs, nail→seat/rider jacket.
 
-function Runner({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; hat: HatId; saber: SaberInfo; skin: SkinInfo }) {
+function Vespa({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; hat: HatId; saber: SaberInfo; skin: SkinInfo }) {
   const group = useRef<THREE.Group>(null);
-  const leftFinger = useRef<THREE.Group>(null);
-  const rightFinger = useRef<THREE.Group>(null);
-  const legLFL = useRef<THREE.Mesh>(null);
-  const legLFR = useRef<THREE.Mesh>(null);
-  const legRFL = useRef<THREE.Mesh>(null);
-  const legRFR = useRef<THREE.Mesh>(null);
+  const wheelFRef = useRef<THREE.Group>(null);
+  const wheelRRef = useRef<THREE.Group>(null);
+  const riderGroup = useRef<THREE.Group>(null);
   const hatMeshTop = useRef<THREE.Mesh>(null);
   const hatMeshBrim = useRef<THREE.Mesh>(null);
   const saberBlade = useRef<THREE.Mesh>(null);
   const saberGroup = useRef<THREE.Group>(null);
+  const exhaustRef = useRef<THREE.Mesh>(null);
 
-  // Reach 120–185 (game px) → blade length ~0.62–1.05 world units
   const bladeLen = useMemo(() => 0.62 + ((saber.reach - 120) / (185 - 120)) * 0.43, [saber.reach]);
   const bladeHalfLen = bladeLen / 2 + 0.16;
 
@@ -473,44 +474,43 @@ function Runner({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProp
     const roadY = roadYOld(height);
     if (!group.current) return;
 
+    // Squash/stretch on jump & land impact — same feel as the old runner
     let stretchY = 1, stretchX = 1;
     if (st.gameRunning && !st.onGround) {
-      stretchY = 1 + Math.max(-0.10, Math.min(0.16, -st.velocity * 0.011));
-      stretchX = 1 - (stretchY - 1) * 0.55;
+      stretchY = 1 + Math.max(-0.08, Math.min(0.12, -st.velocity * 0.009));
+      stretchX = 1 - (stretchY - 1) * 0.45;
     }
     if (st.landImpact > 0) {
       const k = st.landImpact / 10;
-      stretchY = 1 - 0.26 * k;
-      stretchX = 1 + 0.26 * k;
+      stretchY = 1 - 0.20 * k;
+      stretchX = 1 + 0.20 * k;
     }
-    if (st.gameRunning && st.sliding) {
-      // Duck/slide: squash low and wide so the runner clearly ducks the beam.
-      stretchY = 0.5;
-      stretchX = 1.28;
-    }
+    // Slide: lean forward low, like ducking under a barrier on a scooter
+    const sliding = st.gameRunning && st.sliding;
+
     const footY = worldY(st.playerY + FINGER_TIP_OFFSET, roadY);
     group.current.position.set(LANE_X + st.laneVisual * LANE_OFFSET, footY, worldZ(FINGER_CENTER_X));
     group.current.scale.set(stretchX, stretchY, stretchX);
-    group.current.rotation.x = (st.gameRunning && st.sliding) ? 0.55 : 0; // forward slide lean
-    // Bank into lane switches — laneVel drives a dynamic body lean
-    group.current.rotation.z = -st.laneVel * 0.55;
+    group.current.rotation.x = sliding ? 0.45 : 0;
+    group.current.rotation.z = -st.laneVel * 0.5;
 
     if (st.shake > 0) {
       group.current.position.x += (Math.random() - 0.5) * st.shake * 0.01;
     }
 
-    const running = st.gameRunning && st.onGround;
-    const runPhase = st.time * 0.35;
-    const legSwing = running ? Math.sin(runPhase) * 0.55 : (st.onGround ? 0 : 0.35);
-    if (legLFL.current) legLFL.current.rotation.x = legSwing;
-    if (legLFR.current) legLFR.current.rotation.x = -legSwing;
-    if (legRFL.current) legRFL.current.rotation.x = -legSwing;
-    if (legRFR.current) legRFR.current.rotation.x = legSwing;
+    // Wheels spin proportional to speed
+    const wheelSpin = st.gameRunning ? st.time * 0.28 : 0;
+    if (wheelFRef.current) wheelFRef.current.rotation.x = wheelSpin;
+    if (wheelRRef.current) wheelRRef.current.rotation.x = wheelSpin;
 
-    if (leftFinger.current) leftFinger.current.position.x = -0.28;
-    if (rightFinger.current) rightFinger.current.position.x = 0.28;
+    // Rider bobs slightly while riding
+    if (riderGroup.current) {
+      const bob = st.gameRunning && st.onGround ? Math.sin(st.time * 0.18) * 0.025 : 0;
+      riderGroup.current.position.y = 1.38 + bob;
+      riderGroup.current.rotation.x = sliding ? -0.35 : 0;
+    }
 
-    // Saber swing animation
+    // Saber swing
     if (saberGroup.current) {
       const active = st.saberSwing > 0;
       saberGroup.current.visible = true;
@@ -529,135 +529,206 @@ function Runner({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProp
       const spin = hat === "propeller" ? st.time * 0.6 : 0;
       hatMeshTop.current.rotation.y = spin;
     }
+
+    // Exhaust puff flicker
+    if (exhaustRef.current) {
+      exhaustRef.current.scale.setScalar(0.9 + Math.sin(st.time * 0.4) * 0.15);
+    }
   });
+
+  // Vespa body color from skin.backHand, fender/trim from skin.finger,
+  // wheel hub/chrome from skin.knuckle, seat from skin.nail
+  const bodyColor = skin.backHand;
+  const trimColor = skin.finger;
+  const hubColor  = skin.knuckle;
+  const seatColor = skin.nail;
 
   return (
     <group ref={group} visible={false}>
-      {/* Back of the hand — both fingers visibly attach to this so the pair
-          reads as "two fingers of one hand", not two disconnected legs. */}
-      <mesh castShadow position={[0, 1.62, -0.02]}>
-        <boxGeometry args={[0.62, 0.34, 0.32]} />
-        <meshStandardMaterial color={skin.backHand} roughness={0.7} />
+
+      {/* ── Scooter body ── */}
+
+      {/* Main body — rounded front shield + step-through frame */}
+      <mesh castShadow position={[0, 0.72, 0.08]}>
+        <boxGeometry args={[0.54, 0.68, 0.78]} />
+        <meshStandardMaterial color={bodyColor} roughness={0.45} metalness={0.18} />
       </mesh>
-      <mesh position={[0, 1.62, 0.15]}>
-        <sphereGeometry args={[0.17, 16, 12]} />
-        <meshStandardMaterial color={skin.backHand} roughness={0.7} />
+      {/* Front leg shield — characteristic Vespa curved nose */}
+      <mesh castShadow position={[0, 0.72, 0.46]} rotation={[0.22, 0, 0]} scale={[1, 1, 0.55]}>
+        <sphereGeometry args={[0.34, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.72]} />
+        <meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} />
+      </mesh>
+      {/* Rear body hump (engine cover) */}
+      <mesh castShadow position={[0, 0.84, -0.42]} scale={[0.82, 0.68, 0.72]}>
+        <sphereGeometry args={[0.42, 10, 8]} />
+        <meshStandardMaterial color={bodyColor} roughness={0.45} metalness={0.18} />
+      </mesh>
+      {/* Chrome trim stripe */}
+      <mesh position={[0, 0.62, 0.10]}>
+        <boxGeometry args={[0.56, 0.045, 0.82]} />
+        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.92} roughness={0.08} />
+      </mesh>
+      {/* Fender accent — color band */}
+      <mesh position={[0, 0.98, 0.10]}>
+        <boxGeometry args={[0.58, 0.06, 0.72]} />
+        <meshStandardMaterial color={trimColor} roughness={0.55} />
       </mesh>
 
-      {/* Left finger — Lefty */}
-      <group ref={leftFinger}>
-        {/* Upper segment (attaches to the hand) */}
-        <mesh castShadow position={[0, 1.12, 0]}>
-          <capsuleGeometry args={[0.2, 0.5, 8, 14]} />
-          <meshStandardMaterial color={skin.finger} roughness={0.7} />
+      {/* Seat */}
+      <mesh castShadow position={[0, 1.22, -0.12]} scale={[0.46, 0.12, 0.56]}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color={seatColor} roughness={0.8} />
+      </mesh>
+      {/* Seat cushion dome */}
+      <mesh castShadow position={[0, 1.29, -0.12]} scale={[0.45, 0.09, 0.54]}>
+        <sphereGeometry args={[1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color={seatColor} roughness={0.8} />
+      </mesh>
+
+      {/* Headlight */}
+      <mesh position={[0, 0.92, 0.52]}>
+        <sphereGeometry args={[0.11, 10, 8]} />
+        <meshStandardMaterial color="#fffde8" emissive="#ffe8a0" emissiveIntensity={0.9} metalness={0.3} roughness={0.2} />
+      </mesh>
+      {/* Headlight chrome ring */}
+      <mesh position={[0, 0.92, 0.50]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.12, 0.025, 8, 14]} />
+        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.9} roughness={0.1} />
+      </mesh>
+
+      {/* Handlebar — chrome tube */}
+      <mesh castShadow position={[0, 1.28, 0.34]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.035, 0.035, 0.72, 8]} />
+        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.88} roughness={0.12} />
+      </mesh>
+      {/* Handlebar grips */}
+      <mesh castShadow position={[-0.34, 1.28, 0.34]}>
+        <cylinderGeometry args={[0.048, 0.044, 0.14, 8]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
+      </mesh>
+      <mesh castShadow position={[0.34, 1.28, 0.34]}>
+        <cylinderGeometry args={[0.048, 0.044, 0.14, 8]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
+      </mesh>
+
+      {/* Exhaust pipe */}
+      <mesh castShadow position={[0.30, 0.32, -0.52]} rotation={[0.3, 0, 0]}>
+        <cylinderGeometry args={[0.045, 0.055, 0.44, 8]} />
+        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} />
+      </mesh>
+      {/* Exhaust puff */}
+      <mesh ref={exhaustRef} position={[0.30, 0.30, -0.76]}>
+        <sphereGeometry args={[0.08, 6, 5]} />
+        <meshStandardMaterial color="#aaaaaa" transparent opacity={0.28} roughness={1} />
+      </mesh>
+
+      {/* ── Wheels ── */}
+
+      {/* Front wheel */}
+      <group ref={wheelFRef} position={[0, 0.26, 0.54]}>
+        <mesh castShadow rotation={[0, Math.PI / 2, 0]}>
+          <torusGeometry args={[0.28, 0.085, 8, 18]} />
+          <meshStandardMaterial color="#1c1c1c" roughness={0.85} />
         </mesh>
-        {/* Knuckle joint */}
-        <mesh castShadow position={[0, 0.72, 0]}>
-          <sphereGeometry args={[0.205, 16, 12]} />
-          <meshStandardMaterial color={skin.knuckle} roughness={0.7} />
-        </mesh>
-        {/* Lower segment / foot — the fingertip touches the ground here.
-            Nail and cute cartoon eyes are nested as children so they swing
-            with the leg's run animation instead of floating separately. */}
-        <mesh ref={legLFL} castShadow position={[0, 0.4, 0]}>
-          <capsuleGeometry args={[0.19, 0.42, 8, 14]} />
-          <meshStandardMaterial color={skin.finger} roughness={0.7} />
-          {/* Fingernail — rounded/domed rather than a flat box, with a
-              subtle gloss highlight for a manicured look. */}
-          <mesh castShadow position={[0, -0.24, 0.16]} rotation={[-0.3, 0, 0]} scale={[1, 0.85, 0.55]}>
-            <sphereGeometry args={[0.135, 14, 10]} />
-            <meshStandardMaterial color={skin.nail} metalness={0.25} roughness={0.25} />
+        {/* Spokes */}
+        {[0, 1, 2, 3].map(i => (
+          <mesh key={i} rotation={[i * Math.PI / 4, Math.PI / 2, 0]}>
+            <boxGeometry args={[0.012, 0.52, 0.012]} />
+            <meshStandardMaterial color={CHROME_ACCENT} metalness={0.8} roughness={0.2} />
           </mesh>
-          {/* Cute cartoon face — gives Lefty personality instead of a bare stick. */}
-          <mesh position={[-0.08, -0.16, 0.185]}>
-            <sphereGeometry args={[0.05, 10, 8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.25} />
-          </mesh>
-          <mesh position={[-0.08, -0.16, 0.225]}>
-            <sphereGeometry args={[0.024, 8, 6]} />
-            <meshStandardMaterial color="#1a1410" roughness={0.4} />
-          </mesh>
-          <mesh position={[0.08, -0.16, 0.185]}>
-            <sphereGeometry args={[0.05, 10, 8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.25} />
-          </mesh>
-          <mesh position={[0.08, -0.16, 0.225]}>
-            <sphereGeometry args={[0.024, 8, 6]} />
-            <meshStandardMaterial color="#1a1410" roughness={0.4} />
-          </mesh>
+        ))}
+        {/* Hub */}
+        <mesh rotation={[0, Math.PI / 2, 0]}>
+          <cylinderGeometry args={[0.07, 0.07, 0.11, 10]} />
+          <meshStandardMaterial color={hubColor} metalness={0.7} roughness={0.2} />
         </mesh>
       </group>
-      {/* Right finger — Middy */}
-      <group ref={rightFinger}>
-        <mesh castShadow position={[0, 1.12, 0]}>
-          <capsuleGeometry args={[0.2, 0.5, 8, 14]} />
-          <meshStandardMaterial color={skin.finger} roughness={0.7} />
+      {/* Front fork */}
+      <mesh castShadow position={[0, 0.52, 0.52]} rotation={[0.18, 0, 0]}>
+        <boxGeometry args={[0.06, 0.54, 0.06]} />
+        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} />
+      </mesh>
+
+      {/* Rear wheel */}
+      <group ref={wheelRRef} position={[0, 0.26, -0.56]}>
+        <mesh castShadow rotation={[0, Math.PI / 2, 0]}>
+          <torusGeometry args={[0.28, 0.085, 8, 18]} />
+          <meshStandardMaterial color="#1c1c1c" roughness={0.85} />
         </mesh>
-        <mesh castShadow position={[0, 0.72, 0]}>
-          <sphereGeometry args={[0.205, 16, 12]} />
-          <meshStandardMaterial color={skin.knuckle} roughness={0.7} />
-        </mesh>
-        <mesh ref={legRFL} castShadow position={[0, 0.4, 0]}>
-          <capsuleGeometry args={[0.19, 0.42, 8, 14]} />
-          <meshStandardMaterial color={skin.finger} roughness={0.7} />
-          <mesh castShadow position={[0, -0.24, 0.16]} rotation={[-0.3, 0, 0]} scale={[1, 0.85, 0.55]}>
-            <sphereGeometry args={[0.135, 14, 10]} />
-            <meshStandardMaterial color={skin.nail} metalness={0.25} roughness={0.25} />
+        {[0, 1, 2, 3].map(i => (
+          <mesh key={i} rotation={[i * Math.PI / 4, Math.PI / 2, 0]}>
+            <boxGeometry args={[0.012, 0.52, 0.012]} />
+            <meshStandardMaterial color={CHROME_ACCENT} metalness={0.8} roughness={0.2} />
           </mesh>
-          <mesh position={[-0.08, -0.16, 0.185]}>
-            <sphereGeometry args={[0.05, 10, 8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.25} />
-          </mesh>
-          <mesh position={[-0.08, -0.16, 0.225]}>
-            <sphereGeometry args={[0.024, 8, 6]} />
-            <meshStandardMaterial color="#1a1410" roughness={0.4} />
-          </mesh>
-          <mesh position={[0.08, -0.16, 0.185]}>
-            <sphereGeometry args={[0.05, 10, 8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.25} />
-          </mesh>
-          <mesh position={[0.08, -0.16, 0.225]}>
-            <sphereGeometry args={[0.024, 8, 6]} />
-            <meshStandardMaterial color="#1a1410" roughness={0.4} />
-          </mesh>
+        ))}
+        <mesh rotation={[0, Math.PI / 2, 0]}>
+          <cylinderGeometry args={[0.07, 0.07, 0.11, 10]} />
+          <meshStandardMaterial color={hubColor} metalness={0.7} roughness={0.2} />
         </mesh>
       </group>
 
-      {/* Hat (equipped) */}
-      {hat !== "none" && (
-        <group position={[0, 1.85, 0.05]}>
-          {hat === "tophat" && (<>
-            <mesh ref={hatMeshTop} castShadow><cylinderGeometry args={[0.2, 0.2, 0.34, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-            <mesh ref={hatMeshBrim} position={[0, -0.18, 0]}><cylinderGeometry args={[0.3, 0.3, 0.04, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-          </>)}
-          {hat === "cap" && (<mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.24, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-          {hat === "crown" && (<mesh ref={hatMeshTop} castShadow><torusGeometry args={[0.2, 0.08, 8, 12]} /><meshStandardMaterial color={HAT_COLORS[hat]} emissive="#886600" emissiveIntensity={0.65} metalness={0.9} roughness={0.15} /></mesh>)}
-          {hat === "cowboy" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.16, 0.22, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-          {hat === "viking" && (<>
-            <mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.22, 10, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-            <mesh position={[-0.24, 0, 0]} rotation={[0, 0, 0.6]}><coneGeometry args={[0.05, 0.26, 6]} /><meshStandardMaterial color="#e8e0c8" /></mesh>
-            <mesh position={[0.24, 0, 0]} rotation={[0, 0, -0.6]}><coneGeometry args={[0.05, 0.26, 6]} /><meshStandardMaterial color="#e8e0c8" /></mesh>
-          </>)}
-          {hat === "beanie" && (<mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.23, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.6]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-          {hat === "party" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.2, 0.4, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-          {hat === "wizard" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.2, 0.5, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-          {hat === "propeller" && (<>
-            <mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.22, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-            <mesh position={[0, 0.24, 0]}><boxGeometry args={[0.5, 0.02, 0.05]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} /></mesh>
-          </>)}
-          {hat === "halo" && (<mesh ref={hatMeshTop} position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.18, 0.03, 8, 16]} /><meshStandardMaterial color={HAT_COLORS[hat]} emissive="#ffee88" emissiveIntensity={1.6} /></mesh>)}
+      {/* ── Rider ── */}
+      <group ref={riderGroup} position={[0, 1.38, 0]}>
+        {/* Torso */}
+        <mesh castShadow position={[0, 0.24, -0.02]}>
+          <capsuleGeometry args={[0.18, 0.36, 6, 10]} />
+          <meshStandardMaterial color={trimColor} roughness={0.6} />
+        </mesh>
+        {/* Helmet — full-face, styled like a Vespa rider */}
+        <mesh castShadow position={[0, 0.62, 0.04]}>
+          <sphereGeometry args={[0.22, 12, 10]} />
+          <meshStandardMaterial color={bodyColor} roughness={0.35} metalness={0.25} />
+        </mesh>
+        {/* Visor */}
+        <mesh position={[0, 0.60, 0.20]} rotation={[-0.15, 0, 0]} scale={[0.82, 0.46, 0.28]}>
+          <sphereGeometry args={[0.28, 10, 8, 0, Math.PI * 2, 0.6, 1.0]} />
+          <meshStandardMaterial color="#112233" metalness={0.55} roughness={0.1} transparent opacity={0.82} />
+        </mesh>
+        {/* Left arm on handlebar */}
+        <mesh castShadow position={[-0.22, 0.26, 0.24]} rotation={[-0.6, 0.15, -0.35]}>
+          <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
+          <meshStandardMaterial color={trimColor} roughness={0.6} />
+        </mesh>
+        {/* Right arm — holds saber */}
+        <mesh castShadow position={[0.22, 0.26, 0.24]} rotation={[-0.6, -0.15, 0.35]}>
+          <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
+          <meshStandardMaterial color={trimColor} roughness={0.6} />
+        </mesh>
+
+        {/* Hat (on helmet) */}
+        {hat !== "none" && (
+          <group position={[0, 0.82, 0.04]}>
+            {hat === "tophat" && (<>
+              <mesh ref={hatMeshTop} castShadow><cylinderGeometry args={[0.2, 0.2, 0.34, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
+              <mesh ref={hatMeshBrim} position={[0, -0.18, 0]}><cylinderGeometry args={[0.3, 0.3, 0.04, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
+            </>)}
+            {hat === "cap" && (<mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.24, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
+            {hat === "crown" && (<mesh ref={hatMeshTop} castShadow><torusGeometry args={[0.2, 0.08, 8, 12]} /><meshStandardMaterial color={HAT_COLORS[hat]} emissive="#886600" emissiveIntensity={0.65} metalness={0.9} roughness={0.15} /></mesh>)}
+            {hat === "cowboy" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.16, 0.22, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
+            {hat === "viking" && (<>
+              <mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.22, 10, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
+              <mesh position={[-0.24, 0, 0]} rotation={[0, 0, 0.6]}><coneGeometry args={[0.05, 0.26, 6]} /><meshStandardMaterial color="#e8e0c8" /></mesh>
+              <mesh position={[0.24, 0, 0]} rotation={[0, 0, -0.6]}><coneGeometry args={[0.05, 0.26, 6]} /><meshStandardMaterial color="#e8e0c8" /></mesh>
+            </>)}
+            {hat === "beanie" && (<mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.23, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.6]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
+            {hat === "party" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.2, 0.4, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
+            {hat === "wizard" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.2, 0.5, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
+            {hat === "propeller" && (<>
+              <mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.22, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
+              <mesh position={[0, 0.24, 0]}><boxGeometry args={[0.5, 0.02, 0.05]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} /></mesh>
+            </>)}
+            {hat === "halo" && (<mesh ref={hatMeshTop} position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.18, 0.03, 8, 16]} /><meshStandardMaterial color={HAT_COLORS[hat]} emissive="#ffee88" emissiveIntensity={1.6} /></mesh>)}
+          </group>
+        )}
+
+        {/* Lightsaber — held up by the rider's right arm */}
+        <group ref={saberGroup} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
+          <mesh castShadow position={[0, 0.12, 0]}><cylinderGeometry args={[0.03, 0.03, 0.18, 6]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.2} /></mesh>
+          <mesh ref={saberBlade} position={[0, bladeHalfLen, 0]}>
+            <cylinderGeometry args={[0.025, 0.025, bladeLen, 6]} />
+            <meshStandardMaterial color={saber.color} emissive={saber.glow} emissiveIntensity={0.6} />
+          </mesh>
         </group>
-      )}
-
-      {/* Lightsaber — held by the right finger, swings when active. Blade length
-          visually tracks the equipped saber's gameplay reach (120–185px) so a
-          higher tier saber's larger hitbox is not a surprise to the player. */}
-      <group ref={saberGroup} position={[0.28, 0.95, 0.18]} rotation={[0, 0, -1.1]}>
-        <mesh castShadow position={[0, 0.12, 0]}><cylinderGeometry args={[0.03, 0.03, 0.18, 6]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.2} /></mesh>
-        <mesh ref={saberBlade} position={[0, bladeHalfLen, 0]}>
-          <cylinderGeometry args={[0.025, 0.025, bladeLen, 6]} />
-          <meshStandardMaterial color={saber.color} emissive={saber.glow} emissiveIntensity={0.6} />
-        </mesh>
       </group>
     </group>
   );
@@ -1019,7 +1090,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, hat, saber, skin, ac
       <CameraRig stateRef={stateRef} />
       <GroundAndRoad stateRef={stateRef} theme={theme} />
       <ThemeProps stateRef={stateRef} theme={theme} />
-      <Runner stateRef={stateRef} sizeRef={sizeRef} hat={hat} saber={saber} skin={skin} />
+      <Vespa stateRef={stateRef} sizeRef={sizeRef} hat={hat} saber={saber} skin={skin} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
       <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
