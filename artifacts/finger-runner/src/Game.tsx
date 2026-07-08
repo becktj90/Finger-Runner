@@ -4,7 +4,8 @@ import {
   getSaveValue, setSaveValue,
   incrementStat, recordLevelScore,
   checkAchievements, getUnlockedCount, getTotalCount,
-  isSaberOwned, buySaber, getNextUnlockableSaber,
+  isSaberOwned, buySaber, equipSaber, getNextUnlockableSaber,
+  getEquippedSaber, getSaberByTier,
   isEndlessUnlocked,
   getEndlessHighScore, getEndlessBestDistance,
   isMusicEnabled, toggleMusic,
@@ -151,18 +152,11 @@ const MUSIC_THEMES: Record<MusicThemeId, MusicTheme> = {
 // ── Lightsaber tiers ──────────────────────────────────────────────────────────
 // The fingers wield a saber to slice obstacles mid-run. Tier 1 (red) is always
 // owned; higher tiers cost coins, glow a new colour, and reach a little further.
-type Saber = { tier: number; name: string; color: string; glow: string; reach: number; cost: number };
-const SABERS: Saber[] = [
-  { tier:1, name:"Red Saber",    color:"#ff2b2b", glow:"#ff6b6b", reach:120, cost:0   },
-  { tier:2, name:"Orange Saber", color:"#ff9500", glow:"#ffbe5c", reach:135, cost:60  },
-  { tier:3, name:"Green Saber",  color:"#34ff5e", glow:"#86ff9e", reach:150, cost:130 },
-  { tier:4, name:"Blue Saber",   color:"#36b8ff", glow:"#8fd9ff", reach:165, cost:230 },
-  { tier:5, name:"Purple Saber", color:"#b14bff", glow:"#d49bff", reach:185, cost:380 },
-];
-function getSaberDef(tier: number): Saber { return SABERS[Math.min(SABERS.length, Math.max(1, tier)) - 1]; }
+// Single source of truth: SABER_CATALOG in game/saberCatalog.ts — buying or
+// equipping in the garage takes effect here immediately (reach, colours, glow).
+const getSaberDef = getSaberByTier;
 // ── Legacy persistence wrappers → new save system ───────────────────────────────────────────────────────
-function getSaberLevel(): number { return getSaveValue("saberLevel"); }
-function setSaberLevelLS(n: number) { setSaveValue("saberLevel", n); }
+function getSaberLevel(): number { return getEquippedSaber().tier; }
 function getSelectedCharacter(): string { return getSaveValue("selectedCharacter"); }
 function setSelectedCharacterLS(id: string) { setSaveValue("selectedCharacter", id); }
 function getKidsMode(): boolean { return getSaveValue("kidsMode"); }
@@ -708,7 +702,17 @@ export default function Game() {
     const st = stateRef.current;
     if (st.obstacles.length >= POOL_OBSTACLES) return;
     const pool = getLevelDef(st.currentLevel).obs;
-    const pickType = (): ObstacleType => pool[Math.floor(Math.random() * pool.length)];
+    // Platforms hold the rider's head far above BARRIER_GAP, so an overhead
+    // barrier arriving while a platform is on screen is an unavoidable death
+    // trap. Never pick "barrier" while any platform is still ahead/above.
+    const platformAhead = st.platforms.some(pl => pl.x + pl.w > 140);
+    const pickType = (): ObstacleType => {
+      for (let tries = 0; tries < 6; tries++) {
+        const t = pool[Math.floor(Math.random() * pool.length)];
+        if (!(t === "barrier" && platformAhead)) return t;
+      }
+      return pool.find(t => t !== "barrier") ?? pool[0];
+    };
 
     // Weighted spawn patterns so dodging left/right is always meaningful:
     //  38% single random lane (any of -1, 0, 1)
@@ -770,6 +774,30 @@ export default function Game() {
   // ── Game events ────────────────────────────────────────────────────────────
   const createCrashExplosion = (x: number, y: number, roadY: number) => {
     const st = stateRef.current;
+    // Kids mode: a big silly confetti-and-stars POOF instead of gore.
+    if (st.kidsMode) {
+      const confettiCols = ["#ff44aa", "#ffee00", "#3dff5e", "#36b8ff", "#ff9500", "#b14bff"];
+      for (let i = 0; i < 45; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2 + Math.random() * 7;
+        pushCapped(st.particles, POOL_PARTICLES, {
+          x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 3 - Math.random()*2,
+          life: 45 + Math.random()*30, size: 4 + Math.random()*5,
+          color: confettiCols[Math.floor(Math.random()*confettiCols.length)],
+          shape: "rect", rot: Math.random()*Math.PI*2, rotV: (Math.random()-0.5)*0.5,
+        });
+      }
+      for (let i = 0; i < 16; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 5;
+        pushCapped(st.particles, POOL_PARTICLES, {
+          x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2.5,
+          life: 35 + Math.random()*20, size: 5 + Math.random()*6,
+          color: Math.random() < 0.5 ? "#ffffff" : "#ffe27a", shape: "circle",
+        });
+      }
+      return;
+    }
     const bloodColors = ["#8B0000","#CC0000","#DC143C","#B22222","#FF0000","#990000"];
     const boneColors  = ["#FFFACD","#F5F5DC","#E8E8D0","#D8D0C0"];
 
@@ -1057,7 +1085,10 @@ export default function Game() {
       }
       showDialog("EWWW!! GROSS!!", 70);
     }
-    st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
+    // Slicing is skilled play: it pays score (counts toward the level target
+    // and medals), plus coins — doubled while the turbo is burning.
+    st.levelScore += 10; st.totalScore += 10;
+    st.coinBalance += (st.multiplierTimer > 0 ? 2 : 1) * (st.boostTimer > 0 ? 2 : 1);
     incrementStat("totalObstaclesSliced"); incrementStat("totalCoinsCollected");
     const _ach4 = checkAchievements(); (void _ach4);
     setCoinsLS(st.coinBalance);
@@ -1220,7 +1251,9 @@ export default function Game() {
       if (st.gameRunning) {
         st.time++;
         if (st.time % 60 === 0) incrementStat("playTimeSeconds");
-        const scoreGain = 0.6;
+        // Turbo pays: +50% score rate while boosting, so the speed burst
+        // finishes the level faster instead of just raising crash risk.
+        const scoreGain = st.boostTimer > 0 ? 0.9 : 0.6;
         st.levelScore += scoreGain;
         st.totalScore += scoreGain;
 
@@ -1272,8 +1305,20 @@ export default function Game() {
           if (st.onGround) { doJump(false); st.jumpBuffer = 0; }
         }
         if (st.landImpact > 0) st.landImpact--;
-        // Slide/duck countdown — end the ducked pose after SLIDE_FRAMES.
-        if (st.sliding) { st.slideTimer--; if (st.slideTimer <= 0) { st.sliding = false; st.slideTimer = 0; } }
+        // Slide/duck countdown — end the ducked pose after SLIDE_FRAMES, but
+        // never stand up while still under an overhead barrier (at kids-mode
+        // speeds one slide is shorter than the barrier crossing time, which
+        // used to be an unavoidable death — auto-hold the duck until clear).
+        if (st.sliding) {
+          st.slideTimer--;
+          if (st.slideTimer <= 0) {
+            const underBarrier = st.obstacles.some(o =>
+              o.type === "barrier" && o.lane === st.lane &&
+              o.x < 202 + 14 && o.x + o.obsWidth > 168 - 14);
+            if (underBarrier) st.slideTimer = 1;
+            else { st.sliding = false; st.slideTimer = 0; }
+          }
+        }
 
         // Dialog — periodic quirky one-liners while running
         if (st.dialog && st.dialog.life > 0) st.dialog.life--;
@@ -1407,7 +1452,8 @@ export default function Game() {
           }
           c.x -= speed;
           if (c.x + COIN_R > 156 && c.x - COIN_R < 214 && c.y + COIN_R > coinTop && c.y - COIN_R < coinBottom) {
-            st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
+            st.levelScore += 5; st.totalScore += 5; // coins count toward the level target
+            st.coinBalance += (st.multiplierTimer > 0 ? 2 : 1) * (st.boostTimer > 0 ? 2 : 1);
             setCoinsLS(st.coinBalance);
             playCoinSound();
             for (let s = 0; s < 8; s++) {
@@ -1471,7 +1517,9 @@ export default function Game() {
         for (let i = st.ropes.length - 1; i >= 0; i--) {
           const rope = st.ropes[i];
           rope.x -= speed;
-          if (!st.activeSwing && !st.onGround) {
+          // Only grab while falling — a rope must never hijack an upward jump
+          // (velocity=0 mid-obstacle used to convert a clean jump into a death).
+          if (!st.activeSwing && !st.onGround && st.velocity > 0) {
             const footY = st.playerY + FINGER_TIP_OFFSET;
             const inH = rope.x > 152 && rope.x < 218;
             const inV = st.playerY < rope.anchorY + rope.length && footY > rope.anchorY + 8;
@@ -2116,6 +2164,9 @@ export default function Game() {
       const _ach = checkAchievements(); (void _ach);
     }
   };
+  const handleEquipSaber = (tier: number) => {
+    if (equipSaber(tier)) setSaberLevelState(getSaberLevel());
+  };
   const handleToggleKids = () => {
     const v = !getKidsMode();
     setKidsModeLS(v); setKidsModeState(v); stateRef.current.kidsMode = v;
@@ -2365,6 +2416,7 @@ export default function Game() {
             maxLevel={maxLevel}
             saberLevel={saberLevel}
             musicOn={musicOn}
+            onEquipSaber={handleEquipSaber}
             onEquipVehicle={handleEquipVehicle}
             onBuyVehicle={handleBuyVehicle}
             onBuySaber={handleBuySaber}

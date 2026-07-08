@@ -299,6 +299,17 @@ function mergeCloudIntoSave(save: GameSave, cloud: SaveSync): boolean {
     }
   }
 
+  // Carry the equipped saber across devices too (max-wins, and only if the
+  // tier is actually owned after the ownership merge above).
+  if (
+    typeof cloud.equippedSaber === "number" &&
+    cloud.equippedSaber > (save.equippedSaber || 1) &&
+    save.ownedSabers.includes(cloud.equippedSaber)
+  ) {
+    save.equippedSaber = cloud.equippedSaber;
+    changed = true;
+  }
+
   if (cloud.maxLevel > save.maxLevel) {
     save.maxLevel = cloud.maxLevel;
     changed = true;

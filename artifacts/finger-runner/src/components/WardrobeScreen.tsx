@@ -3,20 +3,15 @@
 import { useState, useEffect } from "react";
 import {
   isSaberEquipped, isSaberOwned,
-  getNextUnlockableSaber, equipSaber,
+  getNextUnlockableSaber, SABER_CATALOG,
   ACHIEVEMENTS, isAchievementUnlocked, getUnlockedCount, getTotalCount,
   getStatValue, getSaveValue, getEndlessHighScore, getEndlessBestDistance,
   fetchSyncCode, adoptSyncCode,
 } from "../game";
 import { VEHICLES, isVehicleUnlocked, type VehicleDef, type VehicleId } from "../game/vehicleCatalog";
 
-const SABERS = [
-  { tier: 1, name: "Red Saber",    color: "#ff2b2b", glow: "#ff6b6b", reach: 120, cost: 0 },
-  { tier: 2, name: "Orange Saber", color: "#ff9500", glow: "#ffbe5c", reach: 135, cost: 60 },
-  { tier: 3, name: "Green Saber",  color: "#34ff5e", glow: "#86ff9e", reach: 150, cost: 130 },
-  { tier: 4, name: "Blue Saber",   color: "#36b8ff", glow: "#8fd9ff", reach: 165, cost: 230 },
-  { tier: 5, name: "Purple Saber", color: "#b14bff", glow: "#d49bff", reach: 185, cost: 380 },
-];
+// Single source of truth for saber stats — same catalog the game sim reads.
+const SABERS = SABER_CATALOG;
 
 const font = "'Courier New', monospace";
 const retroFont = "'Press Start 2P', monospace";
@@ -25,7 +20,7 @@ type Tab = "garage" | "sabers" | "achievements" | "stats";
 
 export default function WardrobeScreen({
   coinBalance, equippedVehicle, ownedVehicles, maxLevel, saberLevel, musicOn,
-  onEquipVehicle, onBuyVehicle, onBuySaber, onToggleMusic, onToggleKids, onClose,
+  onEquipVehicle, onBuyVehicle, onBuySaber, onEquipSaber, onToggleMusic, onToggleKids, onClose,
 }: {
   coinBalance: number;
   equippedVehicle: VehicleId;
@@ -36,6 +31,7 @@ export default function WardrobeScreen({
   onEquipVehicle: (id: VehicleId) => void;
   onBuyVehicle: (v: VehicleDef) => void;
   onBuySaber: (tier: number) => void;
+  onEquipSaber: (tier: number) => void;
   onToggleMusic: () => void;
   onToggleKids: () => void;
   onClose: () => void;
@@ -212,7 +208,7 @@ export default function WardrobeScreen({
                     {equipped ? (
                       <span style={{ fontSize: "0.44rem", fontFamily: retroFont, color: s.color, lineHeight: 1.8 }}>✓ ACTIVE</span>
                     ) : owned ? (
-                      <button onClick={() => equipSaber(s.tier)} className="retro-btn"
+                      <button onClick={() => onEquipSaber(s.tier)} className="retro-btn"
                         style={{
                           padding: "3px 6px", fontSize: "0.42rem", fontFamily: retroFont,
                           background: "transparent", color: "#888", border: "2px solid #444",
