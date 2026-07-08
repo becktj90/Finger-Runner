@@ -66,7 +66,8 @@ export const THEME_COLORS: Record<Theme3D, ThemePalette> = {
 export const CHROME_ACCENT = "#e6e6f0";
 
 // ── Obstacle visual configs ────────────────────────────────────────────
-export type ObstacleRenderKind = "box" | "cylinder" | "cone" | "animal" | "bicycle" | "sign" | "barrier";
+export type ObstacleRenderKind = "box" | "cylinder" | "cone" | "animal" | "bicycle" | "sign" | "barrier"
+  | "poop" | "toilet" | "duck" | "dino" | "pinata" | "undies";
 
 export const OBSTACLE_COLORS: Record<string, string> = {
   mailbox: "#0084ff", hydrant: "#ff1053", stopsign: "#ff1053", trashcan: "#9494ab",
@@ -74,6 +75,9 @@ export const OBSTACLE_COLORS: Record<string, string> = {
   cone: "#ff9500", newsbox: "#3d5afe", barrier: "#ff2bd6",
   // New obstacle types
   pumpkin: "#e06010", cactus: "#2a9040", flamingo: "#ff68b4", cart: "#b8b8c8",
+  // Silly kid obstacles
+  poop: "#8a5a2b", toilet: "#f0f0f5", duck: "#ffd23f", dino: "#3ecf4a",
+  pinata: "#ff44aa", undies: "#f7f7ff",
 };
 
 export const OBSTACLE_KIND: Record<string, ObstacleRenderKind> = {
@@ -82,6 +86,9 @@ export const OBSTACLE_KIND: Record<string, ObstacleRenderKind> = {
   barrier: "barrier",
   // New obstacle types
   pumpkin: "cylinder", cactus: "cone", flamingo: "animal", cart: "bicycle",
+  // Silly kid obstacles
+  poop: "poop", toilet: "toilet", duck: "duck", dino: "dino",
+  pinata: "pinata", undies: "undies",
 };
 
 export const OBSTACLE_GLOW: Record<string, boolean> = {
@@ -89,12 +96,14 @@ export const OBSTACLE_GLOW: Record<string, boolean> = {
   cone: true, gnome: true, newsbox: true, bicycle: true, barrier: true,
   dog: false, cat: false,
   pumpkin: false, cactus: false, flamingo: false, cart: true,
+  poop: false, toilet: false, duck: false, dino: false, pinata: true, undies: false,
 };
 export const OBSTACLE_METAL: Record<string, boolean> = {
   mailbox: true, trashcan: true, bicycle: true, barrier: true,
   hydrant: false, stopsign: false, cone: false, gnome: false, newsbox: false,
   dog: false, cat: false,
   pumpkin: false, cactus: false, flamingo: false, cart: true,
+  poop: false, toilet: false, duck: false, dino: false, pinata: false, undies: false,
 };
 
 // Wobble personality per obstacle type: [speed, amplitude, axis]
@@ -108,6 +117,10 @@ export const OBSTACLE_WOBBLE: Record<string, [number, number, number]> = {
   barrier:  [0.04, 0.02, 0],
   pumpkin:  [0.10, 0.06, 2], cactus:  [0.08, 0.09, 0],
   flamingo: [0.16, 0.12, 1], cart:    [0.11, 0.07, 1],
+  // Silly kid obstacles — big comedy wobbles
+  poop:     [0.12, 0.07, 2], toilet:  [0.05, 0.03, 0],
+  duck:     [0.16, 0.11, 2], dino:    [0.13, 0.09, 1],
+  pinata:   [0.15, 0.12, 0], undies:  [0.11, 0.08, 1],
 };
 
 // ── Runner hat colors ──────────────────────────────────────────────────
@@ -132,6 +145,8 @@ export interface CharacterDef {
   nail: string;
   saberColor: string;
   saberGlow: string;
+  /** Kylo-style crossguard saber: side vent blades + unstable flicker. */
+  crossguard?: boolean;
   tagline: string;
   voice: "cheer" | "giggle" | "bark";
 }
@@ -139,7 +154,7 @@ export interface CharacterDef {
 export const CHARACTERS: CharacterDef[] = [
   { id: "apollo", name: "Apollo", ageLabel: "5 yrs", emoji: "🧢",
     backHand: "#dfae8a", finger: "#e8b892", knuckle: "#e0ac86", nail: "#f7ddc4",
-    saberColor: "#36b8ff", saberGlow: "#8fd9ff",
+    saberColor: "#ff2b2b", saberGlow: "#ff6b6b", crossguard: true,
     tagline: "Catch me if you can!", voice: "cheer" },
   { id: "rocco", name: "Rocco", ageLabel: "2 yrs", emoji: "🧒",
     backHand: "#c98f63", finger: "#d89b6f", knuckle: "#c1885c", nail: "#f0d3ad",

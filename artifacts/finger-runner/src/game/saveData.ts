@@ -1,15 +1,19 @@
 // ── Persistent versioned save data with legacy migration ──────────────────────
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface GameSave {
   version: number;
   maxLevel: number;
   bestScore: number;
   totalCoins: number;
+  /** Legacy (pre-v3) — hats were replaced by vehicles; kept for parse back-compat. */
   equippedHat: string;
   selectedCharacter: string;
+  /** Legacy (pre-v3) — hats were replaced by vehicles; kept for parse back-compat. */
   ownedHats: string[];
+  equippedVehicle: string;
+  ownedVehicles: string[];
   saberLevel: number;
   ownedSabers: number[];
   equippedSaber: number;
@@ -45,6 +49,8 @@ function createDefaultSave(): GameSave {
     equippedHat: "none",
     selectedCharacter: "apollo",
     ownedHats: ["none"],
+    equippedVehicle: "vespa",
+    ownedVehicles: ["vespa"],
     saberLevel: 1,
     ownedSabers: [1],
     equippedSaber: 1,
@@ -108,6 +114,21 @@ function migrateLegacy(save: GameSave): GameSave {
   return save;
 }
 
+// ── v2 → v3: hats retired in favour of vehicles ──────────────────────────────
+// Refunds coins spent on purchased hats and seeds the vehicle fields.
+const HAT_REFUNDS: Record<string, number> = {
+  beanie: 25, party: 50, wizard: 90, propeller: 140, halo: 200,
+};
+
+function migrateToV3(save: GameSave): GameSave {
+  let refund = 0;
+  for (const hat of save.ownedHats) refund += HAT_REFUNDS[hat] || 0;
+  save.totalCoins += refund;
+  if (!save.ownedVehicles || save.ownedVehicles.length === 0) save.ownedVehicles = ["vespa"];
+  if (!save.equippedVehicle) save.equippedVehicle = "vespa";
+  return save;
+}
+
 export function loadSave(): GameSave {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
@@ -123,9 +144,17 @@ export function loadSave(): GameSave {
     if (!save.achievements) save.achievements = {};
     if (!save.ownedHats) save.ownedHats = ["none"];
     if (!save.ownedSabers) save.ownedSabers = [1];
-    if (save.version < SAVE_VERSION) {
+    if (!save.ownedVehicles) save.ownedVehicles = ["vespa"];
+    if (!save.equippedVehicle) save.equippedVehicle = "vespa";
+    if (save.version < 2) {
       save = migrateLegacy(save);
+    }
+    if (save.version < 3) {
+      save = migrateToV3(save);
+    }
+    if (save.version < SAVE_VERSION) {
       save.version = SAVE_VERSION;
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch { /* ignore */ }
     }
     return save;
   } catch {

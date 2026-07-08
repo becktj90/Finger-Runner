@@ -1,31 +1,14 @@
-// ── Tabbed wardrobe: outfits, sabers, achievements, stats ───────────────────
+// ── Tabbed wardrobe: garage (vehicles), sabers, achievements, stats ──────────
 
 import { useState, useEffect } from "react";
 import {
-  getSaberByTier, getOwnedSabers, isSaberEquipped, isSaberOwned,
-  getNextUnlockableSaber, buySaber, equipSaber,
+  isSaberEquipped, isSaberOwned,
+  getNextUnlockableSaber, equipSaber,
   ACHIEVEMENTS, isAchievementUnlocked, getUnlockedCount, getTotalCount,
   getStatValue, getSaveValue, getEndlessHighScore, getEndlessBestDistance,
   fetchSyncCode, adoptSyncCode,
 } from "../game";
-
-type HatId = "none"|"tophat"|"cap"|"crown"|"cowboy"|"viking"|"beanie"|"party"|"wizard"|"propeller"|"halo";
-
-interface HatDef { id: HatId; name: string; emoji: string; unlockLevel: number; cost?: number }
-
-const HATS: HatDef[] = [
-  { id: "none",   name: "Bare Knuckle",  emoji: "🤚", unlockLevel: 0 },
-  { id: "tophat", name: "Top Hat",       emoji: "🎩", unlockLevel: 2 },
-  { id: "cap",    name: "Baseball Cap",  emoji: "🧢", unlockLevel: 3 },
-  { id: "crown",  name: "Gold Crown",    emoji: "👑", unlockLevel: 5 },
-  { id: "cowboy", name: "Cowboy Hat",    emoji: "🤠", unlockLevel: 6 },
-  { id: "viking", name: "Viking Helmet", emoji: "⚔️", unlockLevel: 8 },
-  { id: "beanie",    name: "Cozy Beanie",   emoji: "🧵", unlockLevel: 0, cost: 25 },
-  { id: "party",     name: "Party Hat",     emoji: "🎉", unlockLevel: 0, cost: 50 },
-  { id: "wizard",    name: "Wizard Hat",    emoji: "🧙", unlockLevel: 0, cost: 90 },
-  { id: "propeller", name: "Propeller Cap", emoji: "🚁", unlockLevel: 0, cost: 140 },
-  { id: "halo",      name: "Angel Halo",    emoji: "😇", unlockLevel: 0, cost: 200 },
-];
+import { VEHICLES, isVehicleUnlocked, type VehicleDef, type VehicleId } from "../game/vehicleCatalog";
 
 const SABERS = [
   { tier: 1, name: "Red Saber",    color: "#ff2b2b", glow: "#ff6b6b", reach: 120, cost: 0 },
@@ -38,33 +21,30 @@ const SABERS = [
 const font = "'Courier New', monospace";
 const retroFont = "'Press Start 2P', monospace";
 
-function isHatUnlocked(hat: HatDef, owned: HatId[], maxLevel: number): boolean {
-  if (hat.cost == null) return hat.unlockLevel <= maxLevel || hat.unlockLevel === 0;
-  return owned.includes(hat.id);
-}
-
-type Tab = "outfits" | "sabers" | "achievements" | "stats";
+type Tab = "garage" | "sabers" | "achievements" | "stats";
 
 export default function WardrobeScreen({
-  coinBalance, equippedHat, ownedOutfits, saberLevel, musicOn,
-  onEquipHat, onBuyOutfit, onBuySaber, onToggleMusic, onToggleKids, onClose,
+  coinBalance, equippedVehicle, ownedVehicles, maxLevel, saberLevel, musicOn,
+  onEquipVehicle, onBuyVehicle, onBuySaber, onToggleMusic, onToggleKids, onClose,
 }: {
   coinBalance: number;
-  equippedHat: HatId;
-  ownedOutfits: HatId[];
+  equippedVehicle: VehicleId;
+  ownedVehicles: string[];
+  maxLevel: number;
   saberLevel: number;
   musicOn: boolean;
-  onEquipHat: (id: HatId) => void;
-  onBuyOutfit: (hat: HatDef) => void;
+  onEquipVehicle: (id: VehicleId) => void;
+  onBuyVehicle: (v: VehicleDef) => void;
   onBuySaber: (tier: number) => void;
   onToggleMusic: () => void;
   onToggleKids: () => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("outfits");
+  const [tab, setTab] = useState<Tab>("garage");
   const [syncCode, setSyncCode] = useState<string | null>(null);
   const [syncInput, setSyncInput] = useState("");
   const [syncStatus, setSyncStatus] = useState<"idle" | "loading" | "ok" | "err">("idle");
+  void saberLevel;
 
   useEffect(() => {
     if (tab === "stats" && syncCode === null) {
@@ -104,8 +84,6 @@ export default function WardrobeScreen({
     </button>
   );
 
-  const maxLevel = getSaveValue("maxLevel");
-
   return (
     <div style={{ ...overlay, background: "rgba(0,0,10,0.94)" }}>
       <div style={{
@@ -118,7 +96,7 @@ export default function WardrobeScreen({
           fontSize: "0.80rem", margin: "0 0 4px 0", color: "#00ffcc", textAlign: "center",
           fontFamily: retroFont, textShadow: "0 0 12px #00ffcc", letterSpacing: "0.06em",
         }}>
-          WARDROBE
+          GARAGE
         </h2>
         <div style={{ textAlign: "center", margin: "0 0 12px 0" }}>
           <span style={{
@@ -132,7 +110,7 @@ export default function WardrobeScreen({
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-          {tabBtn("outfits", "OUTFITS", "👕")}
+          {tabBtn("garage", "RIDES", "🛵")}
           {tabBtn("sabers", "SABERS", "⚔️")}
           {tabBtn("achievements", "BADGES", "🏆")}
           {tabBtn("stats", "STATS", "📊")}
@@ -140,18 +118,18 @@ export default function WardrobeScreen({
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-          {tab === "outfits" && (
+          {tab === "garage" && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {HATS.map(hat => {
-                const owned = isHatUnlocked(hat, ownedOutfits, maxLevel);
-                const isCoin = hat.cost != null;
-                const equipped = equippedHat === hat.id;
-                const affordable = coinBalance >= (hat.cost ?? 0);
+              {VEHICLES.map(v => {
+                const owned = isVehicleUnlocked(v, ownedVehicles, maxLevel);
+                const isCoin = v.cost != null;
+                const equipped = equippedVehicle === v.id;
+                const affordable = coinBalance >= (v.cost ?? 0);
                 const subtitle = isCoin
-                  ? (owned ? "Owned" : `Buy: ★ ${hat.cost}`)
-                  : (hat.unlockLevel === 0 ? "Always available" : `Unlock: Level ${hat.unlockLevel}`);
+                  ? (owned ? v.blurb : `Buy: ★ ${v.cost}`)
+                  : (v.unlockLevel === 0 ? v.blurb : owned ? v.blurb : `Unlock: Level ${v.unlockLevel}`);
                 return (
-                  <div key={hat.id}
+                  <div key={v.id}
                     style={{
                       background: equipped ? "rgba(0,255,204,0.07)" : "rgba(255,255,255,0.02)",
                       border: `2px solid ${equipped ? "#00ffcc" : owned ? "#333" : "#222"}`,
@@ -159,15 +137,15 @@ export default function WardrobeScreen({
                       borderRadius: 3, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10,
                       opacity: owned ? 1 : 0.55,
                     }}>
-                    <span style={{ fontSize: "1.7rem" }}>{hat.emoji}</span>
+                    <span style={{ fontSize: "1.7rem" }}>{v.emoji}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
                         fontWeight: "bold", fontSize: "0.58rem", fontFamily: retroFont, color: "#fff", lineHeight: 1.9,
-                      }}>{hat.name}</div>
+                      }}>{v.name}</div>
                       <div style={{ fontSize: "0.55rem", color: "#555", fontFamily: font }}>{subtitle}</div>
                     </div>
                     {owned ? (
-                      <button onClick={() => onEquipHat(hat.id)} className="retro-btn"
+                      <button onClick={() => onEquipVehicle(v.id)} className="retro-btn"
                         style={{
                           padding: "4px 8px", fontSize: "0.52rem", fontFamily: retroFont,
                           background: equipped ? "rgba(0,255,204,0.18)" : "transparent",
@@ -176,10 +154,10 @@ export default function WardrobeScreen({
                           boxShadow: equipped ? "0 0 8px rgba(0,255,204,0.35)" : "none",
                           cursor: "pointer", lineHeight: 2,
                         }}>
-                        {equipped ? "✓ ON" : "EQUIP"}
+                        {equipped ? "✓ ON" : "RIDE"}
                       </button>
                     ) : isCoin ? (
-                      <button onClick={() => affordable && onBuyOutfit(hat)} className={affordable ? "retro-btn" : undefined}
+                      <button onClick={() => affordable && onBuyVehicle(v)} className={affordable ? "retro-btn" : undefined}
                         disabled={!affordable}
                         style={{
                           padding: "4px 8px", fontSize: "0.52rem", fontFamily: retroFont,
@@ -189,11 +167,11 @@ export default function WardrobeScreen({
                           boxShadow: affordable ? "0 0 8px rgba(255,238,0,0.25)" : "none",
                           cursor: affordable ? "pointer" : "not-allowed", lineHeight: 2,
                         }}>
-                        ★ {hat.cost}
+                        ★ {v.cost}
                       </button>
                     ) : (
                       <span style={{ fontSize: "0.48rem", color: "#444", fontFamily: retroFont, lineHeight: 2 }}>
-                        🔒 LV{hat.unlockLevel}
+                        🔒 LV{v.unlockLevel}
                       </span>
                     )}
                   </div>

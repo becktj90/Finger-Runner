@@ -10,12 +10,12 @@ import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import {
   FINGER_CENTER_X, LANE_X, LANE_OFFSET, worldZ, worldY, roadYOld, THEME_COLORS,
-  OBSTACLE_COLORS, OBSTACLE_KIND, HAT_COLORS, POWERUP_COLORS,
+  OBSTACLE_COLORS, OBSTACLE_KIND, POWERUP_COLORS,
   CHROME_ACCENT, OBSTACLE_GLOW, OBSTACLE_METAL, OBSTACLE_WOBBLE, BLOOM_CONFIG,
   ROAD_SURFACE_OFFSET, FINGER_TIP_OFFSET, HIDE_Z, BARRIER_GAP,
   POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
-  type GameSceneState, type Theme3D, type HatId,
+  type GameSceneState, type Theme3D,
 } from "./coords";
 
 type SaberInfo = { color: string; glow: string; reach: number };
@@ -28,7 +28,6 @@ interface Scene3DProps {
   stateRef: React.MutableRefObject<GameSceneState>;
   sizeRef: React.MutableRefObject<{ width: number; height: number }>;
   theme: Theme3D;
-  hat: HatId;
   saber: SaberInfo;
   skin: SkinInfo;
   /** Character's saber-glow hex — used to tint the 3D sky, fog, and rim light
@@ -135,6 +134,7 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
         }
       } else if (kind === "cone" || o.type === "gnome") {
         cone.visible = true;
+        cone.rotation.set(0, 0, 0);
         cone.scale.set(w * 0.5, h, w * 0.5);
         cone.position.set(0, h / 2, 0);
         applyFinish(cone.material as THREE.MeshStandardMaterial, color);
@@ -156,6 +156,89 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
         wl.position.set(-w * 0.32, h * 0.28, 0);
         wr.position.set(w * 0.32, h * 0.28, 0);
         wl.scale.setScalar(h * 0.28); wr.scale.setScalar(h * 0.28);
+        // The tori double as undies leg-holes elsewhere, so re-assert tire black here
+        (wl.material as THREE.MeshStandardMaterial).color.set("#111111");
+        (wr.material as THREE.MeshStandardMaterial).color.set("#111111");
+      } else if (kind === "poop") {
+        // Cartoon poop: squat brown cone swirl with a rounded dollop on top
+        cone.visible = true;
+        cone.rotation.set(0, 0, 0);
+        cone.scale.set(w * 0.62, h * 0.85, w * 0.62);
+        cone.position.set(0, h * 0.42, 0);
+        applyFinish(cone.material as THREE.MeshStandardMaterial, color);
+        head.visible = true;
+        head.position.set(0, h * 0.9, 0);
+        head.scale.setScalar(Math.max(0.1, w * 0.16));
+        applyFinish(head.material as THREE.MeshStandardMaterial, color);
+      } else if (kind === "toilet") {
+        // Runaway toilet: cylinder bowl + tank box + flattened seat disc
+        cyl.visible = true;
+        cyl.scale.set(w * 0.42, h * 0.52, w * 0.42);
+        cyl.position.set(0, h * 0.26, 0.06);
+        applyFinish(cyl.material as THREE.MeshStandardMaterial, color);
+        box.visible = true;
+        box.scale.set(w * 0.72, h * 0.48, 0.2);
+        box.position.set(0, h * 0.74, -0.14);
+        applyFinish(box.material as THREE.MeshStandardMaterial, color);
+        accent.visible = true;
+        accent.rotation.set(0, 0, 0);
+        accent.scale.set(w * 0.55, 0.05, w * 0.55);
+        accent.position.set(0, h * 0.55, 0.06);
+        const seatMat = accent.material as THREE.MeshStandardMaterial;
+        seatMat.color.set("#e8e8f0"); seatMat.metalness = 0.1; seatMat.roughness = 0.6;
+        seatMat.emissive.set("#000000"); seatMat.emissiveIntensity = 0;
+      } else if (kind === "duck") {
+        // Giant rubber ducky: yellow body + round head + orange beak
+        box.visible = true;
+        box.scale.set(w, h * 0.5, 0.46);
+        box.position.set(0, h * 0.27, 0);
+        applyFinish(box.material as THREE.MeshStandardMaterial, color);
+        head.visible = true;
+        head.position.set(0, h * 0.72, 0.12);
+        head.scale.setScalar(Math.max(0.16, h * 0.3));
+        applyFinish(head.material as THREE.MeshStandardMaterial, color);
+        cone.visible = true;
+        cone.rotation.set(Math.PI / 2, 0, 0);
+        cone.scale.set(0.09, 0.2, 0.09);
+        cone.position.set(0, h * 0.72, 0.12 + Math.max(0.16, h * 0.3) + 0.08);
+        applyFinish(cone.material as THREE.MeshStandardMaterial, "#ff8c1a");
+      } else if (kind === "dino") {
+        // Toy T-rex: green body + head + tail cone poking out the back
+        box.visible = true;
+        box.scale.set(w * 0.82, h * 0.6, 0.4);
+        box.position.set(0, h * 0.32, 0);
+        applyFinish(box.material as THREE.MeshStandardMaterial, color);
+        head.visible = true;
+        head.position.set(0, h * 0.78, 0.16);
+        head.scale.setScalar(Math.max(0.15, h * 0.28));
+        applyFinish(head.material as THREE.MeshStandardMaterial, "#2fa83b");
+        cone.visible = true;
+        cone.rotation.set(-Math.PI / 2, 0, 0);
+        cone.scale.set(0.1, 0.38, 0.1);
+        cone.position.set(0, h * 0.35, -0.4);
+        applyFinish(cone.material as THREE.MeshStandardMaterial, color);
+      } else if (kind === "pinata") {
+        // Party piñata: glowing candy-pink body + golden topper
+        box.visible = true;
+        box.scale.set(w, h * 0.62, 0.46);
+        box.position.set(0, h * 0.45, 0);
+        applyFinish(box.material as THREE.MeshStandardMaterial, color);
+        head.visible = true;
+        head.position.set(0, h * 0.88, 0);
+        head.scale.setScalar(Math.max(0.1, h * 0.16));
+        applyFinish(head.material as THREE.MeshStandardMaterial, "#ffee00");
+      } else if (kind === "undies") {
+        // Giant lost underpants: wide white waistband box + two leg-hole rings
+        box.visible = true;
+        box.scale.set(w, h * 0.55, 0.3);
+        box.position.set(0, h * 0.6, 0);
+        applyFinish(box.material as THREE.MeshStandardMaterial, color);
+        wl.visible = true; wr.visible = true;
+        wl.position.set(-w * 0.24, h * 0.2, 0);
+        wr.position.set(w * 0.24, h * 0.2, 0);
+        wl.scale.setScalar(Math.max(0.12, h * 0.2)); wr.scale.setScalar(Math.max(0.12, h * 0.2));
+        (wl.material as THREE.MeshStandardMaterial).color.set("#dcdcee");
+        (wr.material as THREE.MeshStandardMaterial).color.set("#dcdcee");
       } else if (kind === "sign") {
         cyl.visible = true;
         cyl.scale.set(0.05, h, 0.05);
@@ -454,13 +537,11 @@ function RopePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; s
 // and holds the saber. Skin colors map: backHand→body, finger→fender/trim,
 // knuckle→wheel hubs, nail→seat/rider jacket.
 
-function Vespa({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; hat: HatId; saber: SaberInfo; skin: SkinInfo }) {
+function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo }) {
   const group = useRef<THREE.Group>(null);
   const wheelFRef = useRef<THREE.Group>(null);
   const wheelRRef = useRef<THREE.Group>(null);
   const riderGroup = useRef<THREE.Group>(null);
-  const hatMeshTop = useRef<THREE.Mesh>(null);
-  const hatMeshBrim = useRef<THREE.Mesh>(null);
   const saberBlade = useRef<THREE.Mesh>(null);
   const saberGroup = useRef<THREE.Group>(null);
   const exhaustRef = useRef<THREE.Mesh>(null);
@@ -523,11 +604,6 @@ function Vespa({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProps
         mat.emissive.set(saber.glow);
         mat.emissiveIntensity = active ? 1.8 : 0.8;
       }
-    }
-
-    if (hatMeshTop.current) {
-      const spin = hat === "propeller" ? st.time * 0.6 : 0;
-      hatMeshTop.current.rotation.y = spin;
     }
 
     // Exhaust puff flicker
@@ -694,32 +770,6 @@ function Vespa({ stateRef, sizeRef, hat, saber, skin }: { stateRef: Scene3DProps
           <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
           <meshStandardMaterial color={trimColor} roughness={0.6} />
         </mesh>
-
-        {/* Hat (on helmet) */}
-        {hat !== "none" && (
-          <group position={[0, 0.82, 0.04]}>
-            {hat === "tophat" && (<>
-              <mesh ref={hatMeshTop} castShadow><cylinderGeometry args={[0.2, 0.2, 0.34, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-              <mesh ref={hatMeshBrim} position={[0, -0.18, 0]}><cylinderGeometry args={[0.3, 0.3, 0.04, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-            </>)}
-            {hat === "cap" && (<mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.24, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-            {hat === "crown" && (<mesh ref={hatMeshTop} castShadow><torusGeometry args={[0.2, 0.08, 8, 12]} /><meshStandardMaterial color={HAT_COLORS[hat]} emissive="#886600" emissiveIntensity={0.65} metalness={0.9} roughness={0.15} /></mesh>)}
-            {hat === "cowboy" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.16, 0.22, 10]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-            {hat === "viking" && (<>
-              <mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.22, 10, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-              <mesh position={[-0.24, 0, 0]} rotation={[0, 0, 0.6]}><coneGeometry args={[0.05, 0.26, 6]} /><meshStandardMaterial color="#e8e0c8" /></mesh>
-              <mesh position={[0.24, 0, 0]} rotation={[0, 0, -0.6]}><coneGeometry args={[0.05, 0.26, 6]} /><meshStandardMaterial color="#e8e0c8" /></mesh>
-            </>)}
-            {hat === "beanie" && (<mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.23, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.6]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-            {hat === "party" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.2, 0.4, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-            {hat === "wizard" && (<mesh ref={hatMeshTop} castShadow><coneGeometry args={[0.2, 0.5, 8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>)}
-            {hat === "propeller" && (<>
-              <mesh ref={hatMeshTop} castShadow><sphereGeometry args={[0.22, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.8]} /><meshStandardMaterial color={HAT_COLORS[hat]} /></mesh>
-              <mesh position={[0, 0.24, 0]}><boxGeometry args={[0.5, 0.02, 0.05]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} /></mesh>
-            </>)}
-            {hat === "halo" && (<mesh ref={hatMeshTop} position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.18, 0.03, 8, 16]} /><meshStandardMaterial color={HAT_COLORS[hat]} emissive="#ffee88" emissiveIntensity={1.6} /></mesh>)}
-          </group>
-        )}
 
         {/* Lightsaber — held up by the rider's right arm */}
         <group ref={saberGroup} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
@@ -1076,7 +1126,7 @@ function NeonBloom({ theme }: { theme: Theme3D }) {
   );
 }
 
-export default function Scene3D({ stateRef, sizeRef, theme, hat, saber, skin, accent }: Scene3DProps) {
+export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent }: Scene3DProps) {
   return (
     <Canvas
       dpr={[1, 1.6]}
@@ -1090,7 +1140,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, hat, saber, skin, ac
       <CameraRig stateRef={stateRef} />
       <GroundAndRoad stateRef={stateRef} theme={theme} />
       <ThemeProps stateRef={stateRef} theme={theme} />
-      <Vespa stateRef={stateRef} sizeRef={sizeRef} hat={hat} saber={saber} skin={skin} />
+      <Vespa stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
       <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />

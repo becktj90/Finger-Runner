@@ -8,6 +8,8 @@ import {
   isEndlessUnlocked,
   getEndlessHighScore, getEndlessBestDistance,
   isMusicEnabled, toggleMusic,
+  VEHICLES, isVehicleUnlocked,
+  type VehicleDef, type VehicleId,
 } from "./game";
 import Scene3DBoundary from "./three/Scene3DBoundary";
 import type { GameSceneState, Theme3D } from "./three/coords";
@@ -27,9 +29,9 @@ const WardrobeScreen = lazy(() => import("./components/WardrobeScreen"));
 const CharacterSelectScreen = lazy(() => import("./components/CharacterSelectScreen"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart";
+type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart"
+  |"poop"|"toilet"|"duck"|"dino"|"pinata"|"undies";
 type Theme = "suburb"|"city"|"highway"|"mountain"|"night";
-type HatId = "none"|"tophat"|"cap"|"crown"|"cowboy"|"viking"|"beanie"|"party"|"wizard"|"propeller"|"halo";
 
 interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; lane: number; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"|"gas"; rot?: number; rotV?: number; }
@@ -79,14 +81,20 @@ function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFF
 //   tall: mailbox 68, bicycle 68, stopsign 88 — need a committed hold-jump
 // A full hold-jump clears ~228px, so even the stopsign stays fair.
 const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
+  poop:     { w:40, h:40 },   // giant cartoon poop swirl — easiest hop
   cat:      { w:28, h:42 },
+  undies:   { w:48, h:44 },   // giant lost underpants
   dog:      { w:44, h:46 },
   pumpkin:  { w:44, h:44 },   // stumpy round jack-o-lantern
+  duck:     { w:46, h:52 },   // giant rubber ducky
+  pinata:   { w:40, h:54 },   // party piñata — slash it for bonus coins!
   cone:     { w:32, h:56 },
   hydrant:  { w:34, h:58 },
+  dino:     { w:42, h:58 },   // toy T-rex on the loose
   cart:     { w:48, h:56 },   // shopping cart
   newsbox:  { w:36, h:60 },
   gnome:    { w:30, h:62 },
+  toilet:   { w:44, h:64 },   // runaway toilet, lid flapping
   flamingo: { w:28, h:64 },   // yard flamingo, tall and slender
   trashcan: { w:36, h:66 },
   mailbox:  { w:36, h:68 },
@@ -101,21 +109,21 @@ const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
 // dense, with the stopsign showing up more often as the finale approaches.
 const LEVELS = [
   { num:1, name:"Neighborhood Cruise",  target:500,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0,
-    obs:["cat","dog","cone","pumpkin","cat","dog","pumpkin"] as ObstacleType[] },
+    obs:["cat","dog","poop","duck","cone","poop","pumpkin","duck","cat"] as ObstacleType[] },
   { num:2, name:"Shopping District",    target:600,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0,
-    obs:["cat","dog","pumpkin","hydrant","flamingo","trashcan","cone","cart","barrier"] as ObstacleType[] },
+    obs:["cat","dog","poop","duck","undies","hydrant","pinata","trashcan","cone","cart","barrier"] as ObstacleType[] },
   { num:3, name:"Downtown",             target:650,  theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6,
-    obs:["dog","cone","hydrant","newsbox","flamingo","gnome","cart","trashcan","barrier"] as ObstacleType[] },
+    obs:["dog","cone","poop","toilet","hydrant","newsbox","dino","undies","gnome","cart","pinata","barrier"] as ObstacleType[] },
   { num:4, name:"City Center",          target:700,  theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2,
-    obs:["cone","hydrant","newsbox","gnome","flamingo","cart","trashcan","mailbox","barrier"] as ObstacleType[] },
+    obs:["cone","hydrant","toilet","newsbox","dino","gnome","flamingo","cart","undies","pinata","mailbox","barrier"] as ObstacleType[] },
   { num:5, name:"Highway On-Ramp",      target:750,  theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8,
-    obs:["hydrant","newsbox","cactus","gnome","trashcan","cart","mailbox","bicycle","barrier"] as ObstacleType[] },
+    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","trashcan","cart","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
   { num:6, name:"Open Highway",         target:800,  theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4,
-    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","stopsign","cactus","barrier","barrier"] as ObstacleType[] },
+    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","stopsign","pinata","cactus","barrier","barrier"] as ObstacleType[] },
   { num:7, name:"Mountain Pass",        target:900,  theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0,
-    obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","barrier","barrier"] as ObstacleType[] },
+    obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","pinata","barrier","barrier"] as ObstacleType[] },
   { num:8, name:"Night Drive",          target:1000, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
-    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","barrier","barrier"] as ObstacleType[] },
+    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","pinata","barrier","barrier"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
@@ -139,22 +147,6 @@ const MUSIC_THEMES: Record<MusicThemeId, MusicTheme> = {
   mountain: { file: "level-theme-1.mp3", leadGain: 1.1  },
   night:    { file: "level-theme-2.mp3", leadGain: 1.1  },
 };
-
-// ── Hat catalogue ─────────────────────────────────────────────────────────────
-const HATS: { id: HatId; name: string; emoji: string; unlockLevel: number; cost?: number }[] = [
-  { id:"none",   name:"Bare Knuckle",  emoji:"🤚", unlockLevel:0 },
-  { id:"tophat", name:"Top Hat",       emoji:"🎩", unlockLevel:2 },
-  { id:"cap",    name:"Baseball Cap",  emoji:"🧢", unlockLevel:3 },
-  { id:"crown",  name:"Gold Crown",    emoji:"👑", unlockLevel:5 },
-  { id:"cowboy", name:"Cowboy Hat",    emoji:"🤠", unlockLevel:6 },
-  { id:"viking", name:"Viking Helmet", emoji:"⚔️",  unlockLevel:8 },
-  // Coin-purchasable outfits (unlockLevel:0, gated on coin purchase)
-  { id:"beanie",    name:"Cozy Beanie",   emoji:"🧶", unlockLevel:0, cost:25 },
-  { id:"party",     name:"Party Hat",     emoji:"🎉", unlockLevel:0, cost:50 },
-  { id:"wizard",    name:"Wizard Hat",    emoji:"🧙", unlockLevel:0, cost:90 },
-  { id:"propeller", name:"Propeller Cap", emoji:"🚁", unlockLevel:0, cost:140 },
-  { id:"halo",      name:"Angel Halo",    emoji:"😇", unlockLevel:0, cost:200 },
-];
 
 // ── Lightsaber tiers ──────────────────────────────────────────────────────────
 // The fingers wield a saber to slice obstacles mid-run. Tier 1 (red) is always
@@ -233,10 +225,10 @@ function charLineFor(event: keyof typeof CHAR_LINES["apollo"]): string[] {
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 function getMaxLevel(): number { return getSaveValue("maxLevel"); }
 function setMaxLevel(n: number) { setSaveValue("maxLevel", n); }
-function getEquippedHat(): HatId { return getSaveValue("equippedHat") as HatId; }
-function setEquippedHat(id: HatId) { setSaveValue("equippedHat", id); }
-function getOwnedOutfits(): HatId[] { return getSaveValue("ownedHats") as HatId[]; }
-function setOwnedOutfits(ids: HatId[]) { setSaveValue("ownedHats", ids); }
+function getEquippedVehicle(): VehicleId { return getSaveValue("equippedVehicle") as VehicleId; }
+function setEquippedVehicle(id: VehicleId) { setSaveValue("equippedVehicle", id); }
+function getOwnedVehicles(): VehicleId[] { return getSaveValue("ownedVehicles") as VehicleId[]; }
+function setOwnedVehicles(ids: VehicleId[]) { setSaveValue("ownedVehicles", ids); }
 function getCoins(): number { return getSaveValue("totalCoins"); }
 function setCoinsLS(n: number) { setSaveValue("totalCoins", Math.max(0, Math.floor(n))); }
 
@@ -261,12 +253,6 @@ function getMedal(levelNum: number): Medal | null {
 }
 const MEDAL_EMOJI: Record<Medal, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
 const MEDAL_COLOR: Record<Medal, string> = { bronze: "#cd7f32", silver: "#c0c0c0", gold: "#ffd700" };
-// A hat is available if it's a level unlock the player has reached, or a coin
-// outfit they've purchased. Coin outfits use unlockLevel:0 + a cost.
-function isHatUnlocked(hat: { id: HatId; unlockLevel: number; cost?: number }, owned: HatId[]): boolean {
-  if (hat.cost == null) return hat.unlockLevel <= getMaxLevel();
-  return owned.includes(hat.id);
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Game() {
@@ -330,6 +316,7 @@ export default function Game() {
   });
   const sizeRef = useRef({ width: typeof window !== "undefined" ? window.innerWidth : 1280, height: typeof window !== "undefined" ? window.innerHeight : 720 });
   const dialogElRef = useRef<HTMLDivElement>(null);
+  const boostFillElRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<{
     ctx: AudioContext | null; enabled: boolean;
     currentThemeId: MusicThemeId | null; transitionSeq: number;
@@ -347,16 +334,16 @@ export default function Game() {
   const [musicOn, setMusicOn] = useState(isMusicEnabled());
   const [currentLevel, setCurrentLevel] = useState(1);
   const [maxLevel, setMaxLevelState] = useState(getMaxLevel());
-  const [equippedHat, setEquippedHatState] = useState<HatId>(getEquippedHat());
+  const [equippedVehicle, setEquippedVehicleState] = useState<VehicleId>(getEquippedVehicle());
   const [selectedCharacter, setSelectedCharacterState] = useState<string>(getSelectedCharacter());
   const [boostActive, setBoostActive] = useState(false);
   const [boostReady, setBoostReady] = useState(true);
   const boostActiveRef = useRef(false);
   const boostReadyRef = useRef(true);
   const [coinBalance, setCoinBalanceState] = useState(getCoins());
-  const [ownedOutfits, setOwnedState] = useState<HatId[]>(getOwnedOutfits());
+  const [ownedVehicles, setOwnedVehiclesState] = useState<VehicleId[]>(getOwnedVehicles());
   const [completedLevel, setCompletedLevel] = useState(0);
-  const [unlockedHat, setUnlockedHat] = useState<typeof HATS[0] | null>(null);
+  const [unlockedVehicle, setUnlockedVehicle] = useState<VehicleDef | null>(null);
   const [levelBests, setLevelBests] = useState<number[]>(() => LEVELS.map(lv => getLevelBest(lv.num)));
   const [completedLevelPrevBest, setCompletedLevelPrevBest] = useState(0);
   const [completedLevelMedal, setCompletedLevelMedal] = useState<Medal | null>(null);
@@ -706,10 +693,12 @@ export default function Game() {
       case "cat": return playMeow();
       case "dog": case "flamingo": return playBark();
       case "bicycle": case "cart": return playBell();
-      case "trashcan": case "pumpkin": return playClatter();
+      case "trashcan": case "pumpkin": case "toilet": case "poop": return playClatter();
       case "stopsign":
-      case "gnome": case "cactus": return playBoing();
-      case "cone": return playHonk();
+      case "gnome": case "cactus":
+      case "dino": case "undies": return playBoing();
+      case "cone": case "duck": return playHonk();
+      case "pinata": return playCheer();
       default: return playClang(); // mailbox, hydrant, newsbox
     }
   };
@@ -912,9 +901,9 @@ export default function Game() {
     saveLevelBest(lvl, st.levelScore);
     setLevelBests(LEVELS.map(lv => getLevelBest(lv.num)));
     setCompletedLevelMedal(getMedal(lvl));
-    // Check for hat unlock at next level
-    const nextUnlock = HATS.find(h => h.unlockLevel === lvl + 1);
-    setUnlockedHat(nextUnlock || null);
+    // Check for vehicle unlock at next level
+    const nextUnlock = VEHICLES.find(v => v.cost == null && v.unlockLevel === lvl + 1);
+    setUnlockedVehicle(nextUnlock || null);
     setCompletedLevel(lvl);
     setCurrentLevel(lvl);
     setTimeout(() => setScreen("levelComplete"), 300);
@@ -1045,6 +1034,28 @@ export default function Game() {
       pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 1.5,
         life: 14 + Math.random() * 10, size: 2 + Math.random() * 3, color: "#ffffff",
         shape: "rect", rot: Math.random() * 6, rotV: (Math.random() - 0.5) * 0.5 });
+    }
+    // Silly-obstacle payoffs: piñatas burst into bonus coins + confetti,
+    // poop splats brown goo and grosses the runner out.
+    if (o.type === "pinata") {
+      st.coinBalance += 5;
+      const confettiCols = ["#ff44aa", "#ffee00", "#3dff5e", "#36b8ff", "#ff9500", "#b14bff"];
+      for (let i = 0; i < 30; i++) {
+        const ang = Math.random() * Math.PI * 2; const sp = 2 + Math.random() * 8;
+        pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 3,
+          life: 35 + Math.random() * 25, size: 3 + Math.random() * 4,
+          color: confettiCols[Math.floor(Math.random() * confettiCols.length)],
+          shape: "rect", rot: Math.random() * 6, rotV: (Math.random() - 0.5) * 0.6 });
+      }
+      showComboPopup("PIÑATA! +5 ★", "#ff44aa");
+    } else if (o.type === "poop") {
+      for (let i = 0; i < 20; i++) {
+        const ang = Math.random() * Math.PI * 2; const sp = 1.5 + Math.random() * 5;
+        pushCapped(st.particles, POOL_PARTICLES, { x: cxo, y: cyo, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 2,
+          life: 28 + Math.random() * 16, size: 4 + Math.random() * 6,
+          color: Math.random() < 0.7 ? "#8a5a2b" : "#6b4420", shape: "circle" });
+      }
+      showDialog("EWWW!! GROSS!!", 70);
     }
     st.coinBalance += st.multiplierTimer > 0 ? 2 : 1;
     incrementStat("totalObstaclesSliced"); incrementStat("totalCoinsCollected");
@@ -1561,11 +1572,12 @@ export default function Game() {
       // ── Draw (HUD only — the game world is now rendered by <Scene3D/> in true 3D) ─
       ctx.clearRect(0, 0, width, height);
 
-      // ── Vespa scooter + rider — drawn in canvas 2D (rear/behind view) ───────
+      // ── Vehicle + rider — drawn in canvas 2D (rear/behind view) ────────────
       {
         const charId = getSelectedCharacter();
         const charDef = getCharacterDef(charId);
-        const bodyCol   = charDef.backHand;   // scooter body color
+        const vehId = getEquippedVehicle();
+        const bodyCol   = charDef.backHand;   // vehicle body color
         const trimCol   = charDef.finger;      // fender trim / accent
         const jacketCol = charDef.saberColor;  // rider jacket color
         const glowCol   = charDef.saberGlow;
@@ -1590,132 +1602,266 @@ export default function Game() {
         ctx.scale(scaleX, scaleY);
 
         // All drawing below is in local space: (0,0) = ground/feet contact
-
-        // ── Rear wheel ──────────────────────────────────────────────────────
-        const WY = -21, WR = 21;
-        // Tyre
-        ctx.beginPath(); ctx.arc(0, WY, WR, 0, Math.PI*2);
-        ctx.fillStyle = wheelCol; ctx.fill();
-        // Inner tyre (lighter)
-        ctx.beginPath(); ctx.arc(0, WY, WR - 5, 0, Math.PI*2);
-        ctx.fillStyle = "#2e2e36"; ctx.fill();
-        // Spokes (spin with time)
-        const spinAngle = st.gameRunning ? st.time * 0.3 : 0;
-        ctx.strokeStyle = hubCol; ctx.lineWidth = 2;
-        for (let s = 0; s < 5; s++) {
-          const a = spinAngle + (s / 5) * Math.PI * 2;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(a)*5, WY + Math.sin(a)*5);
-          ctx.lineTo(Math.cos(a)*13, WY + Math.sin(a)*13);
-          ctx.stroke();
-        }
-        // Hub
-        ctx.beginPath(); ctx.arc(0, WY, 6, 0, Math.PI*2);
-        ctx.fillStyle = hubCol; ctx.fill();
-
-        // ── Vespa body (rear panel) ─────────────────────────────────────────
-        // Lower rear panel — wide shield covering wheel
-        ctx.beginPath();
-        ctx.ellipse(0, -36, 26, 16, 0, 0, Math.PI*2);
-        ctx.fillStyle = bodyCol; ctx.fill();
-        // Mid body slab
-        ctx.beginPath();
-        ctx.moveTo(-22, -44); ctx.lineTo(22, -44);
-        ctx.lineTo(18, -66); ctx.lineTo(-18, -66);
-        ctx.closePath();
-        ctx.fillStyle = bodyCol; ctx.fill();
-        // Fender trim ring
-        ctx.beginPath();
-        ctx.ellipse(0, -36, 27, 17, 0, 0, Math.PI*2);
-        ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
-        // Chrome carrier / rack
-        ctx.beginPath();
-        ctx.rect(-25, -50, 50, 5);
-        ctx.fillStyle = chrome; ctx.fill();
-        // Back light strip
-        ctx.beginPath();
-        ctx.rect(-16, -54, 32, 5);
-        ctx.fillStyle = "#ff2020"; ctx.fill();
-
-        // ── Seat ─────────────────────────────────────────────────────────────
-        ctx.beginPath();
-        ctx.ellipse(0, -68, 16, 7, 0, 0, Math.PI*2);
-        ctx.fillStyle = "#111"; ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(0, -69, 14, 5, 0, 0, Math.PI*2);
-        ctx.fillStyle = "#2a2a2a"; ctx.fill();
-
-        // ── Rider ────────────────────────────────────────────────────────────
         const slide = st.sliding;
-        const riderTopY = slide ? -85 : -100;
+        const spinAngle = st.gameRunning ? st.time * 0.3 : 0;
 
-        // Rider legs (straddle the seat — two short pillars either side)
-        ctx.fillStyle = "#334";
-        ctx.beginPath(); ctx.rect(-13, -76, 9, 14); ctx.fill();
-        ctx.beginPath(); ctx.rect(4,  -76, 9, 14); ctx.fill();
+        // Wheel: tyre + inner + spinning spokes + hub, at any position/size
+        const drawWheel = (wx: number, wy: number, r: number) => {
+          ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI*2);
+          ctx.fillStyle = wheelCol; ctx.fill();
+          ctx.beginPath(); ctx.arc(wx, wy, Math.max(2, r - 5), 0, Math.PI*2);
+          ctx.fillStyle = "#2e2e36"; ctx.fill();
+          ctx.strokeStyle = hubCol; ctx.lineWidth = 2;
+          for (let s = 0; s < 5; s++) {
+            const a = spinAngle + (s / 5) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(wx + Math.cos(a) * r * 0.24, wy + Math.sin(a) * r * 0.24);
+            ctx.lineTo(wx + Math.cos(a) * r * 0.62, wy + Math.sin(a) * r * 0.62);
+            ctx.stroke();
+          }
+          ctx.beginPath(); ctx.arc(wx, wy, Math.max(2.5, r * 0.28), 0, Math.PI*2);
+          ctx.fillStyle = hubCol; ctx.fill();
+        };
 
-        // Jacket / torso
-        ctx.beginPath();
-        ctx.moveTo(-13, -76); ctx.lineTo(13, -76);
-        ctx.lineTo(11, riderTopY); ctx.lineTo(-11, riderTopY);
-        ctx.closePath();
-        ctx.fillStyle = jacketCol; ctx.fill();
-        // Jacket shoulder seam
-        ctx.beginPath();
-        ctx.rect(-13, -76, 26, 4);
-        ctx.fillStyle = trimCol; ctx.fill();
+        // Rider from the hips up. hipY = hip line; legLen 0 hides legs (UFO);
+        // bar (handlebar y) draws arms forward + chrome bar, else arms hang.
+        // Returns the saber anchor point (right hand).
+        const drawRider = (hipY: number, legLen: number, bar: number | null): { sx: number; sy: number } => {
+          const riderTopY = slide ? hipY - 9 : hipY - 24;
+          if (legLen > 0) {
+            ctx.fillStyle = "#334";
+            ctx.beginPath(); ctx.rect(-13, hipY, 9, legLen); ctx.fill();
+            ctx.beginPath(); ctx.rect(4,  hipY, 9, legLen); ctx.fill();
+          }
+          // Jacket / torso
+          ctx.beginPath();
+          ctx.moveTo(-13, hipY); ctx.lineTo(13, hipY);
+          ctx.lineTo(11, riderTopY); ctx.lineTo(-11, riderTopY);
+          ctx.closePath();
+          ctx.fillStyle = jacketCol; ctx.fill();
+          // Jacket shoulder seam
+          ctx.beginPath();
+          ctx.rect(-13, hipY, 26, 4);
+          ctx.fillStyle = trimCol; ctx.fill();
+          // Arms
+          ctx.lineWidth = 7; ctx.lineCap = "round";
+          ctx.strokeStyle = jacketCol;
+          if (bar != null) {
+            ctx.beginPath(); ctx.moveTo(-10, hipY - 2); ctx.lineTo(-30, bar + 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo( 10, hipY - 2); ctx.lineTo( 30, bar + 2); ctx.stroke();
+            ctx.lineCap = "butt";
+            // Handlebar + grips
+            ctx.beginPath(); ctx.rect(-34, bar, 68, 7); ctx.fillStyle = chrome; ctx.fill();
+            ctx.fillStyle = "#111";
+            ctx.beginPath(); ctx.rect(-38, bar - 2, 8, 11); ctx.fill();
+            ctx.beginPath(); ctx.rect(30,  bar - 2, 8, 11); ctx.fill();
+          } else {
+            ctx.beginPath(); ctx.moveTo(-10, hipY - 2); ctx.lineTo(-19, hipY + 10); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo( 10, hipY - 2); ctx.lineTo( 19, hipY + 10); ctx.stroke();
+            ctx.lineCap = "butt";
+          }
+          // Helmet
+          const helmetY = riderTopY - 15;
+          ctx.beginPath();
+          ctx.arc(0, helmetY, 14, 0, Math.PI*2);
+          ctx.fillStyle = bodyCol; ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(0, helmetY + 3, 9, 6, 0, Math.PI*0.05, Math.PI*0.95);
+          ctx.fillStyle = "#1a3050"; ctx.fill();
+          ctx.beginPath();
+          ctx.arc(0, helmetY, 14, Math.PI*0.65, Math.PI*2.35);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+          return bar != null ? { sx: 32, sy: bar + 4 } : { sx: 26, sy: riderTopY + 6 };
+        };
 
-        // Arms to handlebar
-        const barY = slide ? -90 : -104;
-        ctx.lineWidth = 7; ctx.lineCap = "round";
-        ctx.strokeStyle = jacketCol;
-        ctx.beginPath(); ctx.moveTo(-10, -78); ctx.lineTo(-30, barY+2); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo( 10, -78); ctx.lineTo( 30, barY+2); ctx.stroke();
-        ctx.lineCap = "butt";
-
-        // Handlebar
-        ctx.beginPath();
-        ctx.rect(-34, barY, 68, 7);
-        ctx.fillStyle = chrome; ctx.fill();
-        // Grips
-        ctx.fillStyle = "#111";
-        ctx.beginPath(); ctx.rect(-38, barY-2, 8, 11); ctx.fill();
-        ctx.beginPath(); ctx.rect(30,  barY-2, 8, 11); ctx.fill();
-
-        // Helmet
-        const helmetY = slide ? -100 : -115;
-        ctx.beginPath();
-        ctx.arc(0, helmetY, 14, 0, Math.PI*2);
-        ctx.fillStyle = bodyCol; ctx.fill();
-        // Helmet visor
-        ctx.beginPath();
-        ctx.ellipse(0, helmetY+3, 9, 6, 0, Math.PI*0.05, Math.PI*0.95);
-        ctx.fillStyle = "#1a3050"; ctx.fill();
-        // Helmet trim stripe
-        ctx.beginPath();
-        ctx.arc(0, helmetY, 14, Math.PI*0.65, Math.PI*2.35);
-        ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+        // ── Per-vehicle bodywork ────────────────────────────────────────────
+        let saberAnchor: { sx: number; sy: number };
+        if (vehId === "skateboard") {
+          drawWheel(-16, -7, 7); drawWheel(16, -7, 7);
+          ctx.beginPath(); ctx.roundRect(-28, -20, 56, 7, 3);
+          ctx.fillStyle = bodyCol; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(-26, -20); ctx.lineTo(26, -20);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 2; ctx.stroke();
+          saberAnchor = drawRider(-54, 34, null);
+        } else if (vehId === "bmx") {
+          drawWheel(0, -16, 16);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.moveTo(0, -22); ctx.lineTo(0, -56); ctx.stroke();
+          ctx.beginPath();
+          ctx.ellipse(0, -58, 12, 5, 0, 0, Math.PI*2);
+          ctx.fillStyle = "#111"; ctx.fill();
+          saberAnchor = drawRider(-64, 12, slide ? -74 : -84);
+        } else if (vehId === "gokart") {
+          drawWheel(-24, -11, 11); drawWheel(24, -11, 11);
+          ctx.beginPath(); ctx.roundRect(-30, -34, 60, 20, 4);
+          ctx.fillStyle = bodyCol; ctx.fill();
+          ctx.beginPath(); ctx.rect(-30, -24, 60, 4);
+          ctx.fillStyle = trimCol; ctx.fill();
+          // Roll hoop
+          ctx.strokeStyle = chrome; ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.moveTo(-12, -34); ctx.lineTo(-12, -48);
+          ctx.lineTo(12, -48); ctx.lineTo(12, -34); ctx.stroke();
+          saberAnchor = drawRider(-42, 8, slide ? -48 : -54);
+        } else if (vehId === "firetruck") {
+          drawWheel(-25, -12, 12); drawWheel(25, -12, 12);
+          ctx.beginPath(); ctx.roundRect(-34, -66, 68, 54, 4);
+          ctx.fillStyle = "#d62828"; ctx.fill();
+          ctx.beginPath(); ctx.rect(-34, -42, 68, 7);
+          ctx.fillStyle = "#f4f4f8"; ctx.fill();
+          // Roof ladder
+          ctx.fillStyle = chrome;
+          ctx.beginPath(); ctx.rect(-30, -70, 60, 4); ctx.fill();
+          // Flashing light bar — WEE-OO WEE-OO!
+          ctx.fillStyle = Math.floor(st.time * 0.12) % 2 === 0 ? "#ff3030" : "#3060ff";
+          ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
+          ctx.beginPath(); ctx.rect(-9, -76, 18, 6); ctx.fill();
+          ctx.shadowBlur = 0;
+          saberAnchor = drawRider(-86, 14, slide ? -92 : -100);
+        } else if (vehId === "monstertruck") {
+          drawWheel(-24, -20, 20); drawWheel(24, -20, 20);
+          // Lifted body way above the wheels
+          ctx.beginPath(); ctx.roundRect(-30, -62, 60, 22, 5);
+          ctx.fillStyle = bodyCol; ctx.fill();
+          ctx.beginPath(); ctx.rect(-30, -48, 60, 4);
+          ctx.fillStyle = trimCol; ctx.fill();
+          // Suspension struts
+          ctx.strokeStyle = chrome; ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.moveTo(-24, -40); ctx.lineTo(-20, -30); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(24, -40); ctx.lineTo(20, -30); ctx.stroke();
+          saberAnchor = drawRider(-76, 12, slide ? -84 : -92);
+        } else if (vehId === "hoverboard") {
+          const hover = Math.sin(st.time * 0.25) * 2.5;
+          // Under-glow
+          ctx.shadowColor = glowCol; ctx.shadowBlur = 16;
+          ctx.beginPath(); ctx.ellipse(0, -8 + hover, 20, 4, 0, 0, Math.PI*2);
+          ctx.fillStyle = glowCol; ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.beginPath(); ctx.roundRect(-26, -19 + hover, 52, 8, 4);
+          ctx.fillStyle = bodyCol; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(-24, -19 + hover); ctx.lineTo(24, -19 + hover);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 2; ctx.stroke();
+          saberAnchor = drawRider(-53 + hover, 34, null);
+        } else if (vehId === "rocket") {
+          // Flame flicker
+          const fl = Math.random() * 4;
+          ctx.shadowColor = "#ff9500"; ctx.shadowBlur = 14;
+          ctx.beginPath(); ctx.ellipse(0, -5, 6 + fl * 0.6, 10 + fl, 0, 0, Math.PI*2);
+          ctx.fillStyle = "#ffb340"; ctx.fill();
+          ctx.shadowBlur = 0;
+          // Fins
+          ctx.fillStyle = trimCol;
+          ctx.beginPath(); ctx.moveTo(-12, -16); ctx.lineTo(-24, -8); ctx.lineTo(-12, -34); ctx.closePath(); ctx.fill();
+          ctx.beginPath(); ctx.moveTo(12, -16); ctx.lineTo(24, -8); ctx.lineTo(12, -34); ctx.closePath(); ctx.fill();
+          // Body + nose
+          ctx.beginPath(); ctx.ellipse(0, -44, 14, 32, 0, 0, Math.PI*2);
+          ctx.fillStyle = "#e8e8f2"; ctx.fill();
+          ctx.beginPath(); ctx.ellipse(0, -44, 14, 32, 0, 0, Math.PI*2);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+          // Porthole
+          ctx.beginPath(); ctx.arc(0, -52, 5, 0, Math.PI*2);
+          ctx.fillStyle = "#1a3050"; ctx.fill();
+          saberAnchor = drawRider(-78, 12, null);
+        } else if (vehId === "ufo") {
+          const hover = Math.sin(st.time * 0.22) * 3;
+          // Tractor-beam glow
+          ctx.shadowColor = "#7dff8a"; ctx.shadowBlur = 14;
+          ctx.beginPath(); ctx.ellipse(0, -8 + hover, 16, 4, 0, 0, Math.PI*2);
+          ctx.fillStyle = "rgba(125,255,138,0.5)"; ctx.fill();
+          ctx.shadowBlur = 0;
+          // Saucer disc
+          ctx.beginPath(); ctx.ellipse(0, -28 + hover, 30, 10, 0, 0, Math.PI*2);
+          ctx.fillStyle = chrome; ctx.fill();
+          ctx.beginPath(); ctx.ellipse(0, -28 + hover, 30, 10, 0, 0, Math.PI*2);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 2; ctx.stroke();
+          // Blinking rim lights
+          for (let li = 0; li < 4; li++) {
+            const lx = -21 + li * 14;
+            ctx.fillStyle = (Math.floor(st.time * 0.15) + li) % 2 === 0 ? "#ffee00" : "#ff44aa";
+            ctx.beginPath(); ctx.arc(lx, -27 + hover, 2.5, 0, Math.PI*2); ctx.fill();
+          }
+          // Glass dome
+          ctx.beginPath(); ctx.arc(0, -34 + hover, 15, Math.PI, 0);
+          ctx.fillStyle = "rgba(159,216,255,0.35)"; ctx.fill();
+          saberAnchor = drawRider(-38 + hover, 0, null);
+        } else {
+          // ── Vespa (the trusty original) ──────────────────────────────────
+          drawWheel(0, -21, 21);
+          // Lower rear panel — wide shield covering wheel
+          ctx.beginPath();
+          ctx.ellipse(0, -36, 26, 16, 0, 0, Math.PI*2);
+          ctx.fillStyle = bodyCol; ctx.fill();
+          // Mid body slab
+          ctx.beginPath();
+          ctx.moveTo(-22, -44); ctx.lineTo(22, -44);
+          ctx.lineTo(18, -66); ctx.lineTo(-18, -66);
+          ctx.closePath();
+          ctx.fillStyle = bodyCol; ctx.fill();
+          // Fender trim ring
+          ctx.beginPath();
+          ctx.ellipse(0, -36, 27, 17, 0, 0, Math.PI*2);
+          ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+          // Chrome carrier / rack
+          ctx.beginPath();
+          ctx.rect(-25, -50, 50, 5);
+          ctx.fillStyle = chrome; ctx.fill();
+          // Back light strip
+          ctx.beginPath();
+          ctx.rect(-16, -54, 32, 5);
+          ctx.fillStyle = "#ff2020"; ctx.fill();
+          // Seat
+          ctx.beginPath();
+          ctx.ellipse(0, -68, 16, 7, 0, 0, Math.PI*2);
+          ctx.fillStyle = "#111"; ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(0, -69, 14, 5, 0, 0, Math.PI*2);
+          ctx.fillStyle = "#2a2a2a"; ctx.fill();
+          saberAnchor = drawRider(-76, 14, slide ? -90 : -104);
+        }
 
         // ── Saber (right arm, only when swinging or airborne) ───────────────
+        // Apollo wields a Kylo Ren-style crossguard saber: the blade crackles
+        // (flickering length + jittery glow) and two side vents flare at the hilt.
         if (st.saberSwing > 0 || !st.onGround) {
           const prog = st.saberSwing > 0 ? 1 - st.saberSwing/16 : 0;
           const saberAngle = st.saberSwing > 0 ? -1.3 + prog*2.5 : -0.7;
-          const bladeH = 60;
+          const cross = !!charDef.crossguard;
+          const flick = cross ? Math.sin(st.time * 1.7) * 3 + (Math.random() - 0.5) * 2 : 0;
+          const bladeH = 60 + flick;
           ctx.save();
-          ctx.translate(32, barY+4);
+          ctx.translate(saberAnchor.sx, saberAnchor.sy);
           ctx.rotate(saberAngle);
           // Handle
           ctx.fillStyle = chrome;
           ctx.beginPath(); ctx.rect(-3, -4, 6, 12); ctx.fill();
           // Blade
-          ctx.shadowColor = glowCol; ctx.shadowBlur = 12;
+          ctx.shadowColor = glowCol; ctx.shadowBlur = cross ? 10 + Math.random() * 7 : 12;
           ctx.fillStyle = jacketCol;
           ctx.beginPath(); ctx.rect(-2, -4-bladeH, 4, bladeH); ctx.fill();
+          if (cross) {
+            // Crossguard side vents
+            const ventL = 11 + flick * 0.2;
+            ctx.beginPath(); ctx.rect(-3 - ventL, -9, ventL, 3.5); ctx.fill();
+            ctx.beginPath(); ctx.rect(3, -9, ventL, 3.5); ctx.fill();
+          }
           ctx.shadowBlur = 0;
           ctx.restore();
         }
 
         ctx.restore();
+      }
+
+      // Turbo recharge fill on the fart-boost button — imperative DOM update
+      // (fills bottom-up while the cooldown ticks; hidden once ready/boosting)
+      if (boostFillElRef.current) {
+        const el = boostFillElRef.current;
+        if (st.boostTimer <= 0 && st.boostCooldown > 0) {
+          const pct = 1 - st.boostCooldown / BOOST_COOLDOWN;
+          el.style.opacity = "1";
+          el.style.height = `${Math.round(pct * 100)}%`;
+        } else {
+          el.style.opacity = "0";
+          el.style.height = "0%";
+        }
       }
 
       // Dialog speech bubble banner — imperative DOM update, no React re-render
@@ -1947,19 +2093,19 @@ export default function Game() {
     if (audioRef.current.enabled) startMusic("start", false);
     setScreen("start");
   };
-  const handleEquipHat = (id: HatId) => {
-    setEquippedHat(id); setEquippedHatState(id);
+  const handleEquipVehicle = (id: VehicleId) => {
+    setEquippedVehicle(id); setEquippedVehicleState(id);
   };
-  const handleBuyOutfit = (hat: typeof HATS[number]) => {
-    const cost = hat.cost ?? 0;
-    if (getCoins() < cost || getOwnedOutfits().includes(hat.id)) return;
+  const handleBuyVehicle = (v: VehicleDef) => {
+    const cost = v.cost ?? 0;
+    if (getCoins() < cost || getOwnedVehicles().includes(v.id)) return;
     const newBal = getCoins() - cost;
     setCoinsLS(newBal); setCoinBalanceState(newBal);
     stateRef.current.coinBalance = newBal;
-    const owned = getOwnedOutfits();
-    owned.push(hat.id); setOwnedOutfits(owned); setOwnedState([...owned]);
-    // Auto-equip the freshly bought outfit
-    setEquippedHat(hat.id); setEquippedHatState(hat.id);
+    const owned = getOwnedVehicles();
+    owned.push(v.id); setOwnedVehicles(owned); setOwnedVehiclesState([...owned]);
+    // Auto-equip the freshly bought ride
+    setEquippedVehicle(v.id); setEquippedVehicleState(v.id);
     const _ach2 = checkAchievements(); (void _ach2);
   };
   const handleBuySaber = (tier: number) => {
@@ -1976,7 +2122,7 @@ export default function Game() {
   };
   const openWardrobe = () => {
     setCoinBalanceState(getCoins());
-    setOwnedState(getOwnedOutfits());
+    setOwnedVehiclesState(getOwnedVehicles());
     setSaberLevelState(getSaberLevel());
     setScreen("wardrobe");
   };
@@ -2019,7 +2165,6 @@ export default function Game() {
             stateRef={stateRef as unknown as React.MutableRefObject<GameSceneState>}
             sizeRef={sizeRef}
             theme={currentTheme}
-            hat={equippedHat}
             saber={{ color: currentChar.saberColor, glow: currentChar.saberGlow, reach: currentSaber.reach }}
             skin={{ backHand: currentChar.backHand, finger: currentChar.finger, knuckle: currentChar.knuckle, nail: currentChar.nail }}
             accent={currentChar.saberGlow}
@@ -2121,7 +2266,7 @@ export default function Game() {
             ⚔ SLASH BUTTON / F TO SWING THE LIGHTSABER
           </p>
           <p style={{ fontSize:"0.52rem", fontFamily:retroFont, margin:"0 0 4px", color:"#555", lineHeight:2.5, textAlign:"center" }}>
-            {HATS.filter(h=>h.id!=="none"&&isHatUnlocked(h, ownedOutfits)).map(h=>h.emoji).join(" ")||"🤚"} outfits unlocked · collect ★ coins
+            {VEHICLES.filter(v=>isVehicleUnlocked(v, ownedVehicles, maxLevel)).map(v=>v.emoji).join(" ")||"🛵"} rides unlocked · collect ★ coins
           </p>
           <div style={{ display:"flex", gap:16, marginTop:20, flexWrap:"wrap", justifyContent:"center" }}>
             {/* Primary path: START routes through character select so first-time
@@ -2215,12 +2360,13 @@ export default function Game() {
         <Suspense fallback={null}>
           <WardrobeScreen
             coinBalance={coinBalance}
-            equippedHat={equippedHat}
-            ownedOutfits={ownedOutfits}
+            equippedVehicle={equippedVehicle}
+            ownedVehicles={ownedVehicles}
+            maxLevel={maxLevel}
             saberLevel={saberLevel}
             musicOn={musicOn}
-            onEquipHat={handleEquipHat}
-            onBuyOutfit={handleBuyOutfit}
+            onEquipVehicle={handleEquipVehicle}
+            onBuyVehicle={handleBuyVehicle}
             onBuySaber={handleBuySaber}
             onToggleMusic={handleToggleMusic}
             onToggleKids={handleToggleKids}
@@ -2278,12 +2424,12 @@ export default function Game() {
                 )}
               </div>
             )}
-            {unlockedHat && (
+            {unlockedVehicle && (
               <div style={{ background:"rgba(170,68,255,0.10)", border:"2px solid #aa44ff", boxShadow:"0 0 14px rgba(170,68,255,0.28)", borderRadius:3, padding:"10px 16px", marginBottom:16 }}>
-                <div style={{ fontSize:"0.58rem", color:"#cc88ff", fontFamily:retroFont, lineHeight:2.2 }}>NEW UNLOCK!</div>
-                <div style={{ fontSize:"1.8rem" }}>{unlockedHat.emoji}</div>
-                <div style={{ fontSize:"0.62rem", fontFamily:retroFont, color:"#fff", lineHeight:2.2 }}>{unlockedHat.name}</div>
-                <button onClick={() => handleEquipHat(unlockedHat.id)} className="retro-btn"
+                <div style={{ fontSize:"0.58rem", color:"#cc88ff", fontFamily:retroFont, lineHeight:2.2 }}>NEW RIDE UNLOCKED!</div>
+                <div style={{ fontSize:"1.8rem" }}>{unlockedVehicle.emoji}</div>
+                <div style={{ fontSize:"0.62rem", fontFamily:retroFont, color:"#fff", lineHeight:2.2 }}>{unlockedVehicle.name}</div>
+                <button onClick={() => handleEquipVehicle(unlockedVehicle.id)} className="retro-btn"
                   style={{ marginTop:6, padding:"6px 16px", fontSize:"0.58rem", fontFamily:retroFont,
                     background:"rgba(170,68,255,0.18)", color:"#cc88ff", border:"2px solid #aa44ff",
                     boxShadow:"0 0 8px rgba(170,68,255,0.28)", cursor:"pointer", lineHeight:2 }}>
@@ -2358,9 +2504,15 @@ export default function Game() {
             boxShadow: boostActive ? "0 0 22px #7CFC00" : boostReady ? "0 0 16px #3dff5e" : "none",
             opacity: (boostReady || boostActive) ? 1 : 0.5,
             cursor: boostReady ? "pointer" : "default", letterSpacing:"0.02em", lineHeight:1.5,
-            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3 }}>
-          <span style={{ fontSize:"1.5rem", lineHeight:1 }}>💨</span>
-          {boostActive ? "BOOST!" : boostReady ? "FART" : "···"}
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3,
+            overflow:"hidden" }}>
+          {/* Recharge fill — rises bottom-up while the turbo recharges */}
+          <div ref={boostFillElRef} style={{
+            position:"absolute", left:0, right:0, bottom:0, height:"0%", opacity:0,
+            background:"rgba(61,255,94,0.28)", pointerEvents:"none",
+            transition:"height 120ms linear" }} />
+          <span style={{ fontSize:"1.5rem", lineHeight:1, position:"relative" }}>💨</span>
+          <span style={{ position:"relative" }}>{boostActive ? "BOOST!" : boostReady ? "FART" : "···"}</span>
         </button>
       )}
 
