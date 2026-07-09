@@ -1650,7 +1650,7 @@ export default function Game() {
         const scaleY = Math.max(0.55, 1 - 0.24 * landK);
 
         // Lane offset: keep lane spacing sensible on very wide screens.
-        const riderBaseX = Math.max(185, width * 0.33);
+        const riderBaseX = width * 0.5;
         const lanePixels = Math.min(sizeRef.current.width * 0.17, 165);
         ctx.save();
         ctx.translate(riderBaseX + st.laneVisual * lanePixels, feetY + runBob);
