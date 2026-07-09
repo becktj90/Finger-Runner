@@ -313,12 +313,10 @@ export default function Game() {
     ctx: AudioContext | null; enabled: boolean;
     currentThemeId: MusicThemeId | null; transitionSeq: number;
   }>({ ctx:null, enabled:isMusicEnabled(), currentThemeId:null, transitionSeq:0 });
-  // Licensed-free generated synthwave pop track that serves as the game's
-  // persistent background music bed. Volume/tempo are nudged per theme/level
-  // via MUSIC_THEMES.leadGain/baseStepMs so it still feels responsive to
-  // menu vs. in-run intensity and level speed, without needing separate
-  // per-theme audio files.
+  // Primary game track audio element + fallback state.
   const musicElRef = useRef<HTMLAudioElement | null>(null);
+  const musicFallbackSourceRef = useRef<string>("");
+  const musicUsingFallbackRef = useRef(false);
   const rafRef = useRef<number>(0);
 
   type Screen = "start"|"playing"|"levelComplete"|"dead"|"wardrobe"|"character";
@@ -384,17 +382,21 @@ export default function Game() {
       el = new Audio();
       el.loop = true;
       musicElRef.current = el;
-    }
-    if (prevSource !== source) {
-      const musicElAny = el as HTMLAudioElement & { __usingFallback?: boolean };
-      musicElAny.__usingFallback = false;
+      musicUsingFallbackRef.current = false;
+      musicFallbackSourceRef.current = fallbackSource;
       el.onerror = () => {
-        if (musicElAny.__usingFallback) return;
-        musicElAny.__usingFallback = true;
-        el!.src = fallbackSource;
+        if (musicUsingFallbackRef.current) return;
+        musicUsingFallbackRef.current = true;
+        el!.src = musicFallbackSourceRef.current || fallbackSource;
         void el!.play().catch(() => {});
       };
+    }
+    musicFallbackSourceRef.current = fallbackSource;
+    if (prevSource !== source) {
+      musicUsingFallbackRef.current = false;
       el.src = source;
+    } else if (musicUsingFallbackRef.current && el.src !== fallbackSource) {
+      el.src = fallbackSource;
     }
     const rate = Math.min(1.15, Math.max(0.95, 0.97 + (speedMult - 1) * 0.045));
     el.playbackRate = rate;
@@ -1876,8 +1878,8 @@ export default function Game() {
         // Apollo wields a Kylo Ren-style crossguard saber: the blade crackles
         // (flickering length + jittery glow) and two side vents flare at the hilt.
         const saberActive = st.saberSwing > 0;
-        const prog = saberActive ? 1 - st.saberSwing / SABER_SWING_FRAMES : 0;
-        const saberAngle = saberActive ? -1.3 + prog * 2.5 : -0.7;
+        const swingProgress = saberActive ? 1 - st.saberSwing / SABER_SWING_FRAMES : 0;
+        const saberAngle = saberActive ? -1.3 + swingProgress * 2.5 : -0.7;
         const cross = !!charDef.crossguard;
         const flick = cross ? Math.sin(st.time * 1.7) * 3 + (Math.random() - 0.5) * 2 : 0;
         const bladeH = 60 + flick;
