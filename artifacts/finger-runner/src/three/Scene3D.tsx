@@ -45,6 +45,7 @@ const N_POWERUPS = POOL_POWERUPS;
 const N_PLATFORMS = POOL_PLATFORMS;
 const N_ROPES = POOL_ROPES;
 const N_PUDDLES = POOL_PUDDLES;
+const SABER_SWING_FRAMES = 16;
 
 function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"] }) {
   const groups = useRef<THREE.Group[]>([]);
@@ -554,6 +555,7 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
     const { height } = sizeRef.current;
     const roadY = roadYOld(height);
     if (!group.current) return;
+    group.current.visible = st.gameRunning;
 
     // Squash/stretch on jump & land impact — same feel as the old runner
     let stretchY = 1, stretchX = 1;
@@ -594,8 +596,8 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
     // Saber swing
     if (saberGroup.current) {
       const active = st.saberSwing > 0;
-      saberGroup.current.visible = true;
-      const progress = active ? 1 - st.saberSwing / 16 : 0;
+      saberGroup.current.visible = st.gameRunning;
+      const progress = active ? 1 - st.saberSwing / SABER_SWING_FRAMES : 0;
       const angle = active ? -1.4 + progress * 2.6 : -1.1;
       saberGroup.current.rotation.z = angle;
       if (saberBlade.current) {
