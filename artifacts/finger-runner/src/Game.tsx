@@ -143,24 +143,22 @@ const LEVELS = [
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
 // ── Background music tracks ──────────────────────────────────────────────────
-// Four licensed tracks live in public/audio/: `title-theme.mp3` plays on the
-// start/wardrobe menus, and `level-theme-1/2/3.mp3` are shared across the five
-// in-run level themes (there are more themes than tracks, so a couple of
-// themes intentionally reuse the same track). Each theme still gets its own
-// subtle volume character via `leadGain`, layered on top of the isPlaying
-// (menu vs. in-run) and speedMult (level pace) adjustments made in startMusic().
+// Requested primary track URL (Suno share link). We keep per-theme local fallbacks
+// so music still plays if the remote source is unavailable on a given device/network.
+const REQUESTED_TRACK_URL = "https://suno.com/s/ZmKeIZXIQQf2abGa";
 type MusicThemeId = Theme | "start";
 interface MusicTheme {
-  file: string;
+  source: string;
+  fallbackFile: string;
   leadGain: number; // per-theme loudness character
 }
 const MUSIC_THEMES: Record<MusicThemeId, MusicTheme> = {
-  start:    { file: "title-theme.mp3",  leadGain: 0.85 },
-  suburb:   { file: "level-theme-1.mp3", leadGain: 1.0  },
-  city:     { file: "level-theme-2.mp3", leadGain: 1.0  },
-  highway:  { file: "level-theme-3.mp3", leadGain: 1.05 },
-  mountain: { file: "level-theme-1.mp3", leadGain: 1.1  },
-  night:    { file: "level-theme-2.mp3", leadGain: 1.1  },
+  start:    { source: REQUESTED_TRACK_URL, fallbackFile: "title-theme.mp3",   leadGain: 0.85 },
+  suburb:   { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-1.mp3", leadGain: 1.0  },
+  city:     { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-2.mp3", leadGain: 1.0  },
+  highway:  { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-3.mp3", leadGain: 1.05 },
+  mountain: { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-1.mp3", leadGain: 1.1  },
+  night:    { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-2.mp3", leadGain: 1.1  },
 };
 
 // ── Lightsaber tiers ──────────────────────────────────────────────────────────
@@ -331,12 +329,10 @@ export default function Game() {
     ctx: AudioContext | null; enabled: boolean;
     currentThemeId: MusicThemeId | null; transitionSeq: number;
   }>({ ctx:null, enabled:isMusicEnabled(), currentThemeId:null, transitionSeq:0 });
-  // Licensed-free generated synthwave pop track that serves as the game's
-  // persistent background music bed. Volume/tempo are nudged per theme/level
-  // via MUSIC_THEMES.leadGain/baseStepMs so it still feels responsive to
-  // menu vs. in-run intensity and level speed, without needing separate
-  // per-theme audio files.
+  // Primary game track audio element + fallback state.
   const musicElRef = useRef<HTMLAudioElement | null>(null);
+  const musicFallbackSourceRef = useRef<string>("");
+  const musicUsingFallbackRef = useRef(false);
   const rafRef = useRef<number>(0);
 
   type Screen = "start"|"playing"|"levelComplete"|"dead"|"wardrobe"|"character";
@@ -384,12 +380,9 @@ export default function Game() {
     const el = musicElRef.current;
     if (el) el.pause();
   };
-  // Plays the theme's mp3 track (see MUSIC_THEMES). `isPlaying` selects the
-  // louder in-run intensity vs. the quieter menu intensity; `speedMult` (from
-  // the level definition) nudges playback rate slightly faster for later,
-  // faster levels, and each theme's `leadGain` gives a subtle per-level volume
-  // character. Swapping to a different track crossfades cleanly by swapping
-  // `src` and restarting playback only when the underlying file actually changes.
+  // Plays the requested track source with per-theme fallback to bundled local
+  // audio files. `isPlaying` selects in-run vs menu intensity, while `speedMult`
+  // and `leadGain` keep later levels feeling more energetic.
   const startMusic = (themeId: MusicThemeId, isPlaying: boolean, speedMult: number = 1) => {
     const a = audioRef.current;
     if (!a.enabled) return;
@@ -397,15 +390,29 @@ export default function Game() {
     const prevThemeId = a.currentThemeId;
     a.currentThemeId = themeId;
     const theme = MUSIC_THEMES[themeId];
-    const prevFile = prevThemeId ? MUSIC_THEMES[prevThemeId].file : null;
+    const prevSource = prevThemeId ? MUSIC_THEMES[prevThemeId].source : null;
+    const source = theme.source;
+    const fallbackSource = `${import.meta.env.BASE_URL}audio/${theme.fallbackFile}`;
     let el = musicElRef.current;
     if (!el) {
       el = new Audio();
       el.loop = true;
       musicElRef.current = el;
+      musicUsingFallbackRef.current = false;
+      musicFallbackSourceRef.current = fallbackSource;
+      el.onerror = () => {
+        if (musicUsingFallbackRef.current) return;
+        musicUsingFallbackRef.current = true;
+        el!.src = musicFallbackSourceRef.current || fallbackSource;
+        void el!.play().catch(() => {});
+      };
     }
-    if (prevFile !== theme.file) {
-      el.src = `${import.meta.env.BASE_URL}audio/${theme.file}`;
+    musicFallbackSourceRef.current = fallbackSource;
+    if (prevSource !== source) {
+      musicUsingFallbackRef.current = false;
+      el.src = source;
+    } else if (musicUsingFallbackRef.current && el.src !== fallbackSource) {
+      el.src = fallbackSource;
     }
     const rate = Math.min(1.15, Math.max(0.95, 0.97 + (speedMult - 1) * 0.045));
     el.playbackRate = rate;
@@ -1696,10 +1703,11 @@ export default function Game() {
         const scaleX = 1 + 0.18 * landK;
         const scaleY = Math.max(0.55, 1 - 0.24 * landK);
 
-        // Lane offset: laneVisual moves between -1 and +1; scale to canvas pixels
-        const lanePixels = sizeRef.current.width * 0.19; // ~74px on 390px iPhone
+        // Lane offset: keep lane spacing sensible on very wide screens.
+        const screenCenterX = width * 0.5;
+        const lanePixels = Math.min(sizeRef.current.width * 0.17, 165);
         ctx.save();
-        ctx.translate(185 + st.laneVisual * lanePixels, feetY + runBob);
+        ctx.translate(screenCenterX + st.laneVisual * lanePixels, feetY + runBob);
         ctx.rotate(tilt);
         ctx.scale(scaleX, scaleY);
 
@@ -1920,34 +1928,33 @@ export default function Game() {
           saberAnchor = drawRider(-76, 14, slide ? -90 : -104);
         }
 
-        // ── Saber (right arm, only when swinging or airborne) ───────────────
+        // ── Saber (right arm, always visible) ───────────────────────────────
         // Apollo wields a Kylo Ren-style crossguard saber: the blade crackles
         // (flickering length + jittery glow) and two side vents flare at the hilt.
-        if (st.saberSwing > 0 || !st.onGround) {
-          const prog = st.saberSwing > 0 ? 1 - st.saberSwing/16 : 0;
-          const saberAngle = st.saberSwing > 0 ? -1.3 + prog*2.5 : -0.7;
-          const cross = !!charDef.crossguard;
-          const flick = cross ? Math.sin(st.time * 1.7) * 3 + (Math.random() - 0.5) * 2 : 0;
-          const bladeH = 60 + flick;
-          ctx.save();
-          ctx.translate(saberAnchor.sx, saberAnchor.sy);
-          ctx.rotate(saberAngle);
-          // Handle
-          ctx.fillStyle = chrome;
-          ctx.beginPath(); ctx.rect(-3, -4, 6, 12); ctx.fill();
-          // Blade
-          ctx.shadowColor = glowCol; ctx.shadowBlur = cross ? 10 + Math.random() * 7 : 12;
-          ctx.fillStyle = jacketCol;
-          ctx.beginPath(); ctx.rect(-2, -4-bladeH, 4, bladeH); ctx.fill();
-          if (cross) {
-            // Crossguard side vents
-            const ventL = 11 + flick * 0.2;
-            ctx.beginPath(); ctx.rect(-3 - ventL, -9, ventL, 3.5); ctx.fill();
-            ctx.beginPath(); ctx.rect(3, -9, ventL, 3.5); ctx.fill();
-          }
-          ctx.shadowBlur = 0;
-          ctx.restore();
+        const saberActive = st.saberSwing > 0;
+        const swingProgress = saberActive ? 1 - st.saberSwing / SABER_SWING_FRAMES : 0;
+        const saberAngle = saberActive ? -1.3 + swingProgress * 2.5 : -0.7;
+        const cross = !!charDef.crossguard;
+        const flick = cross ? Math.sin(st.time * 1.7) * 3 + (Math.random() - 0.5) * 2 : 0;
+        const bladeH = 60 + flick;
+        ctx.save();
+        ctx.translate(saberAnchor.sx, saberAnchor.sy);
+        ctx.rotate(saberAngle);
+        // Handle
+        ctx.fillStyle = chrome;
+        ctx.beginPath(); ctx.rect(-3, -4, 6, 12); ctx.fill();
+        // Blade
+        ctx.shadowColor = glowCol; ctx.shadowBlur = cross ? 10 + Math.random() * 7 : 12;
+        ctx.fillStyle = jacketCol;
+        ctx.beginPath(); ctx.rect(-2, -4-bladeH, 4, bladeH); ctx.fill();
+        if (cross) {
+          // Crossguard side vents
+          const ventL = 11 + flick * 0.2;
+          ctx.beginPath(); ctx.rect(-3 - ventL, -9, ventL, 3.5); ctx.fill();
+          ctx.beginPath(); ctx.rect(3, -9, ventL, 3.5); ctx.fill();
         }
+        ctx.shadowBlur = 0;
+        ctx.restore();
 
         ctx.restore();
       }
