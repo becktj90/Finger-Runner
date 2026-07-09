@@ -175,7 +175,7 @@ export function getCharacterDef(id: string): CharacterDef {
 
 // ── Fart Boost ─────────────────────────────────────────────────────────
 export const BOOST_FRAMES = 150;
-export const BOOST_MULT = 1.5;
+export const BOOST_MULT = 1.8;
 export const BOOST_COOLDOWN = 300;
 export const BOOST_GAS_COLORS = ["#3dff5e", "#7CFC00", "#a8ff8a"];
 
