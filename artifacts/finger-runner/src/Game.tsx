@@ -67,11 +67,25 @@ const SIM_STEP_MS = 1000 / 60;  // fixed-timestep: sim always runs at 60 steps/s
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
 const COIN_R = 13;
+const OBSTACLE_CENTER_FACTOR = 0.5;
+const OBSTACLE_PASS_PROGRESS = 0.55;
+const OBSTACLE_HIT_HEIGHT_FACTOR = 0.88;
 const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice during these)
 const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
 const SWIPE_THRESHOLD = 18;     // px a touch must travel to commit a swipe gesture (lowered for better mobile feel)
+const NEAR_MISS_X_THRESHOLD = 46;
+const NEAR_MISS_MIN_CLEARANCE = 2;
+const NEAR_MISS_MAX_CLEARANCE = 28;
+const NEAR_MISS_CHAIN_WINDOW = 160;
+const NEAR_MISS_MAX_CHAIN = 5;
+const NEAR_MISS_BASE_BONUS = 4;
+const NEAR_MISS_CHAIN_BONUS = 2;
+const NEAR_MISS_DIALOG_CHANCE = 0.4;
+const NEAR_MISS_DIALOG_FRAMES = 55;
+const NEAR_MISS_LANE_DODGE_DRIFT = 0.22;
+const NEAR_MISS_ADJACENT_LANE = 1;
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -291,6 +305,8 @@ export default function Game() {
     shieldCharges: 0,
     comboCount: 0,
     comboTimer: 0,
+    nearMissChain: 0,
+    nearMissTimer: 0,
     comboPopup: null as { text: string; life: number; maxLife: number; color: string } | null,
     crashFlash: 0,
     dialog: null as { text: string; life: number; maxLife: number } | null,
@@ -718,7 +734,7 @@ export default function Game() {
     //  38% single random lane (any of -1, 0, 1)
     //  22% side-only: left or right, guarantees a clear centre gap
     //  18% opposite-to-last: forces the player to react and switch lanes
-    //  22% gate: block both side lanes (centre gap) or two lanes + one clear side
+    //  22% gate: block two lanes at once and leave one random safe lane
     const r = Math.random();
     let lane: number;
     if (r < 0.38) {
@@ -730,13 +746,16 @@ export default function Game() {
         ? (Math.random() < 0.5 ? -1 : 1)
         : -st.lastObstacleLane;
     } else {
-      // Gate pattern: two obstacles at once blocking both sides, clear centre
+      // Gate pattern: two obstacles at once, with one random safe lane.
       if (st.obstacles.length + 1 < POOL_OBSTACLES) {
-        const tL = pickType(); const dL = OBSTACLE_DIMS[tL];
-        const tR = pickType(); const dR = OBSTACLE_DIMS[tR];
-        st.obstacles.push({ x: width + 80, obsWidth: dL.w, obsHeight: dL.h, type: tL, passed: false, lane: -1 });
-        pushCapped(st.obstacles, POOL_OBSTACLES, { x: width + 80, obsWidth: dR.w, obsHeight: dR.h, type: tR, passed: false, lane: 1 });
-        st.lastObstacleLane = 0;
+        const safeLane = Math.floor(Math.random() * 3) - 1;
+        const laneA = safeLane === -1 ? 0 : -1;
+        const laneB = safeLane === 1 ? 0 : 1;
+        const tA = pickType(); const dA = OBSTACLE_DIMS[tA];
+        const tB = pickType(); const dB = OBSTACLE_DIMS[tB];
+        st.obstacles.push({ x: width + 80, obsWidth: dA.w, obsHeight: dA.h, type: tA, passed: false, lane: laneA });
+        pushCapped(st.obstacles, POOL_OBSTACLES, { x: width + 80, obsWidth: dB.w, obsHeight: dB.h, type: tB, passed: false, lane: laneB });
+        st.lastObstacleLane = safeLane;
         return;
       }
       lane = Math.floor(Math.random() * 3) - 1;
@@ -1125,6 +1144,8 @@ export default function Game() {
     st.shieldCharges = 0;
     st.comboCount = 0;
     st.comboTimer = 0;
+    st.nearMissChain = 0;
+    st.nearMissTimer = 0;
     st.comboPopup = null;
     st.platforms = [];
     st.platformTimer = 0;
@@ -1350,6 +1371,7 @@ export default function Game() {
 
         // Obstacles + collision
         const fingerLeft = 168; const fingerRight = 202;
+        const fingerCenter = (fingerLeft + fingerRight) * 0.5;
         const fingerTipY = st.playerY + FINGER_TIP_OFFSET - 8;
         if (st.boostTimer > 0) st.boostTimer--;
         if (st.boostCooldown > 0) st.boostCooldown--;
@@ -1409,7 +1431,7 @@ export default function Game() {
               hit = xOverlap && headY < roadY - BARRIER_GAP;
             } else {
               // 88% of visual height to forgive very top-edge grazes
-              hit = xOverlap && fingerTipY > roadY - o.obsHeight * 0.88;
+              hit = xOverlap && fingerTipY > roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR;
             }
             if (hit) {
               if (st.shieldCharges > 0) {
@@ -1429,7 +1451,35 @@ export default function Game() {
               crash(); didCrash = true;
             }
           }
-          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) o.passed = true;
+          if (!o.passed && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) {
+            if (o.type !== "barrier") {
+              const isWithinHorizontalThreshold =
+                Math.abs(o.x + o.obsWidth * OBSTACLE_CENTER_FACTOR - fingerCenter) < NEAR_MISS_X_THRESHOLD;
+              const laneDelta = Math.abs(o.lane - st.lane);
+              const clearance = roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR - fingerTipY;
+              const isNearMissJump = laneDelta === 0
+                && clearance >= NEAR_MISS_MIN_CLEARANCE
+                && clearance <= NEAR_MISS_MAX_CLEARANCE;
+              // laneVisual is spring-smoothed (not discrete), so drift indicates a recent lane-swap near-pass.
+              const isNearMissDodge = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
+              if (isWithinHorizontalThreshold && (isNearMissJump || isNearMissDodge)) {
+                st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
+                st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
+                const nearMissBonus = NEAR_MISS_BASE_BONUS + st.nearMissChain * NEAR_MISS_CHAIN_BONUS;
+                st.levelScore += nearMissBonus;
+                st.totalScore += nearMissBonus;
+                if (st.nearMissChain >= 2) {
+                  st.coinBalance += 1;
+                  setCoinsLS(st.coinBalance);
+                }
+                showComboPopup(`NEAR MISS +${nearMissBonus}`, "#7df9ff");
+                if (Math.random() < NEAR_MISS_DIALOG_CHANCE && (!st.dialog || st.dialog.life <= 0)) {
+                  showDialog("Whoa, close one!", NEAR_MISS_DIALOG_FRAMES);
+                }
+              }
+            }
+            o.passed = true;
+          }
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
 
@@ -1489,6 +1539,10 @@ export default function Game() {
         }
         if (st.magnetTimer > 0) st.magnetTimer--;
         if (st.multiplierTimer > 0) st.multiplierTimer--;
+        if (st.nearMissTimer > 0) {
+          st.nearMissTimer--;
+          if (st.nearMissTimer === 0) st.nearMissChain = 0;
+        }
         if (st.comboTimer > 0) { st.comboTimer--; if (st.comboTimer === 0) st.comboCount = 0; }
         if (st.comboPopup && st.comboPopup.life > 0) st.comboPopup.life--;
 
