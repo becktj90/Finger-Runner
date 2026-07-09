@@ -1453,15 +1453,16 @@ export default function Game() {
           }
           if (!o.passed && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) {
             if (o.type !== "barrier") {
-              const nearPassX = Math.abs(o.x + o.obsWidth * OBSTACLE_CENTER_FACTOR - fingerCenter) < NEAR_MISS_X_THRESHOLD;
+              const isWithinHorizontalThreshold =
+                Math.abs(o.x + o.obsWidth * OBSTACLE_CENTER_FACTOR - fingerCenter) < NEAR_MISS_X_THRESHOLD;
               const laneDelta = Math.abs(o.lane - st.lane);
               const clearance = roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR - fingerTipY;
-              const jumpedClose = laneDelta === 0
+              const isNearMissJump = laneDelta === 0
                 && clearance >= NEAR_MISS_MIN_CLEARANCE
                 && clearance <= NEAR_MISS_MAX_CLEARANCE;
               // laneVisual is spring-smoothed (not discrete), so drift indicates a recent lane-swap near-pass.
-              const dodgedClose = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
-              if (nearPassX && (jumpedClose || dodgedClose)) {
+              const isNearMissDodge = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
+              if (isWithinHorizontalThreshold && (isNearMissJump || isNearMissDodge)) {
                 st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
                 st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
                 const nearMissBonus = NEAR_MISS_BASE_BONUS + st.nearMissChain * NEAR_MISS_CHAIN_BONUS;
