@@ -67,6 +67,7 @@ const SIM_STEP_MS = 1000 / 60;  // fixed-timestep: sim always runs at 60 steps/s
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
 const COIN_R = 13;
+const OBSTACLE_CENTER_FACTOR = 0.5;
 const OBSTACLE_PASS_PROGRESS = 0.55;
 const OBSTACLE_HIT_HEIGHT_FACTOR = 0.88;
 const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice during these)
@@ -1450,31 +1451,34 @@ export default function Game() {
               crash(); didCrash = true;
             }
           }
-          if (!o.passed && o.type !== "barrier" && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) {
-            const nearPassX = Math.abs(o.x + o.obsWidth * 0.5 - fingerCenter) < NEAR_MISS_X_THRESHOLD;
-            const laneDelta = Math.abs(o.lane - st.lane);
-            const clearance = roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR - fingerTipY;
-            const jumpedClose = laneDelta === 0
-              && clearance >= NEAR_MISS_MIN_CLEARANCE
-              && clearance <= NEAR_MISS_MAX_CLEARANCE;
-            const dodgedClose = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
-            if (nearPassX && (jumpedClose || dodgedClose)) {
-              st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
-              st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
-              const nearMissBonus = NEAR_MISS_BASE_BONUS + st.nearMissChain * NEAR_MISS_CHAIN_BONUS;
-              st.levelScore += nearMissBonus;
-              st.totalScore += nearMissBonus;
-              if (st.nearMissChain >= 2) {
-                st.coinBalance += 1;
-                setCoinsLS(st.coinBalance);
-              }
-              showComboPopup(`NEAR MISS +${nearMissBonus}`, "#7df9ff");
-              if (Math.random() < NEAR_MISS_DIALOG_CHANCE && (!st.dialog || st.dialog.life <= 0)) {
-                showDialog("Whoa, close one!", NEAR_MISS_DIALOG_FRAMES);
+          if (!o.passed && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) {
+            if (o.type !== "barrier") {
+              const nearPassX = Math.abs(o.x + o.obsWidth * OBSTACLE_CENTER_FACTOR - fingerCenter) < NEAR_MISS_X_THRESHOLD;
+              const laneDelta = Math.abs(o.lane - st.lane);
+              const clearance = roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR - fingerTipY;
+              const jumpedClose = laneDelta === 0
+                && clearance >= NEAR_MISS_MIN_CLEARANCE
+                && clearance <= NEAR_MISS_MAX_CLEARANCE;
+              // laneVisual is spring-smoothed (not discrete), so drift indicates a recent lane-swap near-pass.
+              const dodgedClose = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
+              if (nearPassX && (jumpedClose || dodgedClose)) {
+                st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
+                st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
+                const nearMissBonus = NEAR_MISS_BASE_BONUS + st.nearMissChain * NEAR_MISS_CHAIN_BONUS;
+                st.levelScore += nearMissBonus;
+                st.totalScore += nearMissBonus;
+                if (st.nearMissChain >= 2) {
+                  st.coinBalance += 1;
+                  setCoinsLS(st.coinBalance);
+                }
+                showComboPopup(`NEAR MISS +${nearMissBonus}`, "#7df9ff");
+                if (Math.random() < NEAR_MISS_DIALOG_CHANCE && (!st.dialog || st.dialog.life <= 0)) {
+                  showDialog("Whoa, close one!", NEAR_MISS_DIALOG_FRAMES);
+                }
               }
             }
+            o.passed = true;
           }
-          if (!o.passed && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) o.passed = true;
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
 
