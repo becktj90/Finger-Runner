@@ -84,6 +84,7 @@ const NEAR_MISS_CHAIN_BONUS = 2;
 const NEAR_MISS_DIALOG_CHANCE = 0.4;
 const NEAR_MISS_DIALOG_FRAMES = 55;
 const NEAR_MISS_LANE_DODGE_DRIFT = 0.22;
+const NEAR_MISS_ADJACENT_LANE = 1;
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -1456,7 +1457,7 @@ export default function Game() {
             const jumpedClose = laneDelta === 0
               && clearance >= NEAR_MISS_MIN_CLEARANCE
               && clearance <= NEAR_MISS_MAX_CLEARANCE;
-            const dodgedClose = laneDelta === 1 && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
+            const dodgedClose = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
             if (nearPassX && (jumpedClose || dodgedClose)) {
               st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
               st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
@@ -1468,7 +1469,9 @@ export default function Game() {
                 setCoinsLS(st.coinBalance);
               }
               showComboPopup(`NEAR MISS +${nearMissBonus}`, "#7df9ff");
-              if (Math.random() < NEAR_MISS_DIALOG_CHANCE) showDialog("Whoa, close one!", NEAR_MISS_DIALOG_FRAMES);
+              if (Math.random() < NEAR_MISS_DIALOG_CHANCE && (!st.dialog || st.dialog.life <= 0)) {
+                showDialog("Whoa, close one!", NEAR_MISS_DIALOG_FRAMES);
+              }
             }
           }
           if (!o.passed && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) o.passed = true;
