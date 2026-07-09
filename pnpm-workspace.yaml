@@ -169,4 +169,4 @@ overrides:
   postcss: "^8.5.10"
 
 allowBuilds:
-  esbuild: true
+  esbuild: set this to true or false

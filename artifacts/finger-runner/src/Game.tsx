@@ -67,11 +67,22 @@ const SIM_STEP_MS = 1000 / 60;  // fixed-timestep: sim always runs at 60 steps/s
 const FINGER_TIP_OFFSET = 90;
 const ROAD_SURFACE_OFFSET = 108;
 const COIN_R = 13;
+const OBSTACLE_PASS_PROGRESS = 0.55;
+const OBSTACLE_HIT_HEIGHT_FACTOR = 0.88;
 const SABER_SWING_FRAMES = 16;  // active frames of a saber swing (can slice during these)
 const SLASH_COOLDOWN = 24;      // frames before the next swing is allowed
 const KIDS_SPEED_MULT = 0.62;   // easy mode: gentler scroll speed
 const KIDS_SPAWN_MULT = 1.5;    // easy mode: more breathing room between obstacles
 const SWIPE_THRESHOLD = 18;     // px a touch must travel to commit a swipe gesture (lowered for better mobile feel)
+const NEAR_MISS_X_THRESHOLD = 46;
+const NEAR_MISS_MIN_CLEARANCE = 2;
+const NEAR_MISS_MAX_CLEARANCE = 28;
+const NEAR_MISS_CHAIN_WINDOW = 160;
+const NEAR_MISS_MAX_CHAIN = 5;
+const NEAR_MISS_BASE_BONUS = 4;
+const NEAR_MISS_CHAIN_BONUS = 2;
+const NEAR_MISS_DIALOG_CHANCE = 0.4;
+const NEAR_MISS_DIALOG_FRAMES = 55;
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -1417,7 +1428,7 @@ export default function Game() {
               hit = xOverlap && headY < roadY - BARRIER_GAP;
             } else {
               // 88% of visual height to forgive very top-edge grazes
-              hit = xOverlap && fingerTipY > roadY - o.obsHeight * 0.88;
+              hit = xOverlap && fingerTipY > roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR;
             }
             if (hit) {
               if (st.shieldCharges > 0) {
@@ -1437,13 +1448,13 @@ export default function Game() {
               crash(); didCrash = true;
             }
           }
-          if (!o.passed && o.lane === st.lane && o.type !== "barrier" && o.x + o.obsWidth * 0.55 < fingerLeft) {
-            const nearPassX = Math.abs(o.x + o.obsWidth * 0.5 - fingerCenter) < 46;
-            const clearance = roadY - o.obsHeight * 0.88 - fingerTipY;
-            if (nearPassX && clearance >= 2 && clearance <= 28) {
-              st.nearMissTimer = 160;
-              st.nearMissChain = Math.min(5, st.nearMissChain + 1);
-              const nearMissBonus = 4 + st.nearMissChain * 2;
+          if (!o.passed && o.lane === st.lane && o.type !== "barrier" && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) {
+            const nearPassX = Math.abs(o.x + o.obsWidth * 0.5 - fingerCenter) < NEAR_MISS_X_THRESHOLD;
+            const clearance = roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR - fingerTipY;
+            if (nearPassX && clearance >= NEAR_MISS_MIN_CLEARANCE && clearance <= NEAR_MISS_MAX_CLEARANCE) {
+              st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
+              st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
+              const nearMissBonus = NEAR_MISS_BASE_BONUS + st.nearMissChain * NEAR_MISS_CHAIN_BONUS;
               st.levelScore += nearMissBonus;
               st.totalScore += nearMissBonus;
               if (st.nearMissChain >= 2) {
@@ -1451,10 +1462,10 @@ export default function Game() {
                 setCoinsLS(st.coinBalance);
               }
               showComboPopup(`NEAR MISS +${nearMissBonus}`, "#7df9ff");
-              if (Math.random() < 0.4) showDialog("Whoa, close one!", 55);
+              if (Math.random() < NEAR_MISS_DIALOG_CHANCE) showDialog("Whoa, close one!", NEAR_MISS_DIALOG_FRAMES);
             }
           }
-          if (!o.passed && o.x + o.obsWidth * 0.55 < fingerLeft) o.passed = true;
+          if (!o.passed && o.x + o.obsWidth * OBSTACLE_PASS_PROGRESS < fingerLeft) o.passed = true;
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
 
