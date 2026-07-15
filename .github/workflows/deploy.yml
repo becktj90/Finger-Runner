@@ -35,8 +35,18 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Build Beckify
-        run: pnpm --filter @workspace/beckify build
+      # Build the Booty Butt Scooter game at the /scooter/ sub-path so it can be
+      # launched from the hub. Its vite.config requires PORT and BASE_PATH.
+      - name: Build Booty Butt Scooter (game)
+        run: PORT=3000 BASE_PATH=/scooter/ pnpm --filter @workspace/finger-runner-engine build
+      # Build the games-splash hub that lives at the play.beckify.com root.
+      - name: Build Beckify hub
+        run: BASE_PATH=/ pnpm --filter @workspace/beckify build
+      # Nest the game inside the hub output so it's served at /scooter/.
+      - name: Nest game under hub
+        run: |
+          rm -rf artifacts/beckify/dist/public/scooter
+          cp -r artifacts/finger-runner/dist/public artifacts/beckify/dist/public/scooter
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

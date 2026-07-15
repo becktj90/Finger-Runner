@@ -1,7 +1,7 @@
 import { Activity, GraduationCap } from "lucide-react";
 import { FadeIn } from "@/components/FadeIn";
 import { PROFILE, CONTACT_LINKS } from "@/data/site-content";
-import profilePhoto from "@/assets/beck-profile.jpg";
+import profilePhoto from "@/assets/beck-profile.svg";
 
 export const About = () => {
   const socialLinks = CONTACT_LINKS.filter((l) => l.external);

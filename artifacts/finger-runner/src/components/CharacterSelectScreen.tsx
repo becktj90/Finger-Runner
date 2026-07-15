@@ -63,7 +63,7 @@ export default function CharacterSelectScreen({
                     justifyContent: "center", fontSize: "2.6rem",
                   }}>{ch.emoji}</span>
                   <img
-                    src={`/chars/${ch.id}.png`}
+                    src={`${import.meta.env.BASE_URL}chars/${ch.id}.png`}
                     alt={ch.name}
                     style={{ width: 90, height: 90, objectFit: "contain", position: "relative", zIndex: 1 }}
                     onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}

@@ -1,10 +1,12 @@
 // Bump CACHE_NAME on every strategy change so old caches are purged on activate.
-const CACHE_NAME = "finger-runner-v2";
+// Paths are scope-relative ("./…") so the SW works whether the game is served
+// at the site root or under a sub-path like /scooter/ inside the beckify hub.
+const CACHE_NAME = "booty-scooter-v3";
 const PRECACHE_ASSETS = [
-  "/",
-  "/index.html",
-  "/favicon.svg",
-  "/manifest.json"
+  "./",
+  "./index.html",
+  "./favicon.svg",
+  "./manifest.json"
 ];
 
 self.addEventListener("install", (event) => {
@@ -41,13 +43,13 @@ self.addEventListener("fetch", (event) => {
           if (res && res.ok) {
             const copy = res.clone();
             event.waitUntil(
-              caches.open(CACHE_NAME).then((cache) => cache.put("/index.html", copy))
+              caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy))
             );
           }
           return res;
         })
         .catch(() =>
-          caches.match("/index.html").then((r) => r || caches.match("/"))
+          caches.match("./index.html").then((r) => r || caches.match("./"))
         )
     );
     return;

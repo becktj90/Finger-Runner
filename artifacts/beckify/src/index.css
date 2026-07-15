@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Dark violet theme shared with the toolbox (#8b7bff accent). The About
+   section and hub read these via Tailwind arbitrary values, e.g.
+   text-[var(--foreground)] / bg-[var(--accent-soft)]. */
+:root {
+  --background: #0d0b16;
+  --surface: #17142370;
+  --surface-solid: #171423;
+  --foreground: #f3f1fb;
+  --muted: #a29fb8;
+  --border: #2a2740;
+  --accent: #8b7bff;
+  --accent-soft: #8b7bff1f;
+}
+
+/* Expose a display font utility (font-display) and the body font. */
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* subtle violet glow anchored top-centre */
+  background-image:
+    radial-gradient(60rem 40rem at 50% -10%, #8b7bff22, transparent 70%),
+    radial-gradient(40rem 30rem at 100% 10%, #4f8bff14, transparent 70%);
+  background-attachment: fixed;
+}

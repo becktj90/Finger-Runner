@@ -18,8 +18,12 @@ if ("serviceWorker" in navigator) {
     });
   }
   window.addEventListener("load", () => {
+    // Base-relative so the SW registers under the app's own path (e.g. /scooter/
+    // when the game is embedded in the beckify hub) with a matching scope,
+    // instead of grabbing the site root.
+    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
     navigator.serviceWorker
-      .register("/sw.js")
+      .register(swUrl)
       .then((reg) => reg.update())
       .catch(() => {
         // silent fail — offline mode not critical

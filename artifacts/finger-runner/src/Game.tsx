@@ -363,7 +363,9 @@ export default function Game() {
     chars.forEach(id => {
       suffixes.forEach(suf => {
         const img = new Image();
-        img.src = `/chars/${id}${suf}.png`;
+        // Base-relative so sprites resolve under the app's mount path (e.g.
+        // /scooter/chars/… inside the beckify hub, /chars/… at the root).
+        img.src = `${import.meta.env.BASE_URL}chars/${id}${suf}.png`;
         charImgsRef.current[id + suf] = img;
       });
     });
