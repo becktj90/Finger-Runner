@@ -263,10 +263,6 @@ const MEDAL_COLOR: Record<Medal, string> = { bronze: "#cd7f32", silver: "#c0c0c0
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // True only when the 3D layer failed to init (no WebGL). In that case we draw
-  // the 2D rider on the HUD canvas as a fallback; when 3D works the rider is the
-  // 3D scooter and the 2D one must stay hidden to avoid a doubled avatar.
-  const scene3dFailedRef = useRef(false);
   const charImgsRef = useRef<Record<string, HTMLImageElement>>({});
   const touchRef = useRef({ active: false, startX: 0, startY: 0, consumed: false });
   const stateRef = useRef({
@@ -1726,10 +1722,10 @@ export default function Game() {
       // ── Draw (HUD only — the game world is now rendered by <Scene3D/> in true 3D) ─
       ctx.clearRect(0, 0, width, height);
 
-      // ── Vehicle + rider — 2D fallback ONLY when the 3D scene is unavailable.
-      // When WebGL works, Scene3D draws the scooter+rider in 3D; drawing the 2D
-      // one too would stack a second avatar on top of it.
-      if (scene3dFailedRef.current) {
+      // ── Vehicle + rider — drawn on the 2D HUD canvas. This is the real
+      // avatar: it renders every unlockable vehicle and the character's
+      // photo-based colours. (The 3D Vespa in Scene3D is kept hidden.)
+      {
         const charId = getSelectedCharacter();
         const charDef = getCharacterDef(charId);
         const vehId = getEquippedVehicle();
@@ -2141,12 +2137,11 @@ export default function Game() {
         const WINDOW = 52;
         const color = ap.type === "JUMP" ? "#5dff8f" : ap.type === "DUCK" ? "#39d8ff" : "#ff6ad5";
         const label = ap.type === "JUMP" ? "JUMP" : ap.type === "DUCK" ? "SLIDE" : "SLASH";
-        // Sit just above the 3D rider (whose head is ~0.42*height on screen),
-        // tracking its lane. Lane spacing ~0.12*height matches the 3D camera
-        // projection so the cue lines up with the rider's column.
-        const lanePixels = Math.min(height * 0.12, 150);
+        // Sit above the 2D rider, tracking its lane (same lane spacing the
+        // rider uses). Anchored to the ground line so it doesn't bob on jumps.
+        const lanePixels = Math.min(width * 0.17, 165);
         const px = width / 2 + st.laneVisual * lanePixels;
-        const py = height * 0.34;
+        const py = getGroundY(height) + 90 - 198;
         const TARGET_R = 22;
         // Ring shrinks from WINDOW→ideal, meeting the target ring at the moment
         // to act; keeps tightening a touch past that so late presses still read.
@@ -2382,7 +2377,7 @@ export default function Game() {
 
   return (
     <div style={{ position:"fixed", inset:0, background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
-      <Scene3DBoundary onFailure={() => { scene3dFailedRef.current = true; }}>
+      <Scene3DBoundary>
         <Suspense fallback={null}>
           <Scene3D
             stateRef={stateRef as unknown as React.MutableRefObject<GameSceneState>}

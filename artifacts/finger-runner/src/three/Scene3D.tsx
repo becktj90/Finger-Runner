@@ -555,7 +555,11 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
     const { height } = sizeRef.current;
     const roadY = roadYOld(height);
     if (!group.current) return;
-    group.current.visible = st.gameRunning;
+    // The rider/vehicle is drawn by the 2D HUD canvas (it supports every
+    // unlockable vehicle and the photo-based character colours). This 3D Vespa
+    // is a hardcoded stand-in, so keep it hidden to avoid a second, oversized
+    // avatar on top of the 2D one.
+    group.current.visible = false;
 
     // Squash/stretch on jump & land impact — same feel as the old runner
     let stretchY = 1, stretchX = 1;
