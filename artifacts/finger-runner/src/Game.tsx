@@ -321,6 +321,7 @@ export default function Game() {
     boostTimer: 0,
     boostCooldown: 0,
     lastRunBonus: 0,
+    paused: false,
     curSpeed: BASE_SPEED,
     // Timing telegraph for the next same-lane hazard: what to do, and how many
     // sim-frames until it reaches the rider (drives the shrinking timing ring).
@@ -341,6 +342,7 @@ export default function Game() {
 
   type Screen = "start"|"playing"|"levelComplete"|"dead"|"wardrobe"|"character";
   const [screen, setScreen] = useState<Screen>("start");
+  const [paused, setPaused] = useState(false);
   const [musicOn, setMusicOn] = useState(isMusicEnabled());
   const [currentLevel, setCurrentLevel] = useState(1);
   const [maxLevel, setMaxLevelState] = useState(getMaxLevel());
@@ -1232,6 +1234,14 @@ export default function Game() {
     }
 
     const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Escape" || e.code === "KeyP") {
+        e.preventDefault();
+        if (e.repeat) return;
+        const st = stateRef.current;
+        if (st.gameRunning) { if (st.paused) resumeGame(); else pauseGame(); }
+        return;
+      }
+      if (stateRef.current.paused) return; // swallow gameplay keys while paused
       if (e.code === "Space" || e.code === "ArrowUp") {
         e.preventDefault();
         if (e.repeat) return; // ignore OS key-repeat so holding doesn't burn the double jump
@@ -1282,7 +1292,7 @@ export default function Game() {
       const theme = lvlDef.theme;
 
       const stepSim = () => {
-      if (st.gameRunning) {
+      if (st.gameRunning && !st.paused) {
         st.time++;
         if (st.time % 60 === 0) incrementStat("playTimeSeconds");
         // Turbo pays: +50% score rate while boosting, so the speed burst
@@ -2305,8 +2315,21 @@ export default function Game() {
   };
   const goToMenu = () => {
     stopMusic();
+    stateRef.current.paused = false; setPaused(false);
     if (audioRef.current.enabled) startMusic("start", false);
     setScreen("start");
+  };
+  const pauseGame = () => {
+    if (!stateRef.current.gameRunning || stateRef.current.paused) return;
+    stateRef.current.paused = true; setPaused(true);
+  };
+  const resumeGame = () => {
+    stateRef.current.paused = false; setPaused(false);
+  };
+  const exitToMenu = () => {
+    // Abandon the current run and return to the main menu.
+    stateRef.current.gameRunning = false;
+    goToMenu();
   };
   const handleEquipVehicle = (id: VehicleId) => {
     setEquippedVehicle(id); setEquippedVehicleState(id);
@@ -2733,6 +2756,49 @@ export default function Game() {
           <span style={{ fontSize:"1.5rem", lineHeight:1, position:"relative" }}>💨</span>
           <span style={{ position:"relative" }}>{boostActive ? "BOOST!" : boostReady ? "FART" : "···"}</span>
         </button>
+      )}
+
+      {/* ── Pause button (during play) ── */}
+      {screen === "playing" && !paused && (
+        <button onClick={pauseGame} className="retro-btn" aria-label="Pause"
+          style={{ position:"absolute", top:18, left:18, zIndex:26,
+            width:44, height:44, borderRadius:8, fontSize:"0.7rem", fontFamily:retroFont,
+            background:"rgba(0,0,0,0.8)", color:"#00ffcc", border:"2px solid #00ffcc",
+            boxShadow:"0 0 10px rgba(0,255,204,0.35)", cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center", touchAction:"none" }}>
+          II
+        </button>
+      )}
+
+      {/* ── Pause overlay ── */}
+      {screen === "playing" && paused && (
+        <div style={{ position:"absolute", inset:0, zIndex:40,
+          background:"rgba(0,0,10,0.82)", backdropFilter:"blur(2px)",
+          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:18 }}>
+          <div style={{ fontSize:"1.1rem", color:"#00ffcc", fontFamily:retroFont,
+            textShadow:"0 0 16px #00ffcc", letterSpacing:"0.08em" }}>PAUSED</div>
+          <button onClick={resumeGame} className="retro-btn"
+            style={{ padding:"14px 34px", fontSize:"0.8rem", fontFamily:retroFont,
+              background:"rgba(0,200,80,0.14)", color:"#00ff88", border:"3px solid #00ff88",
+              boxShadow:"0 0 16px rgba(0,255,136,0.32)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+            ▶ RESUME
+          </button>
+          <button onClick={handleToggleMusic} className="retro-btn"
+            style={{ padding:"10px 24px", fontSize:"0.6rem", fontFamily:retroFont,
+              background:"rgba(0,0,0,0.8)", color: musicOn ? "#ffee00" : "#666",
+              border:`2px solid ${musicOn ? "#ffee00" : "#444"}`, cursor:"pointer", lineHeight:2 }}>
+            ♪ MUSIC {musicOn ? "ON" : "OFF"}
+          </button>
+          <button onClick={exitToMenu} className="retro-btn"
+            style={{ padding:"12px 26px", fontSize:"0.7rem", fontFamily:retroFont,
+              background:"transparent", color:"#ff6688", border:"2px solid #ff4466",
+              boxShadow:"0 0 12px rgba(255,68,102,0.25)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+            EXIT TO MENU
+          </button>
+          <div style={{ fontSize:"0.44rem", color:"#556", fontFamily:retroFont, marginTop:6 }}>
+            EXITING ENDS THIS RUN
+          </div>
+        </div>
       )}
 
       {/* ── Music toggle ── */}
