@@ -10,6 +10,10 @@ import { Component, type ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
+  // Called once when the 3D layer fails to initialize, so the game can fall
+  // back to drawing the 2D rider on the HUD canvas instead (otherwise the 2D
+  // rider and the 3D rider would both draw and visibly overlap).
+  onFailure?: () => void;
 }
 
 interface State {
@@ -25,6 +29,7 @@ export default class Scene3DBoundary extends Component<Props, State> {
 
   componentDidCatch(error: unknown) {
     console.warn("3D scene failed to initialize; continuing without 3D visuals.", error);
+    this.props.onFailure?.();
   }
 
   render() {

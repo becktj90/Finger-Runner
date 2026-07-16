@@ -123,22 +123,22 @@ const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
 // escalates: early levels are short, friendly hops; later levels lean tall and
 // dense, with the stopsign showing up more often as the finale approaches.
 const LEVELS = [
-  { num:1, name:"Neighborhood Cruise",  target:500,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0,
-    obs:["cat","dog","poop","duck","cone","poop","pumpkin","duck","cat"] as ObstacleType[] },
-  { num:2, name:"Shopping District",    target:600,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0,
-    obs:["cat","dog","poop","duck","undies","hydrant","pinata","trashcan","cone","cart","barrier"] as ObstacleType[] },
-  { num:3, name:"Downtown",             target:650,  theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6,
-    obs:["dog","cone","poop","toilet","hydrant","newsbox","dino","undies","gnome","cart","pinata","barrier"] as ObstacleType[] },
-  { num:4, name:"City Center",          target:700,  theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2,
-    obs:["cone","hydrant","toilet","newsbox","dino","gnome","flamingo","cart","undies","pinata","mailbox","barrier"] as ObstacleType[] },
-  { num:5, name:"Highway On-Ramp",      target:750,  theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8,
-    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","trashcan","cart","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
-  { num:6, name:"Open Highway",         target:800,  theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4,
-    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","stopsign","pinata","cactus","barrier","barrier"] as ObstacleType[] },
-  { num:7, name:"Mountain Pass",        target:900,  theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0,
-    obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","pinata","barrier","barrier"] as ObstacleType[] },
-  { num:8, name:"Night Drive",          target:1000, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
-    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","pinata","barrier","barrier"] as ObstacleType[] },
+  { num:1, name:"Neighborhood Cruise",  target:780,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0,
+    obs:["cat","dog","poop","duck","cone","pinata","poop","pumpkin","duck","cat","pinata"] as ObstacleType[] },
+  { num:2, name:"Shopping District",    target:920,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0,
+    obs:["cat","dog","poop","duck","undies","hydrant","pinata","trashcan","cone","cart","pinata","barrier"] as ObstacleType[] },
+  { num:3, name:"Downtown",             target:1000, theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6,
+    obs:["dog","cone","poop","toilet","hydrant","newsbox","dino","undies","gnome","cart","pinata","pinata","barrier"] as ObstacleType[] },
+  { num:4, name:"City Center",          target:1080, theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2,
+    obs:["cone","hydrant","toilet","newsbox","dino","gnome","flamingo","cart","undies","pinata","pinata","mailbox","barrier"] as ObstacleType[] },
+  { num:5, name:"Highway On-Ramp",      target:1160, theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8,
+    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","trashcan","cart","pinata","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
+  { num:6, name:"Open Highway",         target:1240, theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4,
+    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","stopsign","pinata","pinata","cactus","barrier","barrier"] as ObstacleType[] },
+  { num:7, name:"Mountain Pass",        target:1400, theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0,
+    obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
+  { num:8, name:"Night Drive",          target:1560, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
+    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
@@ -263,6 +263,10 @@ const MEDAL_COLOR: Record<Medal, string> = { bronze: "#cd7f32", silver: "#c0c0c0
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // True only when the 3D layer failed to init (no WebGL). In that case we draw
+  // the 2D rider on the HUD canvas as a fallback; when 3D works the rider is the
+  // 3D scooter and the 2D one must stay hidden to avoid a doubled avatar.
+  const scene3dFailedRef = useRef(false);
   const charImgsRef = useRef<Record<string, HTMLImageElement>>({});
   const touchRef = useRef({ active: false, startX: 0, startY: 0, consumed: false });
   const stateRef = useRef({
@@ -321,6 +325,10 @@ export default function Game() {
     boostTimer: 0,
     boostCooldown: 0,
     lastRunBonus: 0,
+    curSpeed: BASE_SPEED,
+    // Timing telegraph for the next same-lane hazard: what to do, and how many
+    // sim-frames until it reaches the rider (drives the shrinking timing ring).
+    actionPrompt: null as { type: "JUMP" | "DUCK" | "SLASH"; frames: number } | null,
   });
   const sizeRef = useRef({ width: typeof window !== "undefined" ? window.innerWidth : 1280, height: typeof window !== "undefined" ? window.innerHeight : 720 });
   const dialogElRef = useRef<HTMLDivElement>(null);
@@ -1308,6 +1316,10 @@ export default function Game() {
         let g = GRAVITY;
         if (st.velocity < 0 && !st.jumpHeld) g *= LOW_JUMP_GRAVITY_MULT;
         else if (st.velocity > 0) g *= FALL_GRAVITY_MULT;
+        // Apex hang — ease gravity near the very top of the arc so there's a
+        // longer, more readable beat where the rider floats over an obstacle.
+        // Makes jump timing far more forgiving without changing peak height.
+        if (!st.onGround && Math.abs(st.velocity) < 4.5) g *= 0.55;
         if (st.kidsMode) g *= 0.82;   // easy mode: floatier, more forgiving jumps
         st.velocity += g;
         if (st.velocity > MAX_FALL) st.velocity = MAX_FALL;
@@ -1393,6 +1405,7 @@ export default function Game() {
         // Speed = level base + score ramp (ramp alone capped — Runner-2 maxSpeed
         // pattern, but level base speeds stay intact), then kids/boost multipliers.
         const speed = (BASE_SPEED * lvlDef.speedMult + Math.min(st.levelScore * 0.0014, SCORE_RAMP_CAP)) * kidsSpeedMult * boostMult;
+        st.curSpeed = speed;
         st.worldScroll += speed; // visual-only: drives 3D background/road scroll, no gameplay effect
         // Fart-boost green gas trail — puffs out behind the runner while boosting.
         // Uses shape "gas" (not "circle") + upward vy so it floats and never gets
@@ -1490,6 +1503,34 @@ export default function Game() {
             o.passed = true;
           }
           if (o.x < -150) st.obstacles.splice(i, 1);
+        }
+
+        // ── Timing telegraph ──────────────────────────────────────────────────
+        // Find the nearest same-lane hazard still ahead and, based on how many
+        // frames until it reaches the rider, flash JUMP / DUCK / SLASH so it's
+        // obvious *when* to act. Suppressed once that action is already underway.
+        st.actionPrompt = null;
+        {
+          const px = 185; // rider collision centre (matches fingerLeft/fingerRight)
+          let best: Obstacle | null = null; let bestDist = Infinity;
+          for (const o of st.obstacles) {
+            if (o.lane !== st.lane) continue;
+            const dist = o.x + o.obsWidth * 0.5 - px;
+            if (dist < -12) continue;              // already passed the rider
+            if (dist < bestDist) { bestDist = dist; best = o; }
+          }
+          if (best) {
+            const frames = bestDist / Math.max(0.5, st.curSpeed);
+            if (frames < 52) {
+              const type: "JUMP" | "DUCK" | "SLASH" =
+                best.type === "barrier" ? "DUCK" : best.type === "pinata" ? "SLASH" : "JUMP";
+              const acting =
+                (type === "JUMP" && !st.onGround) ||
+                (type === "DUCK" && st.sliding) ||
+                (type === "SLASH" && st.saberSwing > 0);
+              if (!acting) st.actionPrompt = { type, frames };
+            }
+          }
         }
 
         // Coins — move, collect on overlap with the finger
@@ -1621,9 +1662,11 @@ export default function Game() {
           }
         }
         st.platformTimer++;
-        if (st.platformTimer > 450 + Math.floor(Math.random() * 180)) {
+        // More frequent raised platforms → more elevation changes and jump-up
+        // sections. Lower floor + wider decks keep them fair to land on.
+        if (st.platformTimer > 320 + Math.floor(Math.random() * 150)) {
           st.platformTimer = 0;
-          pushCapped(st.platforms, POOL_PLATFORMS, { x: width + 60, y: roadY - 130 - Math.floor(Math.random() * 100), w: 100 + Math.floor(Math.random() * 110) });
+          pushCapped(st.platforms, POOL_PLATFORMS, { x: width + 60, y: roadY - 108 - Math.floor(Math.random() * 96), w: 120 + Math.floor(Math.random() * 120) });
         }
 
         // Particles
@@ -1683,8 +1726,10 @@ export default function Game() {
       // ── Draw (HUD only — the game world is now rendered by <Scene3D/> in true 3D) ─
       ctx.clearRect(0, 0, width, height);
 
-      // ── Vehicle + rider — drawn in canvas 2D (rear/behind view) ────────────
-      {
+      // ── Vehicle + rider — 2D fallback ONLY when the 3D scene is unavailable.
+      // When WebGL works, Scene3D draws the scooter+rider in 3D; drawing the 2D
+      // one too would stack a second avatar on top of it.
+      if (scene3dFailedRef.current) {
         const charId = getSelectedCharacter();
         const charDef = getCharacterDef(charId);
         const vehId = getEquippedVehicle();
@@ -2087,6 +2132,70 @@ export default function Game() {
         ctx.textAlign = "left";
       }
 
+      // ── Action telegraph — shrinking ring + label above the rider tells you
+      // exactly WHEN to act. Act when the moving ring closes onto the fixed
+      // target ring. Colour-coded: green JUMP, cyan SLIDE, magenta SLASH.
+      if (st.gameRunning && st.actionPrompt) {
+        const ap = st.actionPrompt;
+        const ideal = ap.type === "JUMP" ? 15 : ap.type === "DUCK" ? 9 : 12; // frames of lead the action needs
+        const WINDOW = 52;
+        const color = ap.type === "JUMP" ? "#5dff8f" : ap.type === "DUCK" ? "#39d8ff" : "#ff6ad5";
+        const label = ap.type === "JUMP" ? "JUMP" : ap.type === "DUCK" ? "SLIDE" : "SLASH";
+        // Sit just above the 3D rider (whose head is ~0.42*height on screen),
+        // tracking its lane. Lane spacing ~0.12*height matches the 3D camera
+        // projection so the cue lines up with the rider's column.
+        const lanePixels = Math.min(height * 0.12, 150);
+        const px = width / 2 + st.laneVisual * lanePixels;
+        const py = height * 0.34;
+        const TARGET_R = 22;
+        // Ring shrinks from WINDOW→ideal, meeting the target ring at the moment
+        // to act; keeps tightening a touch past that so late presses still read.
+        const prog = Math.max(0, Math.min(1, (ap.frames - ideal) / (WINDOW - ideal)));
+        const ringR = TARGET_R + prog * 40;
+        const inWindow = ap.frames <= ideal + 7; // the "GO" beat
+        const pulse = inWindow ? 1 + Math.sin(st.time * 0.6) * 0.09 : 1;
+        ctx.save();
+        ctx.translate(px, py);
+        // fixed target ring
+        ctx.globalAlpha = 0.3;
+        ctx.strokeStyle = color; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, TARGET_R, 0, Math.PI * 2); ctx.stroke();
+        // moving timing ring — closes onto the target ring at the moment to act
+        ctx.globalAlpha = 0.4 + 0.55 * (1 - prog);
+        ctx.lineWidth = inWindow ? 5 : 3;
+        ctx.shadowColor = color; ctx.shadowBlur = inWindow ? 16 : 6;
+        ctx.beginPath(); ctx.arc(0, 0, ringR, 0, Math.PI * 2); ctx.stroke();
+        // Icon drawn as canvas shapes (retro font lacks arrow/sword glyphs):
+        // up-chevron for JUMP, down-chevron for SLIDE, an X for SLASH.
+        ctx.globalAlpha = inWindow ? 1 : 0.6;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = color;
+        ctx.lineCap = "round";
+        const s = 9 * pulse;
+        if (ap.type === "SLASH") {
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(-s, -s); ctx.lineTo(s, s);
+          ctx.moveTo(s, -s); ctx.lineTo(-s, s);
+          ctx.stroke();
+        } else {
+          const dir = ap.type === "DUCK" ? 1 : -1; // point down for slide, up for jump
+          ctx.beginPath();
+          ctx.moveTo(0, dir * s);
+          ctx.lineTo(-s, dir * -s * 0.6);
+          ctx.lineTo(s, dir * -s * 0.6);
+          ctx.closePath();
+          ctx.fill();
+        }
+        // label below
+        ctx.shadowBlur = inWindow ? 12 : 4;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = `bold ${Math.round(12 * pulse)}px ${AF}`;
+        ctx.fillText(label, 0, TARGET_R + 18);
+        ctx.restore();
+        ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      }
+
       // Game over panel — GAME OVER arcade style
       if (!st.gameRunning && !st.levelComplete && st.totalScore > 0) {
         const deadPanelH = 296 + (st.lastRunBonus > 0 ? 28 : 0);
@@ -2273,7 +2382,7 @@ export default function Game() {
 
   return (
     <div style={{ position:"fixed", inset:0, background:"#000008", touchAction:"none", boxShadow:`inset 0 0 90px ${currentChar.saberColor}2a` }}>
-      <Scene3DBoundary>
+      <Scene3DBoundary onFailure={() => { scene3dFailedRef.current = true; }}>
         <Suspense fallback={null}>
           <Scene3D
             stateRef={stateRef as unknown as React.MutableRefObject<GameSceneState>}
