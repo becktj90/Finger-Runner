@@ -3,12 +3,14 @@
   inset: 0;
   pointer-events: none;
   z-index: 50;
+  /* A whisper-thin scanline texture — enough for a hint of CRT character,
+     not the heavy banding that made the render look low-fi. */
   background: repeating-linear-gradient(
     to bottom,
     transparent 0px,
-    transparent 3px,
-    rgba(0, 0, 0, 0.11) 3px,
-    rgba(0, 0, 0, 0.11) 4px
+    transparent 2px,
+    rgba(0, 0, 0, 0.035) 2px,
+    rgba(0, 0, 0, 0.035) 3px
   );
 }
 
@@ -17,7 +19,9 @@
   inset: 0;
   pointer-events: none;
   z-index: 49;
-  background: radial-gradient(ellipse at center, transparent 58%, rgba(0, 0, 20, 0.60) 100%);
+  /* Gentle edge darkening; the 3D pass adds its own vignette, so keep this
+     light to avoid crushing the corners. */
+  background: radial-gradient(ellipse at center, transparent 66%, rgba(0, 0, 20, 0.34) 100%);
 }
 
 @keyframes neonPulse {

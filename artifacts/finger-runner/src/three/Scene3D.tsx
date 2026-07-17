@@ -5,8 +5,8 @@
 // collision, scoring, and persistence exactly as before.
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { PerspectiveCamera } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
+import { PerspectiveCamera, Environment, Lightformer } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette, SMAA, HueSaturation, BrightnessContrast } from "@react-three/postprocessing";
 import * as THREE from "three";
 import {
   FINGER_CENTER_X, LANE_X, LANE_OFFSET, worldZ, worldY, roadYOld, THEME_COLORS,
@@ -791,8 +791,28 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
 }
 
 // ── Ghibli sky dome + drifting painted clouds ──────────────────────────────
+// Vertical sky gradient baked into a small canvas texture (CSP-safe, no
+// external HDR): a richer zenith fading to a warm, lighter horizon reads far
+// less flat than a single flat-colour dome.
+function makeSkyGradient(theme: Theme3D): THREE.CanvasTexture {
+  const c = THEME_COLORS[theme];
+  const zenith = new THREE.Color(c.sky).multiplyScalar(theme === "night" ? 0.7 : 0.82);
+  const horizon = new THREE.Color(c.sky).lerp(new THREE.Color(c.ambient), theme === "night" ? 0.35 : 0.6);
+  const cvs = document.createElement("canvas"); cvs.width = 4; cvs.height = 256;
+  const g = cvs.getContext("2d")!;
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, `#${zenith.getHexString()}`);
+  grad.addColorStop(0.55, `#${new THREE.Color(c.sky).getHexString()}`);
+  grad.addColorStop(1, `#${horizon.getHexString()}`);
+  g.fillStyle = grad; g.fillRect(0, 0, 4, 256);
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function GhibliSky({ theme }: { theme: Theme3D }) {
   const c = THEME_COLORS[theme];
+  const skyTex = useMemo(() => makeSkyGradient(theme), [theme]);
   const N_CLOUDS = 8;
   const cloudRefs = useRef<THREE.Group[]>([]);
   const seeds = useMemo(() => Array.from({ length: N_CLOUDS }, (_, i) => ({
@@ -817,8 +837,8 @@ function GhibliSky({ theme }: { theme: Theme3D }) {
   return (
     <>
       <mesh position={[0, -8, -12]} scale={[120, 65, 120]}>
-        <sphereGeometry args={[1, 16, 8]} />
-        <meshBasicMaterial color={c.sky} side={THREE.BackSide} fog={false} />
+        <sphereGeometry args={[1, 24, 16]} />
+        <meshBasicMaterial map={skyTex} side={THREE.BackSide} fog={false} toneMapped={false} />
       </mesh>
       {seeds.map((s, i) => (
         <group key={i} ref={(r) => { if (r) cloudRefs.current[i] = r; }} position={[s.x, s.y, s.z]}>
@@ -1139,6 +1159,8 @@ function NeonBloom({ theme }: { theme: Theme3D }) {
   const cfg = BLOOM_CONFIG[theme];
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
+      {/* Crisp edge antialiasing — kills the jaggies that read as "cheap". */}
+      <SMAA />
       <Bloom
         intensity={cfg.intensity * 1.35}
         luminanceThreshold={cfg.threshold}
@@ -1146,8 +1168,32 @@ function NeonBloom({ theme }: { theme: Theme3D }) {
         mipmapBlur
         radius={0.72}
       />
-      <Vignette eskil={false} offset={0.18} darkness={0.62} />
+      {/* Gentle colour grade for a more "produced" look: a touch more contrast
+          and saturation so the flat pastels get some richness and pop. */}
+      <BrightnessContrast brightness={0.02} contrast={0.12} />
+      <HueSaturation saturation={0.16} />
+      <Vignette eskil={false} offset={0.2} darkness={0.5} />
     </EffectComposer>
+  );
+}
+
+// Procedural image-based lighting (no external HDR — CSP-safe). A soft sky
+// panel, a warm key "sun", and a cool bounce give every plastic-y primitive
+// real highlights and shading, which is the single biggest lift away from the
+// flat, amateur look. Rendered once (frames={1}) so it's essentially free.
+function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
+  const c = THEME_COLORS[theme];
+  return (
+    <Environment resolution={128} frames={1} background={false}>
+      <Lightformer form="rect" intensity={theme === "night" ? 0.5 : 1.1} color={c.sky}
+        scale={[30, 18, 1]} position={[0, 10, -14]} rotation={[Math.PI / 2.4, 0, 0]} />
+      <Lightformer form="circle" intensity={theme === "night" ? 1.4 : 3.0} color={c.sun}
+        scale={[9, 9, 1]} position={[7, 8, 5]} />
+      <Lightformer form="rect" intensity={0.5} color={accent}
+        scale={[16, 8, 1]} position={[-8, 3, -3]} rotation={[0, Math.PI / 3, 0]} />
+      <Lightformer form="rect" intensity={0.35} color={c.hillMid}
+        scale={[24, 24, 1]} position={[0, -6, 0]} rotation={[-Math.PI / 2, 0, 0]} />
+    </Environment>
   );
 }
 
@@ -1156,10 +1202,15 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent 
     <Canvas
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance", failIfMajorPerformanceCaveat: false }}
+      onCreated={({ gl }) => {
+        gl.toneMapping = THREE.ACESFilmicToneMapping;
+        gl.toneMappingExposure = 1.12; // a touch brighter/punchier
+      }}
       style={{ position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none" }}
     >
       <PerspectiveCamera makeDefault position={[0, 2.35, 5.4]} fov={62} near={0.1} far={80} />
       <Lighting theme={theme} accent={accent} />
+      <EnvLighting theme={theme} accent={accent} />
       <GhibliSky theme={theme} />
       <Birds theme={theme} />
       <CameraRig stateRef={stateRef} />
