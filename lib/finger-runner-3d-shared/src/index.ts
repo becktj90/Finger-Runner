@@ -69,15 +69,20 @@ export const CHROME_ACCENT = "#e6e6f0";
 export type ObstacleRenderKind = "box" | "cylinder" | "cone" | "animal" | "bicycle" | "sign" | "barrier"
   | "poop" | "toilet" | "duck" | "dino" | "pinata" | "undies";
 
+// Real-world street furniture (mailbox, hydrant, stopsign, trashcan, bicycle,
+// gnome, cone, newsbox) is toned toward natural, plausible hues now that real
+// shadows/textures/lighting are in play — the old neon-toy palette clashed
+// with the grounded look. The intentionally-playful cast (duck, dino, poop,
+// pinata, undies, toilet) stays vivid since those ARE meant to look like toys.
 export const OBSTACLE_COLORS: Record<string, string> = {
-  mailbox: "#0084ff", hydrant: "#ff1053", stopsign: "#ff1053", trashcan: "#9494ab",
-  dog: "#c77b4a", cat: "#b0b0c0", bicycle: "#9a9aad", gnome: "#00e676",
-  cone: "#ff9500", newsbox: "#3d5afe", barrier: "#ff2bd6",
+  mailbox: "#1f5fa8", hydrant: "#c8331f", stopsign: "#b3122a", trashcan: "#71757c",
+  dog: "#c77b4a", cat: "#9a958f", bicycle: "#7d818a", gnome: "#2f8f4e",
+  cone: "#e8720c", newsbox: "#2f4fa0", barrier: "#e0299a",
   // New obstacle types
-  pumpkin: "#e06010", cactus: "#2a9040", flamingo: "#ff68b4", cart: "#b8b8c8",
+  pumpkin: "#e06010", cactus: "#3c7a3f", flamingo: "#f2799e", cart: "#a7abb5",
   // Silly kid obstacles
-  poop: "#8a5a2b", toilet: "#f0f0f5", duck: "#ffd23f", dino: "#3ecf4a",
-  pinata: "#ff44aa", undies: "#f7f7ff",
+  poop: "#8a5a2b", toilet: "#f0f0f5", duck: "#ffd23f", dino: "#34b23e",
+  pinata: "#ef3d97", undies: "#f7f7ff",
 };
 
 export const OBSTACLE_KIND: Record<string, ObstacleRenderKind> = {

@@ -11,12 +11,62 @@ import * as THREE from "three";
 import {
   FINGER_CENTER_X, LANE_X, LANE_OFFSET, worldZ, worldY, roadYOld, THEME_COLORS,
   OBSTACLE_COLORS, OBSTACLE_KIND, POWERUP_COLORS,
-  CHROME_ACCENT, OBSTACLE_GLOW, OBSTACLE_METAL, OBSTACLE_WOBBLE, BLOOM_CONFIG,
+  CHROME_ACCENT, OBSTACLE_METAL, OBSTACLE_WOBBLE, BLOOM_CONFIG,
   ROAD_SURFACE_OFFSET, FINGER_TIP_OFFSET, HIDE_Z, BARRIER_GAP,
   POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
   type GameSceneState, type Theme3D,
 } from "./coords";
+
+// ── Hazard warning ───────────────────────────────────────────────────────
+// The single same-lane obstacle you need to react to next lights up and
+// grows a soft halo as it closes in, escalating as the reaction window
+// narrows — the cue lives directly ON the hazard your eyes are already on,
+// instead of an abstract HUD icon floating elsewhere. This also frees up
+// "glow" to mean something: ordinary obstacles stay unlit/realistic at rest
+// and only light up when they're actually the thing you must act on.
+// Mirrors the timing math the 2D HUD label uses, so both agree on the beat.
+const WARN_WINDOW = 52;
+type WarnType = "JUMP" | "DUCK" | "SLASH";
+const WARN_COLOR: Record<WarnType, string> = { JUMP: "#5dff8f", DUCK: "#39d8ff", SLASH: "#ff6ad5" };
+const WARN_IDEAL: Record<WarnType, number> = { JUMP: 15, DUCK: 9, SLASH: 12 };
+interface WarnInfo { idx: number; type: WarnType; frames: number; urgency: number }
+function findWarned(st: GameSceneState): WarnInfo | null {
+  let idx = -1; let bestDist = Infinity; let bestType: WarnType = "JUMP";
+  for (let i = 0; i < st.obstacles.length; i++) {
+    const o = st.obstacles[i];
+    if (!o || o.lane !== st.lane) continue;
+    const dist = o.x + o.obsWidth * 0.5 - FINGER_CENTER_X;
+    if (dist < -12) continue;
+    if (dist < bestDist) {
+      bestDist = dist; idx = i;
+      bestType = o.type === "barrier" ? "DUCK" : o.type === "pinata" ? "SLASH" : "JUMP";
+    }
+  }
+  if (idx < 0) return null;
+  const frames = bestDist / Math.max(0.5, st.curSpeed);
+  if (frames >= WARN_WINDOW) return null;
+  const acting = (bestType === "JUMP" && !st.onGround) || (bestType === "DUCK" && st.sliding) || (bestType === "SLASH" && st.saberSwing > 0);
+  if (acting) return null;
+  const ideal = WARN_IDEAL[bestType];
+  const urgency = Math.max(0, Math.min(1, 1 - (frames - ideal) / (WARN_WINDOW - ideal)));
+  return { idx, type: bestType, frames, urgency };
+}
+// Soft radial glow sprite, generated once (module scope — pure canvas, no
+// per-theme dependency) and shared/tinted across every warned obstacle.
+let haloTexCache: THREE.Texture | null = null;
+function getHaloTexture(): THREE.Texture {
+  if (haloTexCache) return haloTexCache;
+  const S = 128; const cvs = document.createElement("canvas"); cvs.width = cvs.height = S;
+  const g = cvs.getContext("2d")!;
+  const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, "rgba(255,255,255,0.95)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.55)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  haloTexCache = new THREE.CanvasTexture(cvs);
+  return haloTexCache;
+}
 
 type SaberInfo = { color: string; glow: string; reach: number };
 // Per-character runner-body skin tint. Maps onto the 4 hardcoded runner
@@ -57,33 +107,58 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
   const wheelLRefs = useRef<THREE.Mesh[]>([]);
   const wheelRRefs = useRef<THREE.Mesh[]>([]);
   const shadowRefs = useRef<THREE.Mesh[]>([]);
+  const haloRefs = useRef<THREE.Sprite[]>([]);
+  const haloTex = useMemo(() => getHaloTexture(), []);
 
   useFrame(() => {
     const st = stateRef.current;
     const { height } = sizeRef.current;
     const roadY = roadYOld(height);
+    const warned = findWarned(st);
     for (let i = 0; i < N_OBSTACLES; i++) {
       const g = groups.current[i];
       const box = boxRefs.current[i], cyl = cylRefs.current[i], cone = coneRefs.current[i];
       const head = headRefs.current[i], accent = accentRefs.current[i];
       const wl = wheelLRefs.current[i], wr = wheelRRefs.current[i];
       const shadow = shadowRefs.current[i];
+      const halo = haloRefs.current[i];
       if (!g || !box || !cyl || !cone || !head || !accent || !wl || !wr) continue;
       const o = st.obstacles[i];
-      if (!o) { g.position.set(0, 0, HIDE_Z); continue; }
+      if (!o) { g.position.set(0, 0, HIDE_Z); if (halo) halo.visible = false; continue; }
       const w = Math.max(0.5, o.obsWidth * 0.028);
       const h = Math.max(0.4, o.obsHeight * 0.02);
       const kind = OBSTACLE_KIND[o.type] || "box";
       const color = OBSTACLE_COLORS[o.type] || "#888888";
-      const glow = OBSTACLE_GLOW[o.type] ?? false;
       const metal = OBSTACLE_METAL[o.type] ?? false;
+      const isWarned = !!warned && warned.idx === i;
+      // Fast strobe once the reaction window is genuinely urgent, gentle rise before that.
+      const pulse = isWarned ? 0.55 + 0.45 * Math.sin(st.time * (0.35 + warned!.urgency * 0.55)) : 0;
+      const warnGlow = isWarned ? 0.35 + warned!.urgency * 1.7 * Math.max(0.35, pulse) : 0;
+      const warnColor = isWarned ? WARN_COLOR[warned!.type] : "#000000";
       const applyFinish = (mat: THREE.MeshStandardMaterial, baseColor: string) => {
         mat.color.set(baseColor);
-        mat.emissive.set(glow ? baseColor : "#000000");
-        mat.emissiveIntensity = glow ? 0.45 : 0;
+        // Ordinary obstacles stay unlit/realistic; only the current hazard you
+        // must react to lights up, and only as its window closes.
+        mat.emissive.set(isWarned ? warnColor : "#000000");
+        mat.emissiveIntensity = isWarned ? warnGlow : 0;
         mat.metalness = metal ? 0.65 : 0.15;
         mat.roughness = metal ? 0.28 : 0.75;
+        mat.envMapIntensity = metal ? 1.35 : 0.5;
       };
+
+      // Floating warning halo — a soft billboarded glow above the hazard,
+      // growing and quickening its pulse as the reaction window closes.
+      if (halo) {
+        halo.visible = isWarned;
+        if (isWarned) {
+          halo.position.set(0, h + 0.34, 0.08);
+          const scale = 0.5 + warned!.urgency * 0.4 + pulse * 0.12;
+          halo.scale.setScalar(scale);
+          const mat = halo.material as THREE.SpriteMaterial;
+          mat.color.set(warnColor);
+          mat.opacity = 0.55 + warned!.urgency * 0.35 + pulse * 0.1;
+        }
+      }
 
       // ── Wobble / sway animation ─────────────────────────────────────
       const wobble = OBSTACLE_WOBBLE[o.type] || [0.08, 0.04, 0];
@@ -289,6 +364,10 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
             <planeGeometry args={[1, 1]} />
             <meshBasicMaterial color="#000000" transparent opacity={0.25} depthWrite={false} />
           </mesh>
+          {/* "React now" warning halo — shown only on the hazard you must act on */}
+          <sprite ref={(r) => { if (r) haloRefs.current[i] = r; }} visible={false}>
+            <spriteMaterial map={haloTex} color="#ffffff" transparent depthWrite={false} opacity={0} />
+          </sprite>
           <mesh ref={(r) => { if (r) boxRefs.current[i] = r; }} castShadow>
             <boxGeometry args={[1, 1, 1]} />
             <meshStandardMaterial color="#888888" />

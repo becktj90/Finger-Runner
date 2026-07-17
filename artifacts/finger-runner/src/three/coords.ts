@@ -59,6 +59,7 @@ export interface GameSceneState {
   saberSwing: number;
   saberCooldown: number;
   worldScroll: number;
+  curSpeed: number;
   obstacles: Obstacle3D[];
   particles: Particle3D[];
   bloodPuddles: BloodPuddle3D[];
