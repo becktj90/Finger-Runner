@@ -1060,32 +1060,21 @@ function GroundAndRoad({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]
   );
 }
 
-// ── Road undulation ────────────────────────────────────────────────────────
-// Cosmetic winding/hilly-road signals derived from the visual scroll distance.
-// They sway the camera and bend the lane markings so the course *feels* like it
-// turns and rolls over hills, without changing the straight 3-lane gameplay.
-// Layered sines give a natural, non-repeating S-curve; slow frequencies keep it
-// gentle (a full swing takes ~30s at level-1 speed, quicker on faster levels).
-export function roadCurve(scroll: number) {
-  return Math.sin(scroll * 0.0016) * 0.8 + Math.sin(scroll * 0.00068 + 2.1) * 0.5;
-}
-export function roadHill(scroll: number) {
-  return Math.sin(scroll * 0.0021 + 1.0) * 0.6 + Math.sin(scroll * 0.0009 + 0.4) * 0.3;
-}
+// Road undulation signals are kept (used by the lane-marking bend) but the
+// camera no longer pans/banks with them — that made the road drift off-centre
+// under the fixed 2D rider and felt wonky. The camera stays locked straight
+// down the road so the rider is always dead-centre.
+export function roadCurve(_scroll: number) { return 0; }
+export function roadHill(_scroll: number) { return 0; }
 
 function CameraRig({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
   useFrame(({ camera }) => {
     const st = stateRef.current;
     const bob = st.gameRunning ? worldYSafe(st) : 0;
-    const curve = st.gameRunning ? roadCurve(st.worldScroll) : 0;
-    const hill = st.gameRunning ? roadHill(st.worldScroll) : 0;
     const shakeX = st.shake > 0 ? (Math.random() - 0.5) * st.shake * 0.02 : 0;
-    // Keep the camera essentially over the near road (tiny lateral drift only)
-    // so the rider stays planted on the road; the turn illusion comes from
-    // panning the look-at target, which swings the far road/horizon.
-    camera.position.set(shakeX + curve * 0.14, 2.35 + bob * 0.12 + hill * 0.3, 5.4);
-    camera.lookAt(curve * 1.8, 1.1 + bob * 0.12 + hill * 0.7, -2.5);
-    camera.rotation.z = -curve * 0.05; // subtle bank into the turn
+    camera.position.set(shakeX, 2.35 + bob * 0.12, 5.4);
+    camera.lookAt(0, 1.1 + bob * 0.12, -2.5);
+    camera.rotation.z = 0;
   });
   return null;
 }
