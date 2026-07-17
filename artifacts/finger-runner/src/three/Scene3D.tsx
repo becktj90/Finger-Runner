@@ -101,12 +101,14 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
 
       g.position.set(LANE_X + o.lane * LANE_OFFSET, bobY, worldZ(o.x + o.obsWidth / 2));
 
-      // Ground shadow ellipse — darker when obstacle is near, fades with bob
+      // Soft contact AO under the obstacle. Real shadow-mapped shadows now do
+      // the directional grounding; this stays as a faint darkening right at the
+      // base so objects read as touching even where the angled shadow is thin.
       if (shadow) {
         shadow.visible = true;
-        shadow.scale.set(w * 1.25, 1, w * 0.55);
+        shadow.scale.set(w * 1.05, 1, w * 0.5);
         const shadowMat = shadow.material as THREE.MeshBasicMaterial;
-        shadowMat.opacity = Math.max(0, 0.28 - bobY * 0.08);
+        shadowMat.opacity = Math.max(0, 0.16 - bobY * 0.06);
       }
 
       box.visible = kind === "box";
@@ -1042,20 +1044,85 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
   );
 }
 
+// ── Procedural ground/road textures (canvas → CanvasTexture, CSP-safe) ──────
+// Flat colour planes are the biggest "amateur" tell, so give the grass a
+// mottled, patchy look and the road a grainy asphalt surface with tyre tracks
+// and edge lines. Cheap to generate once and tiled via RepeatWrapping.
+function jitterHex(base: string, amt: number): string {
+  const c = new THREE.Color(base);
+  const j = (v: number) => Math.max(0, Math.min(1, v + (Math.random() - 0.5) * amt));
+  c.setRGB(j(c.r), j(c.g), j(c.b));
+  return `#${c.getHexString()}`;
+}
+function makeGrassTexture(theme: Theme3D): THREE.Texture {
+  const c = THEME_COLORS[theme];
+  const S = 256; const cvs = document.createElement("canvas"); cvs.width = cvs.height = S;
+  const g = cvs.getContext("2d")!;
+  g.fillStyle = c.shoulder; g.fillRect(0, 0, S, S);
+  // soft mottled patches
+  for (let i = 0; i < 420; i++) {
+    const r = 4 + Math.random() * 22;
+    g.globalAlpha = 0.05 + Math.random() * 0.10;
+    g.fillStyle = jitterHex(c.shoulder, 0.28);
+    g.beginPath(); g.arc(Math.random() * S, Math.random() * S, r, 0, Math.PI * 2); g.fill();
+  }
+  // fine blade speckle
+  g.globalAlpha = 0.5;
+  for (let i = 0; i < 1400; i++) {
+    g.fillStyle = jitterHex(c.prop, 0.2);
+    g.fillRect(Math.random() * S, Math.random() * S, 1, 1 + Math.random() * 2);
+  }
+  g.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+function makeRoadTexture(theme: Theme3D): THREE.Texture {
+  const c = THEME_COLORS[theme];
+  const W = 128, H = 512; const cvs = document.createElement("canvas"); cvs.width = W; cvs.height = H;
+  const g = cvs.getContext("2d")!;
+  g.fillStyle = c.road; g.fillRect(0, 0, W, H);
+  // asphalt grain
+  for (let i = 0; i < 9000; i++) {
+    g.globalAlpha = 0.04 + Math.random() * 0.08;
+    g.fillStyle = Math.random() < 0.5 ? "#000000" : "#ffffff";
+    g.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+  }
+  // two darker tyre tracks
+  g.globalAlpha = 0.14; g.fillStyle = "#000000";
+  g.fillRect(W * 0.24, 0, W * 0.14, H); g.fillRect(W * 0.62, 0, W * 0.14, H);
+  // faint edge lines
+  g.globalAlpha = 0.5; g.fillStyle = "#e8e6d8";
+  g.fillRect(4, 0, 3, H); g.fillRect(W - 7, 0, 3, H);
+  g.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
 function GroundAndRoad({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; theme: Theme3D }) {
   const colors = THEME_COLORS[theme];
   const dashRefs = useRef<THREE.Mesh[]>([]);
+  const grassTex = useMemo(() => makeGrassTexture(theme), [theme]);
+  const roadTex = useMemo(() => makeRoadTexture(theme), [theme]);
+  // Tiling across the 40×320 grass plane and 3.4×320 road plane.
+  grassTex.repeat.set(10, 60);
+  roadTex.repeat.set(1, 96);
   const N_DASH = 22; const SPACING = 3.2; const RANGE = N_DASH * SPACING;
   useFrame(() => {
     const st = stateRef.current;
+    // Scroll the ground/road textures toward the camera so the surface itself
+    // reads as rushing past (not just the dashes).
+    grassTex.offset.y = -st.worldScroll * 0.006;
+    roadTex.offset.y = -st.worldScroll * 0.0096;
     const curve = st.gameRunning ? roadCurve(st.worldScroll) : 0;
     const hill = st.gameRunning ? roadHill(st.worldScroll) : 0;
     for (let i = 0; i < N_DASH; i++) {
       const m = dashRefs.current[i]; if (!m) continue;
       let z = -(i * SPACING) + st.worldScroll * 0.032;
       z = ((z % RANGE) + RANGE) % RANGE - RANGE;
-      // Depth 0 (near) → 1 (far). Bend the centreline sideways and roll it up/down
-      // more the further away it is, so the painted road reads as curving + hilly.
       const t = Math.min(1, -z / RANGE);
       m.position.set(curve * t * t * 2.6, 0.011 + hill * t * t * 0.9, z);
     }
@@ -1064,11 +1131,11 @@ function GroundAndRoad({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]
     <group>
       <mesh position={[0, -0.02, -140]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[40, 320]} />
-        <meshStandardMaterial color={colors.shoulder} />
+        <meshStandardMaterial map={grassTex} color={colors.shoulder} roughness={0.95} metalness={0} />
       </mesh>
       <mesh position={[0, 0, -140]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[3.4, 320]} />
-        <meshStandardMaterial color={colors.road} metalness={0.15} roughness={0.6} />
+        <meshStandardMaterial map={roadTex} color={colors.road} metalness={0.12} roughness={0.72} />
       </mesh>
       {Array.from({ length: N_DASH }).map((_, i) => (
         <mesh key={i} ref={(r) => { if (r) dashRefs.current[i] = r; }} rotation={[-Math.PI / 2, 0, 0]}>
@@ -1132,6 +1199,8 @@ function Lighting({ theme, accent }: { theme: Theme3D; accent: string }) {
         shadow-camera-right={9}
         shadow-camera-top={9}
         shadow-camera-bottom={-9}
+        shadow-bias={-0.0006}
+        shadow-normalBias={0.03}
       />
       {/* Warm fill from opposite side — typical Ghibli cross-lighting */}
       <directionalLight color={c.ambient} intensity={c.sunIntensity * 0.22} position={[-4, 3, -2]} />
@@ -1201,6 +1270,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent 
   return (
     <Canvas
       dpr={[1, 2]}
+      shadows="soft"
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance", failIfMajorPerformanceCaveat: false }}
       onCreated={({ gl }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;

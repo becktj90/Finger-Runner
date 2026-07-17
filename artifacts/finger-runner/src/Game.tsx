@@ -1803,8 +1803,28 @@ export default function Game() {
         // Lane offset: keep lane spacing sensible on very wide screens.
         const screenCenterX = width * 0.5;
         const lanePixels = Math.min(sizeRef.current.width * 0.17, 165);
+        const riderX = screenCenterX + st.laneVisual * lanePixels;
+
+        // Soft contact shadow on the ground under the rider. The rider is drawn
+        // in 2D so it can't cast a real shadow like the 3D props — this keeps it
+        // grounded to match. It sits on the ground line (not on the rider) and
+        // shrinks/fades as the rider jumps up.
+        if (st.gameRunning || screen === "playing") {
+          const groundFeetY = getGroundY(height) + 90;
+          const air = Math.max(0, groundFeetY - feetY);
+          const k = Math.max(0.4, 1 - air / 340);
+          const sc = Math.min(1.5, height / 900);
+          const gy = groundFeetY - 4;
+          ctx.save();
+          ctx.fillStyle = "rgba(0,0,18,0.15)";
+          ctx.beginPath(); ctx.ellipse(riderX, gy, 60 * sc * k, 16 * sc * k, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(0,0,18,0.22)";
+          ctx.beginPath(); ctx.ellipse(riderX, gy, 40 * sc * k, 10.5 * sc * k, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+
         ctx.save();
-        ctx.translate(screenCenterX + st.laneVisual * lanePixels, feetY + runBob);
+        ctx.translate(riderX, feetY + runBob);
         ctx.rotate(tilt);
         ctx.scale(scaleX, scaleY);
 
