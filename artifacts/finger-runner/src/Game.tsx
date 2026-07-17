@@ -633,37 +633,51 @@ export default function Game() {
     });
   };
   // ── Funny kid SFX + per-character signature voices ──────────────────────────
-  // Wet, sputtery fart used by the FART BOOST — pitch randomized so it never
-  // sounds the same twice. This is the big laugh.
-  const playFart = () => {
-    const a = audioRef.current; if (!a.enabled) return;
-    initAudio(); const ctx = a.ctx; if (!ctx) return;
-    const t = ctx.currentTime;
-    const base = 70 + Math.random() * 55;        // 70–125 Hz per toot
-    const dur = 0.42 + Math.random() * 0.28;
+  // ── Fart engine ──────────────────────────────────────────────────────────
+  // One reusable "toot" (raspberry body + wet spray + optional squeaky tail),
+  // fully parameterized, so a whole family of distinct farts can be composed
+  // from it. playFart() picks a random style each press so the FART BOOST
+  // rarely sounds the same twice.
+  interface TootOpts {
+    base: number;       // fundamental Hz
+    dur: number;        // seconds
+    rise?: number;      // pitch-bend peak multiplier
+    fall?: number;      // pitch-bend end multiplier
+    lfoStart?: number;  // sputter/flutter rate at the start
+    lfoEnd?: number;    // …and at the end
+    lfoDepth?: number;  // flutter depth (× base)
+    gain?: number;      // body loudness
+    filter?: number;    // lowpass cutoff (brightness)
+    noise?: number;     // wet-spray amount
+    squeak?: number;    // 0..1 chance of a squeaky finish
+    wave?: OscillatorType;
+  }
+  const fartToot = (ctx: AudioContext, t: number, o: TootOpts) => {
+    const { base, dur, rise = 1.7, fall = 0.7, lfoStart = 19, lfoEnd = 8,
+      lfoDepth = 0.55, gain = 0.34, filter = 900, noise = 0.13, squeak = 0.5,
+      wave = "sawtooth" } = o;
     const osc = ctx.createOscillator(); const g = ctx.createGain(); const f = ctx.createBiquadFilter();
-    osc.type = "sawtooth"; f.type = "lowpass"; f.frequency.value = 900;
+    osc.type = wave; f.type = "lowpass"; f.frequency.value = filter;
     osc.frequency.setValueAtTime(base, t);
-    osc.frequency.linearRampToValueAtTime(base * 1.7, t + dur * 0.3);
-    osc.frequency.linearRampToValueAtTime(base * 0.7, t + dur);
-    // square LFO makes it sputter/flutter like a raspberry
+    osc.frequency.linearRampToValueAtTime(base * rise, t + dur * 0.3);
+    osc.frequency.linearRampToValueAtTime(base * fall, t + dur);
     const lfo = ctx.createOscillator(); const lg = ctx.createGain();
-    lfo.type = "square"; lfo.frequency.setValueAtTime(19, t); lfo.frequency.linearRampToValueAtTime(8, t + dur);
-    lg.gain.value = base * 0.55; lfo.connect(lg); lg.connect(osc.frequency);
-    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.34, t + 0.03);
-    g.gain.setValueAtTime(0.3, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    lfo.type = "square"; lfo.frequency.setValueAtTime(lfoStart, t); lfo.frequency.linearRampToValueAtTime(lfoEnd, t + dur);
+    lg.gain.value = base * lfoDepth; lfo.connect(lg); lg.connect(osc.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + 0.03);
+    g.gain.setValueAtTime(gain * 0.88, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     osc.connect(f); f.connect(g); g.connect(ctx.destination);
     osc.start(t); osc.stop(t + dur + 0.02); lfo.start(t); lfo.stop(t + dur + 0.02);
-    // wet "spray" noise underneath
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 1.2);
-    const src = ctx.createBufferSource(); src.buffer = buf;
-    const nf = ctx.createBiquadFilter(); nf.type = "bandpass"; nf.frequency.value = 340; nf.Q.value = 0.8;
-    const ng = ctx.createGain(); ng.gain.setValueAtTime(0.13, t); ng.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(nf); nf.connect(ng); ng.connect(ctx.destination); src.start(t);
-    // half the time, a squeaky little finish
-    if (Math.random() < 0.5) {
+    if (noise > 0) {
+      const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 1.2);
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const nf = ctx.createBiquadFilter(); nf.type = "bandpass"; nf.frequency.value = 340; nf.Q.value = 0.8;
+      const ng = ctx.createGain(); ng.gain.setValueAtTime(noise, t); ng.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(nf); nf.connect(ng); ng.connect(ctx.destination); src.start(t);
+    }
+    if (Math.random() < squeak) {
       const sq = ctx.createOscillator(); const sg = ctx.createGain();
       sq.type = "sawtooth"; sq.frequency.setValueAtTime(base * 3, t + dur * 0.72);
       sq.frequency.linearRampToValueAtTime(base * 6, t + dur);
@@ -671,6 +685,36 @@ export default function Game() {
       sg.gain.exponentialRampToValueAtTime(0.001, t + dur + 0.05);
       sq.connect(sg); sg.connect(ctx.destination); sq.start(t + dur * 0.72); sq.stop(t + dur + 0.06);
     }
+    return dur;
+  };
+  // A grab-bag of fart personalities. Each returns after scheduling its toots.
+  const FART_STYLES: ((ctx: AudioContext, t: number) => void)[] = [
+    // classic wet sputter
+    (ctx, t) => fartToot(ctx, t, { base: 70 + Math.random() * 55, dur: 0.42 + Math.random() * 0.28 }),
+    // tiny high squeaker "pfft!"
+    (ctx, t) => fartToot(ctx, t, { base: 220 + Math.random() * 120, dur: 0.12 + Math.random() * 0.1,
+      rise: 1.3, fall: 0.5, lfoStart: 34, lfoEnd: 16, lfoDepth: 0.35, gain: 0.28, filter: 1600, noise: 0.05, squeak: 0.2 }),
+    // long deep "braaaaap"
+    (ctx, t) => fartToot(ctx, t, { base: 48 + Math.random() * 24, dur: 0.8 + Math.random() * 0.4,
+      rise: 1.4, fall: 0.6, lfoStart: 13, lfoEnd: 6, lfoDepth: 0.7, gain: 0.4, filter: 620, noise: 0.18, squeak: 0.4 }),
+    // rapid bubbly flutter
+    (ctx, t) => fartToot(ctx, t, { base: 90 + Math.random() * 40, dur: 0.5 + Math.random() * 0.2,
+      rise: 1.9, fall: 0.8, lfoStart: 42, lfoEnd: 20, lfoDepth: 0.6, gain: 0.32, filter: 1100, noise: 0.15, squeak: 0.5 }),
+    // double toot — "poot… poot!"
+    (ctx, t) => {
+      const d1 = fartToot(ctx, t, { base: 95 + Math.random() * 40, dur: 0.16 + Math.random() * 0.06, rise: 1.5, fall: 0.7, gain: 0.3, squeak: 0.1 });
+      fartToot(ctx, t + d1 + 0.08, { base: 70 + Math.random() * 40, dur: 0.3 + Math.random() * 0.18, gain: 0.34, squeak: 0.4 });
+    },
+    // rude descending "trumpet"
+    (ctx, t) => fartToot(ctx, t, { base: 130 + Math.random() * 40, dur: 0.55 + Math.random() * 0.25,
+      rise: 1.15, fall: 0.35, lfoStart: 22, lfoEnd: 9, lfoDepth: 0.4, gain: 0.36, filter: 1300, noise: 0.1, squeak: 0.7, wave: "square" }),
+  ];
+  // Wet, sputtery fart used by the FART BOOST — now randomly one of several
+  // distinct styles. This is the big laugh.
+  const playFart = () => {
+    const a = audioRef.current; if (!a.enabled) return;
+    initAudio(); const ctx = a.ctx; if (!ctx) return;
+    FART_STYLES[Math.floor(Math.random() * FART_STYLES.length)](ctx, ctx.currentTime);
   };
   // Apollo → bright, confident "yeah!"
   const playCheer = () => {
