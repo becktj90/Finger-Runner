@@ -898,42 +898,169 @@ function RopePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; s
   );
 }
 
-// ── Vespa scooter + rider ────────────────────────────────────────────────
-// Replaces the running-finger Runner. Same position/animation contract:
-// group is placed at footY (ground level), leans into lane switches,
-// squashes on land impact, tilts forward on slide. The rider sits on top
-// and holds the saber. Skin colors map: backHand→body, finger→fender/trim,
-// knuckle→wheel hubs, nail→seat/rider jacket.
+// ── Player vehicle + rider — full 3D for every unlockable ride ────────────
+// One system renders all nine vehicles with a properly-posed rider: seated on
+// the scooter/bikes/trucks, standing side-stance on the boards, straddling
+// the rocket, tucked into the UFO dome. Real shadows, scene lighting, exact
+// obstacle-lane tracking — the old 2D canvas rider is gone entirely.
 
-function Vespa({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string }) {
+type PoseMode = "seated" | "standing" | "straddle" | "dome";
+interface VehiclePose {
+  riderY: number; riderZ: number; mode: PoseMode; rotY: number;
+  bar: [number, number] | null; // handlebar [y, z] in vehicle space (arms reach for it)
+  legsFlat?: boolean;           // kart: legs stretched forward
+  float?: boolean;              // hovering ride (adds a gentle bob, no ground contact)
+  lift?: number;                // extra y so the body's lowest point kisses the road
+}
+const VEHICLE_POSE: Record<string, VehiclePose> = {
+  vespa:        { riderY: 1.38, riderZ: 0,     mode: "seated",   rotY: 0,    bar: [1.28, 0.34], lift: 0.082 },
+  skateboard:   { riderY: 0.19, riderZ: 0,     mode: "standing", rotY: 0.55, bar: null },
+  hoverboard:   { riderY: 0.30, riderZ: 0,     mode: "standing", rotY: 0.55, bar: null, float: true },
+  bmx:          { riderY: 0.98, riderZ: -0.08, mode: "seated",   rotY: 0,    bar: [1.14, 0.36] },
+  gokart:       { riderY: 0.52, riderZ: -0.16, mode: "seated",   rotY: 0,    bar: [0.80, 0.28], legsFlat: true },
+  firetruck:    { riderY: 1.26, riderZ: -0.06, mode: "seated",   rotY: 0,    bar: [1.40, 0.28] },
+  monstertruck: { riderY: 1.24, riderZ: 0,     mode: "seated",   rotY: 0,    bar: [1.38, 0.28] },
+  rocket:       { riderY: 0.92, riderZ: -0.04, mode: "straddle", rotY: 0,    bar: null, float: true },
+  ufo:          { riderY: 0.42, riderZ: 0,     mode: "dome",     rotY: 0,    bar: null, float: true },
+};
+
+// Chunky tyre + hub, axle along x. Registers its group so the frame loop can
+// spin every wheel of whatever vehicle is equipped.
+function ChunkyWheel({ pos, r, w, hub, reg }: { pos: [number, number, number]; r: number; w: number; hub: string; reg: (g: THREE.Group | null) => void }) {
+  return (
+    <group ref={reg} position={pos}>
+      <mesh castShadow rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[r, r, w, 14]} />
+        <meshStandardMaterial color="#1c1c20" roughness={0.85} />
+      </mesh>
+      <mesh rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[r * 0.45, r * 0.45, w + 0.015, 10]} />
+        <meshStandardMaterial color={hub} metalness={0.7} roughness={0.25} />
+      </mesh>
+    </group>
+  );
+}
+
+// The rider, posed per vehicle. Torso/helmet/saber shared; legs + arms vary.
+function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef, bladeLen, bladeHalfLen, riderRef }: {
+  pose: VehiclePose; jacket: string; helmet: string; trim: string; saber: SaberInfo;
+  saberGroupRef: React.RefObject<THREE.Group | null>; saberBladeRef: React.RefObject<THREE.Mesh | null>;
+  bladeLen: number; bladeHalfLen: number; riderRef: React.RefObject<THREE.Group | null>;
+}) {
+  const seated = pose.mode === "seated";
+  const standing = pose.mode === "standing";
+  const straddle = pose.mode === "straddle";
+  const dome = pose.mode === "dome";
+  const legMat = <meshStandardMaterial color="#3a3f58" roughness={0.75} />;
+  const bootMat = <meshStandardMaterial color="#191a22" roughness={0.85} />;
+  return (
+    <group ref={riderRef} position={[0, pose.riderY, pose.riderZ]} rotation={[0, pose.rotY, 0]}>
+      {/* Torso */}
+      <mesh castShadow position={[0, 0.24, -0.02]} scale={dome ? [1, 0.8, 1] : [1, 1, 1]}>
+        <capsuleGeometry args={[0.18, 0.36, 6, 10]} />
+        <meshStandardMaterial color={jacket} roughness={0.6} />
+      </mesh>
+      {/* Helmet + visor */}
+      <mesh castShadow position={[0, dome ? 0.54 : 0.62, 0.04]}>
+        <sphereGeometry args={[0.22, 12, 10]} />
+        <meshStandardMaterial color={helmet} roughness={0.35} metalness={0.25} />
+      </mesh>
+      <mesh position={[0, dome ? 0.52 : 0.60, 0.20]} rotation={[-0.15, -pose.rotY, 0]} scale={[0.82, 0.46, 0.28]}>
+        <sphereGeometry args={[0.28, 10, 8, 0, Math.PI * 2, 0.6, 1.0]} />
+        <meshStandardMaterial color="#112233" metalness={0.55} roughness={0.1} transparent opacity={0.82} />
+      </mesh>
+      {/* Arms + hands */}
+      {pose.bar ? (
+        <>
+          <mesh castShadow position={[-0.22, 0.26, 0.24]} rotation={[-0.6, 0.15, -0.35]}>
+            <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
+            <meshStandardMaterial color={jacket} roughness={0.6} />
+          </mesh>
+          <mesh castShadow position={[0.22, 0.26, 0.24]} rotation={[-0.6, -0.15, 0.35]}>
+            <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
+            <meshStandardMaterial color={jacket} roughness={0.6} />
+          </mesh>
+          <mesh castShadow position={[-0.33, 0.06, 0.40]}><sphereGeometry args={[0.06, 8, 6]} /><meshStandardMaterial color="#22242e" roughness={0.8} /></mesh>
+          <mesh castShadow position={[0.30, 0.10, 0.36]}><sphereGeometry args={[0.06, 8, 6]} /><meshStandardMaterial color="#22242e" roughness={0.8} /></mesh>
+        </>
+      ) : dome ? null : (
+        <>
+          {/* Balance arms — out to the sides (boards) or gripping low (rocket) */}
+          <mesh castShadow position={[-0.26, 0.30, straddle ? 0.16 : 0.02]} rotation={[straddle ? -0.9 : 0, 0, straddle ? -0.3 : -1.0]}>
+            <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
+            <meshStandardMaterial color={jacket} roughness={0.6} />
+          </mesh>
+          <mesh castShadow position={[0.26, 0.30, straddle ? 0.16 : 0.02]} rotation={[straddle ? -0.9 : 0, 0, straddle ? 0.3 : 1.0]}>
+            <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
+            <meshStandardMaterial color={jacket} roughness={0.6} />
+          </mesh>
+        </>
+      )}
+      {/* Legs */}
+      {seated && !pose.legsFlat && [-0.11, 0.11].map((lx) => (
+        <group key={lx}>
+          <mesh castShadow position={[lx, -0.06, 0.14]} rotation={[-1.15, 0, 0]}><capsuleGeometry args={[0.075, 0.26, 6, 8]} />{legMat}</mesh>
+          <mesh castShadow position={[lx, -0.32, 0.30]} rotation={[-0.25, 0, 0]}><capsuleGeometry args={[0.06, 0.30, 6, 8]} />{legMat}</mesh>
+          <mesh castShadow position={[lx, -0.52, 0.36]} scale={[1, 0.55, 1.7]}><sphereGeometry args={[0.075, 8, 6]} />{bootMat}</mesh>
+        </group>
+      ))}
+      {seated && pose.legsFlat && [-0.11, 0.11].map((lx) => (
+        <group key={lx}>
+          <mesh castShadow position={[lx, -0.02, 0.22]} rotation={[-1.45, 0, 0]}><capsuleGeometry args={[0.075, 0.30, 6, 8]} />{legMat}</mesh>
+          <mesh castShadow position={[lx, -0.06, 0.52]} rotation={[-1.6, 0, 0]}><capsuleGeometry args={[0.06, 0.26, 6, 8]} />{legMat}</mesh>
+        </group>
+      ))}
+      {standing && [-0.10, 0.10].map((lx, li) => (
+        <group key={lx} position={[lx, 0, li === 0 ? 0.10 : -0.10]}>
+          <mesh castShadow position={[0, -0.16, 0]} rotation={[li === 0 ? 0.12 : -0.12, 0, 0]}><capsuleGeometry args={[0.075, 0.26, 6, 8]} />{legMat}</mesh>
+          <mesh castShadow position={[0, -0.44, 0]}><capsuleGeometry args={[0.06, 0.26, 6, 8]} />{legMat}</mesh>
+          <mesh castShadow position={[0, -0.60, 0.04]} scale={[1, 0.55, 1.7]}><sphereGeometry args={[0.075, 8, 6]} />{bootMat}</mesh>
+        </group>
+      ))}
+      {straddle && [-0.20, 0.20].map((lx) => (
+        <group key={lx}>
+          <mesh castShadow position={[lx, -0.08, 0.04]} rotation={[0, 0, lx < 0 ? 0.55 : -0.55]}><capsuleGeometry args={[0.075, 0.24, 6, 8]} />{legMat}</mesh>
+          <mesh castShadow position={[lx * 1.35, -0.32, 0.04]}><capsuleGeometry args={[0.06, 0.24, 6, 8]} />{legMat}</mesh>
+        </group>
+      ))}
+      {/* Lightsaber — right hand for every pose */}
+      <group ref={saberGroupRef} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
+        <mesh castShadow position={[0, 0.12, 0]}><cylinderGeometry args={[0.03, 0.03, 0.18, 6]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.2} /></mesh>
+        <mesh ref={saberBladeRef} position={[0, bladeHalfLen, 0]}>
+          <cylinderGeometry args={[0.025, 0.025, bladeLen, 6]} />
+          <meshStandardMaterial color={saber.color} emissive={saber.glow} emissiveIntensity={0.6} />
+        </mesh>
+      </group>
+      {void trim}
+    </group>
+  );
+}
+
+function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string }) {
   const group = useRef<THREE.Group>(null);
-  const wheelFRef = useRef<THREE.Group>(null);
-  const wheelRRef = useRef<THREE.Group>(null);
   const riderGroup = useRef<THREE.Group>(null);
   const saberBlade = useRef<THREE.Mesh>(null);
   const saberGroup = useRef<THREE.Group>(null);
   const exhaustRef = useRef<THREE.Mesh>(null);
+  const wheels = useRef<Set<THREE.Group>>(new Set());
+  const regWheel = (g: THREE.Group | null) => { if (g) wheels.current.add(g); };
 
   const bladeLen = useMemo(() => 0.62 + ((saber.reach - 120) / (185 - 120)) * 0.43, [saber.reach]);
   const bladeHalfLen = bladeLen / 2 + 0.16;
+  const pose = VEHICLE_POSE[vehicle] ?? VEHICLE_POSE.vespa;
 
-  // The whole scooter+rider is authored at ~1.9 world units tall; play it at
-  // 0.78 so it sits believably against the obstacle heights (a stop sign is
-  // ~1.76 units) — full size was the "character is too big" complaint.
+  // Authored ~1.9 units tall; played at 0.78 so it sits right vs obstacles.
   const BASE_SCALE = 0.78;
+
+  useEffect(() => { wheels.current.clear(); }, [vehicle]);
 
   useFrame(() => {
     const st = stateRef.current;
     const { height } = sizeRef.current;
     const roadY = roadYOld(height);
     if (!group.current) return;
-    // The 3D scooter+rider is the real avatar when the Vespa is equipped —
-    // it casts true shadows, receives the scene lighting/AO, and tracks the
-    // actual 3D obstacle lanes. Other vehicles still render via the 2D HUD
-    // rider, so hide this while they're equipped.
-    group.current.visible = st.gameRunning && vehicle === "vespa";
+    group.current.visible = st.gameRunning;
 
-    // Squash/stretch on jump & land impact — same feel as the old runner
     let stretchY = 1, stretchX = 1;
     if (st.gameRunning && !st.onGround) {
       stretchY = 1 + Math.max(-0.08, Math.min(0.12, -st.velocity * 0.009));
@@ -944,40 +1071,36 @@ function Vespa({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: Scene3DP
       stretchY = 1 - 0.20 * k;
       stretchX = 1 + 0.20 * k;
     }
-    // Slide: lean forward low, like ducking under a barrier on a scooter
     const sliding = st.gameRunning && st.sliding;
 
     const footY = worldY(st.playerY + FINGER_TIP_OFFSET, roadY);
-    // +0.082 lifts the tyres' lowest point exactly onto the road surface
-    // (wheel centre 0.26 minus tyre radius 0.365, at BASE_SCALE).
-    group.current.position.set(LANE_X + st.laneVisual * LANE_OFFSET, footY + 0.082, worldZ(FINGER_CENTER_X));
+    const floatBob = pose.float ? 0.06 + Math.sin(st.time * 0.16) * 0.045 : 0;
+    group.current.position.set(
+      LANE_X + st.laneVisual * LANE_OFFSET,
+      footY + (pose.lift ?? 0.02) + floatBob,
+      worldZ(FINGER_CENTER_X),
+    );
     group.current.scale.set(stretchX * BASE_SCALE, stretchY * BASE_SCALE, stretchX * BASE_SCALE);
-    group.current.rotation.x = sliding ? 0.45 : 0;
+    group.current.rotation.x = sliding ? (pose.mode === "standing" ? 0.2 : 0.45) : 0;
     group.current.rotation.z = -st.laneVel * 0.5;
+    if (st.shake > 0) group.current.position.x += (Math.random() - 0.5) * st.shake * 0.01;
 
-    if (st.shake > 0) {
-      group.current.position.x += (Math.random() - 0.5) * st.shake * 0.01;
-    }
-
-    // Wheels spin proportional to speed
     const wheelSpin = st.gameRunning ? st.time * 0.28 : 0;
-    if (wheelFRef.current) wheelFRef.current.rotation.x = wheelSpin;
-    if (wheelRRef.current) wheelRRef.current.rotation.x = wheelSpin;
+    wheels.current.forEach((w) => { w.rotation.x = wheelSpin; });
 
-    // Rider bobs slightly while riding
     if (riderGroup.current) {
-      const bob = st.gameRunning && st.onGround ? Math.sin(st.time * 0.18) * 0.025 : 0;
-      riderGroup.current.position.y = 1.38 + bob;
-      riderGroup.current.rotation.x = sliding ? -0.35 : 0;
+      const bob = st.gameRunning && st.onGround && !pose.float ? Math.sin(st.time * 0.18) * 0.025 : 0;
+      riderGroup.current.position.y = pose.riderY + bob;
+      // Slide: seated riders tuck forward; standing riders crouch low.
+      riderGroup.current.rotation.x = sliding && pose.mode !== "standing" ? -0.35 : 0;
+      riderGroup.current.scale.y = sliding && pose.mode === "standing" ? 0.72 : 1;
     }
 
-    // Saber swing
     if (saberGroup.current) {
       const active = st.saberSwing > 0;
       saberGroup.current.visible = st.gameRunning;
       const progress = active ? 1 - st.saberSwing / SABER_SWING_FRAMES : 0;
-      const angle = active ? -1.4 + progress * 2.6 : -1.1;
-      saberGroup.current.rotation.z = angle;
+      saberGroup.current.rotation.z = active ? -1.4 + progress * 2.6 : -1.1;
       if (saberBlade.current) {
         const mat = saberBlade.current.material as THREE.MeshStandardMaterial;
         mat.color.set(saber.color);
@@ -985,212 +1108,249 @@ function Vespa({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: Scene3DP
         mat.emissiveIntensity = active ? 1.8 : 0.8;
       }
     }
-
-    // Exhaust puff flicker
-    if (exhaustRef.current) {
-      exhaustRef.current.scale.setScalar(0.9 + Math.sin(st.time * 0.4) * 0.15);
-    }
+    if (exhaustRef.current) exhaustRef.current.scale.setScalar(0.9 + Math.sin(st.time * 0.4) * 0.15);
   });
 
-  // Vespa body color from skin.backHand, fender/trim from skin.finger,
-  // wheel hub/chrome from skin.knuckle, seat from skin.nail
   const bodyColor = skin.backHand;
   const trimColor = skin.finger;
   const hubColor  = skin.knuckle;
   const seatColor = skin.nail;
+  const chrome = CHROME_ACCENT;
 
   return (
     <group ref={group} visible={false}>
-
-      {/* ── Scooter body ── */}
-
-      {/* Main body — rounded front shield + step-through frame */}
-      <mesh castShadow position={[0, 0.72, 0.08]}>
-        <boxGeometry args={[0.54, 0.68, 0.78]} />
-        <meshStandardMaterial color={bodyColor} roughness={0.45} metalness={0.18} />
-      </mesh>
-      {/* Front leg shield — characteristic Vespa curved nose */}
-      <mesh castShadow position={[0, 0.72, 0.46]} rotation={[0.22, 0, 0]} scale={[1, 1, 0.55]}>
-        <sphereGeometry args={[0.34, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.72]} />
-        <meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} />
-      </mesh>
-      {/* Rear body hump (engine cover) */}
-      <mesh castShadow position={[0, 0.84, -0.42]} scale={[0.82, 0.68, 0.72]}>
-        <sphereGeometry args={[0.42, 10, 8]} />
-        <meshStandardMaterial color={bodyColor} roughness={0.45} metalness={0.18} />
-      </mesh>
-      {/* Chrome trim stripe */}
-      <mesh position={[0, 0.62, 0.10]}>
-        <boxGeometry args={[0.56, 0.045, 0.82]} />
-        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.92} roughness={0.08} />
-      </mesh>
-      {/* Fender accent — color band */}
-      <mesh position={[0, 0.98, 0.10]}>
-        <boxGeometry args={[0.58, 0.06, 0.72]} />
-        <meshStandardMaterial color={trimColor} roughness={0.55} />
-      </mesh>
-
-      {/* Seat */}
-      <mesh castShadow position={[0, 1.22, -0.12]} scale={[0.46, 0.12, 0.56]}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color={seatColor} roughness={0.8} />
-      </mesh>
-      {/* Seat cushion dome */}
-      <mesh castShadow position={[0, 1.29, -0.12]} scale={[0.45, 0.09, 0.54]}>
-        <sphereGeometry args={[1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color={seatColor} roughness={0.8} />
-      </mesh>
-
-      {/* Headlight */}
-      <mesh position={[0, 0.92, 0.52]}>
-        <sphereGeometry args={[0.11, 10, 8]} />
-        <meshStandardMaterial color="#fffde8" emissive="#ffe8a0" emissiveIntensity={0.9} metalness={0.3} roughness={0.2} />
-      </mesh>
-      {/* Headlight chrome ring */}
-      <mesh position={[0, 0.92, 0.50]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.12, 0.025, 8, 14]} />
-        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.9} roughness={0.1} />
-      </mesh>
-
-      {/* Handlebar — chrome tube */}
-      <mesh castShadow position={[0, 1.28, 0.34]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.035, 0.035, 0.72, 8]} />
-        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.88} roughness={0.12} />
-      </mesh>
-      {/* Handlebar grips */}
-      <mesh castShadow position={[-0.34, 1.28, 0.34]}>
-        <cylinderGeometry args={[0.048, 0.044, 0.14, 8]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
-      </mesh>
-      <mesh castShadow position={[0.34, 1.28, 0.34]}>
-        <cylinderGeometry args={[0.048, 0.044, 0.14, 8]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
-      </mesh>
-
-      {/* Exhaust pipe */}
-      <mesh castShadow position={[0.30, 0.32, -0.52]} rotation={[0.3, 0, 0]}>
-        <cylinderGeometry args={[0.045, 0.055, 0.44, 8]} />
-        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} />
-      </mesh>
-      {/* Exhaust puff */}
-      <mesh ref={exhaustRef} position={[0.30, 0.30, -0.76]}>
-        <sphereGeometry args={[0.08, 6, 5]} />
-        <meshStandardMaterial color="#aaaaaa" transparent opacity={0.28} roughness={1} />
-      </mesh>
-
-      {/* ── Wheels ── */}
-
-      {/* Front wheel */}
-      <group ref={wheelFRef} position={[0, 0.26, 0.54]}>
-        <mesh castShadow rotation={[0, Math.PI / 2, 0]}>
-          <torusGeometry args={[0.28, 0.085, 8, 18]} />
-          <meshStandardMaterial color="#1c1c1c" roughness={0.85} />
-        </mesh>
-        {/* Spokes */}
-        {[0, 1, 2, 3].map(i => (
-          <mesh key={i} rotation={[i * Math.PI / 4, Math.PI / 2, 0]}>
-            <boxGeometry args={[0.012, 0.52, 0.012]} />
-            <meshStandardMaterial color={CHROME_ACCENT} metalness={0.8} roughness={0.2} />
+      {/* ── Vehicle body ── */}
+      {vehicle === "skateboard" && (
+        <group>
+          <mesh castShadow position={[0, 0.13, 0]}><boxGeometry args={[0.30, 0.045, 0.84]} /><meshStandardMaterial color={bodyColor} roughness={0.5} /></mesh>
+          <mesh castShadow position={[0, 0.17, 0.44]} rotation={[0.5, 0, 0]}><boxGeometry args={[0.30, 0.04, 0.16]} /><meshStandardMaterial color={trimColor} roughness={0.5} /></mesh>
+          <mesh castShadow position={[0, 0.17, -0.44]} rotation={[-0.5, 0, 0]}><boxGeometry args={[0.30, 0.04, 0.16]} /><meshStandardMaterial color={trimColor} roughness={0.5} /></mesh>
+          <ChunkyWheel pos={[-0.11, 0.06, 0.30]} r={0.06} w={0.05} hub="#f5a623" reg={regWheel} />
+          <ChunkyWheel pos={[0.11, 0.06, 0.30]} r={0.06} w={0.05} hub="#f5a623" reg={regWheel} />
+          <ChunkyWheel pos={[-0.11, 0.06, -0.30]} r={0.06} w={0.05} hub="#f5a623" reg={regWheel} />
+          <ChunkyWheel pos={[0.11, 0.06, -0.30]} r={0.06} w={0.05} hub="#f5a623" reg={regWheel} />
+        </group>
+      )}
+      {vehicle === "hoverboard" && (
+        <group>
+          <mesh castShadow position={[0, 0.20, 0]}><boxGeometry args={[0.34, 0.06, 0.80]} /><meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.3} /></mesh>
+          <mesh position={[0, 0.155, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[0.30, 0.74]} />
+            <meshStandardMaterial color={saber.glow} emissive={saber.glow} emissiveIntensity={1.6} transparent opacity={0.85} side={THREE.DoubleSide} />
           </mesh>
-        ))}
-        {/* Hub */}
-        <mesh rotation={[0, Math.PI / 2, 0]}>
-          <cylinderGeometry args={[0.07, 0.07, 0.11, 10]} />
-          <meshStandardMaterial color={hubColor} metalness={0.7} roughness={0.2} />
-        </mesh>
-      </group>
-      {/* Front fork */}
-      <mesh castShadow position={[0, 0.52, 0.52]} rotation={[0.18, 0, 0]}>
-        <boxGeometry args={[0.06, 0.54, 0.06]} />
-        <meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.15} />
-      </mesh>
-
-      {/* Rear wheel */}
-      <group ref={wheelRRef} position={[0, 0.26, -0.56]}>
-        <mesh castShadow rotation={[0, Math.PI / 2, 0]}>
-          <torusGeometry args={[0.28, 0.085, 8, 18]} />
-          <meshStandardMaterial color="#1c1c1c" roughness={0.85} />
-        </mesh>
-        {[0, 1, 2, 3].map(i => (
-          <mesh key={i} rotation={[i * Math.PI / 4, Math.PI / 2, 0]}>
-            <boxGeometry args={[0.012, 0.52, 0.012]} />
-            <meshStandardMaterial color={CHROME_ACCENT} metalness={0.8} roughness={0.2} />
+          <mesh castShadow position={[0, 0.22, 0.40]} rotation={[Math.PI / 2, 0, 0]}><coneGeometry args={[0.05, 0.12, 8]} /><meshStandardMaterial color={chrome} metalness={0.8} roughness={0.15} /></mesh>
+          <mesh castShadow position={[0, 0.22, -0.40]} rotation={[-Math.PI / 2, 0, 0]}><coneGeometry args={[0.05, 0.12, 8]} /><meshStandardMaterial color={chrome} metalness={0.8} roughness={0.15} /></mesh>
+        </group>
+      )}
+      {vehicle === "bmx" && (
+        <group>
+          <ChunkyWheel pos={[0, 0.30, 0.42]} r={0.30} w={0.06} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[0, 0.30, -0.42]} r={0.30} w={0.06} hub={hubColor} reg={regWheel} />
+          <mesh castShadow position={[0, 0.52, 0.06]} rotation={[0.9, 0, 0]}><boxGeometry args={[0.05, 0.06, 0.72]} /><meshStandardMaterial color={bodyColor} roughness={0.4} /></mesh>
+          <mesh castShadow position={[0, 0.62, -0.16]} rotation={[-0.6, 0, 0]}><boxGeometry args={[0.05, 0.06, 0.56]} /><meshStandardMaterial color={bodyColor} roughness={0.4} /></mesh>
+          <mesh castShadow position={[0, 0.86, -0.30]}><boxGeometry args={[0.05, 0.34, 0.05]} /><meshStandardMaterial color={chrome} metalness={0.8} roughness={0.15} /></mesh>
+          <mesh castShadow position={[0, 1.02, -0.30]} scale={[1, 0.5, 1.6]}><sphereGeometry args={[0.11, 8, 6]} /><meshStandardMaterial color={seatColor} roughness={0.8} /></mesh>
+          <mesh castShadow position={[0, 0.92, 0.40]} rotation={[0.25, 0, 0]}><boxGeometry args={[0.05, 0.56, 0.05]} /><meshStandardMaterial color={chrome} metalness={0.8} roughness={0.15} /></mesh>
+          <mesh castShadow position={[0, 1.18, 0.36]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.03, 0.03, 0.52, 8]} /><meshStandardMaterial color={chrome} metalness={0.85} roughness={0.12} /></mesh>
+        </group>
+      )}
+      {vehicle === "gokart" && (
+        <group>
+          <mesh castShadow position={[0, 0.22, 0]}><boxGeometry args={[0.52, 0.10, 0.95]} /><meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} /></mesh>
+          <mesh castShadow position={[0, 0.30, 0.44]} rotation={[0.35, 0, 0]}><boxGeometry args={[0.44, 0.16, 0.22]} /><meshStandardMaterial color={trimColor} roughness={0.45} /></mesh>
+          <mesh castShadow position={[0, 0.42, -0.34]}><boxGeometry args={[0.40, 0.30, 0.08]} /><meshStandardMaterial color={seatColor} roughness={0.75} /></mesh>
+          <mesh castShadow position={[0, 0.62, 0.20]} rotation={[0.5, 0, 0]}><cylinderGeometry args={[0.02, 0.02, 0.30, 6]} /><meshStandardMaterial color="#333" roughness={0.6} /></mesh>
+          <mesh castShadow position={[0, 0.74, 0.14]} rotation={[1.1, 0, 0]}><torusGeometry args={[0.10, 0.02, 8, 14]} /><meshStandardMaterial color="#222" roughness={0.6} /></mesh>
+          <ChunkyWheel pos={[-0.30, 0.14, 0.36]} r={0.14} w={0.10} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[0.30, 0.14, 0.36]} r={0.14} w={0.10} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[-0.30, 0.18, -0.36]} r={0.18} w={0.12} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[0.30, 0.18, -0.36]} r={0.18} w={0.12} hub={hubColor} reg={regWheel} />
+        </group>
+      )}
+      {vehicle === "firetruck" && (
+        <group>
+          <mesh castShadow position={[0, 0.66, -0.06]}><boxGeometry args={[0.70, 0.52, 1.10]} /><meshStandardMaterial color="#d62828" roughness={0.4} metalness={0.15} /></mesh>
+          <mesh castShadow position={[0, 0.80, 0.50]} rotation={[0.28, 0, 0]}><boxGeometry args={[0.62, 0.30, 0.10]} /><meshStandardMaterial color="#182838" metalness={0.5} roughness={0.15} /></mesh>
+          <mesh position={[0, 0.60, 0]}><boxGeometry args={[0.72, 0.09, 1.12]} /><meshStandardMaterial color="#f4f4f8" roughness={0.5} /></mesh>
+          <mesh castShadow position={[0, 0.96, -0.20]}><boxGeometry args={[0.12, 0.05, 0.62]} /><meshStandardMaterial color={chrome} metalness={0.85} roughness={0.15} /></mesh>
+          <mesh castShadow position={[-0.18, 0.96, -0.20]}><boxGeometry args={[0.05, 0.05, 0.62]} /><meshStandardMaterial color={chrome} metalness={0.85} roughness={0.15} /></mesh>
+          <mesh position={[0, 0.98, 0.30]}><boxGeometry args={[0.30, 0.07, 0.10]} /><meshStandardMaterial color="#ff3030" emissive="#ff2020" emissiveIntensity={1.4} /></mesh>
+          <mesh position={[0, 0.98, 0.18]}><boxGeometry args={[0.30, 0.07, 0.10]} /><meshStandardMaterial color="#3060ff" emissive="#2040ff" emissiveIntensity={1.4} /></mesh>
+          <ChunkyWheel pos={[-0.34, 0.17, 0.36]} r={0.17} w={0.12} hub={chrome} reg={regWheel} />
+          <ChunkyWheel pos={[0.34, 0.17, 0.36]} r={0.17} w={0.12} hub={chrome} reg={regWheel} />
+          <ChunkyWheel pos={[-0.34, 0.17, -0.40]} r={0.17} w={0.12} hub={chrome} reg={regWheel} />
+          <ChunkyWheel pos={[0.34, 0.17, -0.40]} r={0.17} w={0.12} hub={chrome} reg={regWheel} />
+        </group>
+      )}
+      {vehicle === "monstertruck" && (
+        <group>
+          <mesh castShadow position={[0, 1.02, 0]}><boxGeometry args={[0.60, 0.28, 0.92]} /><meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} /></mesh>
+          <mesh castShadow position={[0, 1.14, 0.30]} rotation={[0.3, 0, 0]}><boxGeometry args={[0.52, 0.20, 0.08]} /><meshStandardMaterial color="#182838" metalness={0.5} roughness={0.15} /></mesh>
+          <mesh position={[0, 0.90, 0]}><boxGeometry args={[0.62, 0.06, 0.94]} /><meshStandardMaterial color={trimColor} roughness={0.5} /></mesh>
+          {[[-0.24, 0.36], [0.24, 0.36], [-0.24, -0.36], [0.24, -0.36]].map(([sx, sz], i) => (
+            <mesh key={i} castShadow position={[sx, 0.68, sz]} rotation={[0.2 * (i % 2 ? 1 : -1), 0, 0]}>
+              <boxGeometry args={[0.05, 0.42, 0.05]} />
+              <meshStandardMaterial color={chrome} metalness={0.8} roughness={0.2} />
+            </mesh>
+          ))}
+          <ChunkyWheel pos={[-0.36, 0.34, 0.38]} r={0.34} w={0.22} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[0.36, 0.34, 0.38]} r={0.34} w={0.22} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[-0.36, 0.34, -0.38]} r={0.34} w={0.22} hub={hubColor} reg={regWheel} />
+          <ChunkyWheel pos={[0.36, 0.34, -0.38]} r={0.34} w={0.22} hub={hubColor} reg={regWheel} />
+        </group>
+      )}
+      {vehicle === "rocket" && (
+        <group>
+          <mesh castShadow position={[0, 0.55, 0]} rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.22, 0.62, 8, 12]} /><meshStandardMaterial color="#e8e8f2" roughness={0.3} metalness={0.4} /></mesh>
+          <mesh castShadow position={[0, 0.55, 0.62]} rotation={[Math.PI / 2, 0, 0]}><coneGeometry args={[0.20, 0.34, 12]} /><meshStandardMaterial color={trimColor} roughness={0.35} metalness={0.3} /></mesh>
+          {[0, 2.09, 4.19].map((a, i) => (
+            <mesh key={i} castShadow position={[Math.sin(a) * 0.26, 0.55 + Math.cos(a) * 0.26, -0.42]} rotation={[0, 0, -a]}>
+              <boxGeometry args={[0.05, 0.26, 0.30]} />
+              <meshStandardMaterial color={trimColor} roughness={0.4} />
+            </mesh>
+          ))}
+          <mesh ref={exhaustRef} position={[0, 0.55, -0.66]} rotation={[-Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[0.14, 0.42, 10]} />
+            <meshStandardMaterial color="#ffb340" emissive="#ff8500" emissiveIntensity={2.2} transparent opacity={0.9} />
           </mesh>
-        ))}
-        <mesh rotation={[0, Math.PI / 2, 0]}>
-          <cylinderGeometry args={[0.07, 0.07, 0.11, 10]} />
-          <meshStandardMaterial color={hubColor} metalness={0.7} roughness={0.2} />
-        </mesh>
-      </group>
-
-      {/* ── Rider ── */}
-      <group ref={riderGroup} position={[0, 1.38, 0]}>
-        {/* Torso — jacket in the character's signature colour (matches the
-            2D rider's jacket = saber colour, so Apollo reads red, etc.) */}
-        <mesh castShadow position={[0, 0.24, -0.02]}>
-          <capsuleGeometry args={[0.18, 0.36, 6, 10]} />
-          <meshStandardMaterial color={saber.color} roughness={0.6} />
-        </mesh>
-        {/* Helmet — full-face, styled like a Vespa rider */}
-        <mesh castShadow position={[0, 0.62, 0.04]}>
-          <sphereGeometry args={[0.22, 12, 10]} />
-          <meshStandardMaterial color={bodyColor} roughness={0.35} metalness={0.25} />
-        </mesh>
-        {/* Visor */}
-        <mesh position={[0, 0.60, 0.20]} rotation={[-0.15, 0, 0]} scale={[0.82, 0.46, 0.28]}>
-          <sphereGeometry args={[0.28, 10, 8, 0, Math.PI * 2, 0.6, 1.0]} />
-          <meshStandardMaterial color="#112233" metalness={0.55} roughness={0.1} transparent opacity={0.82} />
-        </mesh>
-        {/* Left arm on handlebar */}
-        <mesh castShadow position={[-0.22, 0.26, 0.24]} rotation={[-0.6, 0.15, -0.35]}>
-          <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
-          <meshStandardMaterial color={saber.color} roughness={0.6} />
-        </mesh>
-        {/* Right arm — holds saber */}
-        <mesh castShadow position={[0.22, 0.26, 0.24]} rotation={[-0.6, -0.15, 0.35]}>
-          <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
-          <meshStandardMaterial color={saber.color} roughness={0.6} />
-        </mesh>
-        {/* Gloved hands at the ends of the arms */}
-        <mesh castShadow position={[-0.33, 0.06, 0.40]}>
-          <sphereGeometry args={[0.06, 8, 6]} />
-          <meshStandardMaterial color="#22242e" roughness={0.8} />
-        </mesh>
-        <mesh castShadow position={[0.30, 0.10, 0.36]}>
-          <sphereGeometry args={[0.06, 8, 6]} />
-          <meshStandardMaterial color="#22242e" roughness={0.8} />
-        </mesh>
-        {/* Legs — thighs forward off the seat, shins down to the step-through
-            deck, boots planted. Grounds the rider (it used to float torso-only). */}
-        {[-0.11, 0.11].map((lx) => (
-          <group key={lx}>
-            <mesh castShadow position={[lx, -0.06, 0.14]} rotation={[-1.15, 0, 0]}>
-              <capsuleGeometry args={[0.075, 0.26, 6, 8]} />
-              <meshStandardMaterial color="#3a3f58" roughness={0.75} />
-            </mesh>
-            <mesh castShadow position={[lx, -0.32, 0.30]} rotation={[-0.25, 0, 0]}>
-              <capsuleGeometry args={[0.06, 0.30, 6, 8]} />
-              <meshStandardMaterial color="#3a3f58" roughness={0.75} />
-            </mesh>
-            <mesh castShadow position={[lx, -0.52, 0.36]} scale={[1, 0.55, 1.7]}>
-              <sphereGeometry args={[0.075, 8, 6]} />
-              <meshStandardMaterial color="#191a22" roughness={0.85} />
-            </mesh>
-          </group>
-        ))}
-
-        {/* Lightsaber — held up by the rider's right arm */}
-        <group ref={saberGroup} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
-          <mesh castShadow position={[0, 0.12, 0]}><cylinderGeometry args={[0.03, 0.03, 0.18, 6]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.2} /></mesh>
-          <mesh ref={saberBlade} position={[0, bladeHalfLen, 0]}>
-            <cylinderGeometry args={[0.025, 0.025, bladeLen, 6]} />
-            <meshStandardMaterial color={saber.color} emissive={saber.glow} emissiveIntensity={0.6} />
+          <mesh position={[0, 0.72, 0.24]}><sphereGeometry args={[0.07, 8, 8]} /><meshStandardMaterial color="#1a3050" metalness={0.5} roughness={0.1} /></mesh>
+        </group>
+      )}
+      {vehicle === "ufo" && (
+        <group>
+          <mesh castShadow position={[0, 0.42, 0]} scale={[1, 0.32, 1]}><sphereGeometry args={[0.58, 18, 12]} /><meshStandardMaterial color={chrome} metalness={0.85} roughness={0.15} /></mesh>
+          <mesh position={[0, 0.56, 0]}><sphereGeometry args={[0.34, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color="#9fd8ff" transparent opacity={0.32} metalness={0.3} roughness={0.05} /></mesh>
+          {[0, 1, 2, 3, 4, 5].map((i) => {
+            const a = (i / 6) * Math.PI * 2;
+            return (
+              <mesh key={i} position={[Math.cos(a) * 0.44, 0.40, Math.sin(a) * 0.44]}>
+                <sphereGeometry args={[0.045, 6, 5]} />
+                <meshStandardMaterial color={i % 2 ? "#ffee00" : "#ff44aa"} emissive={i % 2 ? "#ffee00" : "#ff44aa"} emissiveIntensity={1.6} />
+              </mesh>
+            );
+          })}
+          <mesh position={[0, 0.20, 0]} rotation={[Math.PI, 0, 0]}>
+            <coneGeometry args={[0.30, 0.30, 14, 1, true]} />
+            <meshStandardMaterial color="#7dff8a" emissive="#4dff6a" emissiveIntensity={0.9} transparent opacity={0.25} side={THREE.DoubleSide} depthWrite={false} />
           </mesh>
         </group>
-      </group>
+      )}
+      {vehicle === "vespa" && (
+        <group>
+          {/* Main body — rounded front shield + step-through frame */}
+          <mesh castShadow position={[0, 0.72, 0.08]}>
+            <boxGeometry args={[0.54, 0.68, 0.78]} />
+            <meshStandardMaterial color={bodyColor} roughness={0.45} metalness={0.18} />
+          </mesh>
+          <mesh castShadow position={[0, 0.72, 0.46]} rotation={[0.22, 0, 0]} scale={[1, 1, 0.55]}>
+            <sphereGeometry args={[0.34, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.72]} />
+            <meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} />
+          </mesh>
+          <mesh castShadow position={[0, 0.84, -0.42]} scale={[0.82, 0.68, 0.72]}>
+            <sphereGeometry args={[0.42, 10, 8]} />
+            <meshStandardMaterial color={bodyColor} roughness={0.45} metalness={0.18} />
+          </mesh>
+          <mesh position={[0, 0.62, 0.10]}>
+            <boxGeometry args={[0.56, 0.045, 0.82]} />
+            <meshStandardMaterial color={chrome} metalness={0.92} roughness={0.08} />
+          </mesh>
+          <mesh position={[0, 0.98, 0.10]}>
+            <boxGeometry args={[0.58, 0.06, 0.72]} />
+            <meshStandardMaterial color={trimColor} roughness={0.55} />
+          </mesh>
+          <mesh castShadow position={[0, 1.22, -0.12]} scale={[0.46, 0.12, 0.56]}>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshStandardMaterial color={seatColor} roughness={0.8} />
+          </mesh>
+          <mesh castShadow position={[0, 1.29, -0.12]} scale={[0.45, 0.09, 0.54]}>
+            <sphereGeometry args={[1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial color={seatColor} roughness={0.8} />
+          </mesh>
+          <mesh position={[0, 0.92, 0.52]}>
+            <sphereGeometry args={[0.11, 10, 8]} />
+            <meshStandardMaterial color="#fffde8" emissive="#ffe8a0" emissiveIntensity={0.9} metalness={0.3} roughness={0.2} />
+          </mesh>
+          <mesh position={[0, 0.92, 0.50]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[0.12, 0.025, 8, 14]} />
+            <meshStandardMaterial color={chrome} metalness={0.9} roughness={0.1} />
+          </mesh>
+          <mesh castShadow position={[0, 1.28, 0.34]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.035, 0.035, 0.72, 8]} />
+            <meshStandardMaterial color={chrome} metalness={0.88} roughness={0.12} />
+          </mesh>
+          <mesh castShadow position={[-0.34, 1.28, 0.34]}>
+            <cylinderGeometry args={[0.048, 0.044, 0.14, 8]} />
+            <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
+          </mesh>
+          <mesh castShadow position={[0.34, 1.28, 0.34]}>
+            <cylinderGeometry args={[0.048, 0.044, 0.14, 8]} />
+            <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
+          </mesh>
+          <mesh castShadow position={[0.30, 0.32, -0.52]} rotation={[0.3, 0, 0]}>
+            <cylinderGeometry args={[0.045, 0.055, 0.44, 8]} />
+            <meshStandardMaterial color={chrome} metalness={0.85} roughness={0.15} />
+          </mesh>
+          <mesh ref={exhaustRef} position={[0.30, 0.30, -0.76]}>
+            <sphereGeometry args={[0.08, 6, 5]} />
+            <meshStandardMaterial color="#aaaaaa" transparent opacity={0.28} roughness={1} />
+          </mesh>
+          <group position={[0, 0.26, 0.54]} ref={regWheel}>
+            <mesh castShadow rotation={[0, Math.PI / 2, 0]}>
+              <torusGeometry args={[0.28, 0.085, 8, 18]} />
+              <meshStandardMaterial color="#1c1c1c" roughness={0.85} />
+            </mesh>
+            {[0, 1, 2, 3].map(i => (
+              <mesh key={i} rotation={[i * Math.PI / 4, Math.PI / 2, 0]}>
+                <boxGeometry args={[0.012, 0.52, 0.012]} />
+                <meshStandardMaterial color={chrome} metalness={0.8} roughness={0.2} />
+              </mesh>
+            ))}
+            <mesh rotation={[0, Math.PI / 2, 0]}>
+              <cylinderGeometry args={[0.07, 0.07, 0.11, 10]} />
+              <meshStandardMaterial color={hubColor} metalness={0.7} roughness={0.2} />
+            </mesh>
+          </group>
+          <mesh castShadow position={[0, 0.52, 0.52]} rotation={[0.18, 0, 0]}>
+            <boxGeometry args={[0.06, 0.54, 0.06]} />
+            <meshStandardMaterial color={chrome} metalness={0.85} roughness={0.15} />
+          </mesh>
+          <group position={[0, 0.26, -0.56]} ref={regWheel}>
+            <mesh castShadow rotation={[0, Math.PI / 2, 0]}>
+              <torusGeometry args={[0.28, 0.085, 8, 18]} />
+              <meshStandardMaterial color="#1c1c1c" roughness={0.85} />
+            </mesh>
+            {[0, 1, 2, 3].map(i => (
+              <mesh key={i} rotation={[i * Math.PI / 4, Math.PI / 2, 0]}>
+                <boxGeometry args={[0.012, 0.52, 0.012]} />
+                <meshStandardMaterial color={chrome} metalness={0.8} roughness={0.2} />
+              </mesh>
+            ))}
+            <mesh rotation={[0, Math.PI / 2, 0]}>
+              <cylinderGeometry args={[0.07, 0.07, 0.11, 10]} />
+              <meshStandardMaterial color={hubColor} metalness={0.7} roughness={0.2} />
+            </mesh>
+          </group>
+        </group>
+      )}
+
+      {/* ── Rider (posed per vehicle) ── */}
+      <Rider
+        key={vehicle}
+        pose={pose}
+        jacket={saber.color}
+        helmet={bodyColor}
+        trim={trimColor}
+        saber={saber}
+        saberGroupRef={saberGroup}
+        saberBladeRef={saberBlade}
+        bladeLen={bladeLen}
+        bladeHalfLen={bladeHalfLen}
+        riderRef={riderGroup}
+      />
     </group>
   );
 }
+
 
 // ── Ghibli sky dome + drifting painted clouds ──────────────────────────────
 // Vertical sky gradient baked into a small canvas texture (CSP-safe, no
@@ -1818,7 +1978,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
         <ThemeProps stateRef={stateRef} theme={theme} />
         <ModelObstaclePool stateRef={stateRef} />
       </Suspense>
-      <Vespa stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} />
+      <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
       <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
