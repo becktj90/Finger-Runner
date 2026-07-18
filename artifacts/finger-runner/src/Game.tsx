@@ -32,7 +32,7 @@ const CharacterSelectScreen = lazy(() => import("./components/CharacterSelectScr
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart"
   |"poop"|"toilet"|"duck"|"dino"|"pinata"|"undies";
-type Theme = "suburb"|"city"|"highway"|"mountain"|"night";
+type Theme = "suburb"|"city"|"highway"|"mountain"|"night"|"moon";
 
 interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; lane: number; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"|"gas"; rot?: number; rotV?: number; }
@@ -57,7 +57,6 @@ function pushCapped<T>(arr: T[], cap: number, item: T) {
 const GRAVITY = 0.72;
 const JUMP_FORCE = -18.5;
 const LOW_JUMP_GRAVITY_MULT = 2.6;   // extra gravity when jump released early → variable jump height
-const FALL_GRAVITY_MULT = 1.55;      // snappier descent for better game feel
 const MAX_FALL = 24;
 const COYOTE_FRAMES = 7;             // grace frames to still jump after leaving the ground
 const JUMP_BUFFER_FRAMES = 8;        // remember a jump pressed just before landing
@@ -139,6 +138,10 @@ const LEVELS = [
     obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
   { num:8, name:"Night Drive",          target:1560, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
     obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
+  // Finale: lunar gravity — jumps launch high and hang forever, so the level
+  // runs fast and long to compensate. gravityMult scales the whole jump arc.
+  { num:9, name:"Sea of Tranquility",   target:1700, theme:"moon"     as Theme, speedMult:3.2,  minSpawn:70,  ramp:3.6, gravityMult:0.38,
+    obs:["trashcan","mailbox","dino","duck","stopsign","bicycle","toilet","pinata","pinata","barrier","barrier"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
@@ -159,6 +162,7 @@ const MUSIC_THEMES: Record<MusicThemeId, MusicTheme> = {
   highway:  { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-3.mp3", leadGain: 1.05 },
   mountain: { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-1.mp3", leadGain: 1.1  },
   night:    { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-2.mp3", leadGain: 1.1  },
+  moon:     { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-3.mp3", leadGain: 1.15 },
 };
 
 // ── Lightsaber tiers ──────────────────────────────────────────────────────────
@@ -187,6 +191,7 @@ const LEVEL_STORY: Record<number, string> = {
   6: "Pedal to the metal… er, finger to the asphalt!",
   7: "Mountain air! Don't look down, Middy.",
   8: "One last sprint under the stars. Almost home!",
+  9: "THE MOON?! Low gravity, big air — stick the landing!",
 };
 
 const RUN_QUIPS = [
@@ -1362,14 +1367,15 @@ export default function Game() {
         st.laneVisual += st.laneVel;
         st.laneVisual = Math.max(-1.3, Math.min(1.3, st.laneVisual));
 
-        // Physics — variable jump height + snappy fall
-        let g = GRAVITY;
+        // Physics — a near-symmetric parabolic arc, like a real thrown object.
+        // The old arcade tricks (heavy 1.55× fall gravity + an artificial apex
+        // hang) made jumps feel snappy-then-floaty; with the hazard-glow
+        // telegraph carrying the timing job, the arc itself can be honest.
+        // A whisper of fall bias (1.12×) keeps landings from feeling mushy,
+        // and releasing the button early still shortens the hop.
+        let g = GRAVITY * ((lvlDef as { gravityMult?: number }).gravityMult ?? 1);
         if (st.velocity < 0 && !st.jumpHeld) g *= LOW_JUMP_GRAVITY_MULT;
-        else if (st.velocity > 0) g *= FALL_GRAVITY_MULT;
-        // Apex hang — ease gravity near the very top of the arc so there's a
-        // longer, more readable beat where the rider floats over an obstacle.
-        // Makes jump timing far more forgiving without changing peak height.
-        if (!st.onGround && Math.abs(st.velocity) < 4.5) g *= 0.55;
+        else if (st.velocity > 0) g *= 1.12;
         if (st.kidsMode) g *= 0.82;   // easy mode: floatier, more forgiving jumps
         st.velocity += g;
         if (st.velocity > MAX_FALL) st.velocity = MAX_FALL;
@@ -1832,12 +1838,38 @@ export default function Game() {
         const slide = st.sliding;
         const spinAngle = st.gameRunning ? st.time * 0.3 : 0;
 
-        // Wheel: tyre + inner + spinning spokes + hub, at any position/size
+        // ── Cel-shaded art helpers ─────────────────────────────────────────
+        // Everything the rider is built from goes through these three, which
+        // is what shifts the look from "flat programmer shapes" to deliberate
+        // art: every form gets a top-lit gradient, a consistent ink outline,
+        // and (where it sells roundness) a specular highlight.
+        const INK = "rgba(24,18,38,0.72)";
+        const shade = (hex: string, amt: number): string => {
+          // amt > 0 lightens toward white, < 0 darkens toward black
+          const n = parseInt(hex.replace("#", ""), 16);
+          const ch = (v: number) => Math.round(Math.max(0, Math.min(255,
+            amt > 0 ? v + (255 - v) * amt : v * (1 + amt))));
+          return `rgb(${ch((n >> 16) & 255)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+        };
+        const litFill = (c: string, y0: number, y1: number): CanvasGradient => {
+          const grd = ctx.createLinearGradient(0, y0, 0, y1);
+          grd.addColorStop(0, shade(c, 0.22));
+          grd.addColorStop(0.5, c);
+          grd.addColorStop(1, shade(c, -0.28));
+          return grd;
+        };
+        const ink = (lw = 1.6) => {
+          ctx.strokeStyle = INK; ctx.lineWidth = lw; ctx.stroke();
+        };
+
+        // Wheel: gradient tyre + rim ring + spinning spokes + chrome hub
         const drawWheel = (wx: number, wy: number, r: number) => {
+          const tyre = ctx.createRadialGradient(wx - r * 0.3, wy - r * 0.3, r * 0.2, wx, wy, r);
+          tyre.addColorStop(0, "#3c3c46"); tyre.addColorStop(1, "#101014");
           ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI*2);
-          ctx.fillStyle = wheelCol; ctx.fill();
-          ctx.beginPath(); ctx.arc(wx, wy, Math.max(2, r - 5), 0, Math.PI*2);
-          ctx.fillStyle = "#2e2e36"; ctx.fill();
+          ctx.fillStyle = tyre; ctx.fill(); ink(1.8);
+          ctx.beginPath(); ctx.arc(wx, wy, Math.max(2, r - 4.5), 0, Math.PI*2);
+          ctx.strokeStyle = "#52525e"; ctx.lineWidth = 1.5; ctx.stroke();
           ctx.strokeStyle = hubCol; ctx.lineWidth = 2;
           for (let s = 0; s < 5; s++) {
             const a = spinAngle + (s / 5) * Math.PI * 2;
@@ -1846,8 +1878,13 @@ export default function Game() {
             ctx.lineTo(wx + Math.cos(a) * r * 0.62, wy + Math.sin(a) * r * 0.62);
             ctx.stroke();
           }
+          const hub = ctx.createRadialGradient(wx - r * 0.1, wy - r * 0.1, 0.5, wx, wy, r * 0.3);
+          hub.addColorStop(0, "#ffffff"); hub.addColorStop(0.4, hubCol); hub.addColorStop(1, "#8a8c98");
           ctx.beginPath(); ctx.arc(wx, wy, Math.max(2.5, r * 0.28), 0, Math.PI*2);
-          ctx.fillStyle = hubCol; ctx.fill();
+          ctx.fillStyle = hub; ctx.fill();
+          // tyre glint
+          ctx.beginPath(); ctx.arc(wx, wy, r - 2, Math.PI * 1.15, Math.PI * 1.5);
+          ctx.strokeStyle = "rgba(255,255,255,0.28)"; ctx.lineWidth = 2; ctx.stroke();
         };
 
         // Rider from the hips up. hipY = hip line; legLen 0 hides legs (UFO);
@@ -1855,49 +1892,85 @@ export default function Game() {
         // Returns the saber anchor point (right hand).
         const drawRider = (hipY: number, legLen: number, bar: number | null): { sx: number; sy: number } => {
           const riderTopY = slide ? hipY - 9 : hipY - 24;
+          // Legs: shaded pants with a knee taper, dark boots planted at the deck
           if (legLen > 0) {
-            ctx.fillStyle = "#334";
-            ctx.beginPath(); ctx.rect(-13, hipY, 9, legLen); ctx.fill();
-            ctx.beginPath(); ctx.rect(4,  hipY, 9, legLen); ctx.fill();
+            const pant = litFill("#3a3f58", hipY, hipY + legLen);
+            for (const lx of [-13, 4]) {
+              ctx.beginPath();
+              ctx.moveTo(lx, hipY); ctx.lineTo(lx + 9, hipY);
+              ctx.lineTo(lx + 8, hipY + legLen); ctx.lineTo(lx + 1, hipY + legLen);
+              ctx.closePath();
+              ctx.fillStyle = pant; ctx.fill(); ink(1.3);
+              // boot
+              ctx.beginPath(); ctx.roundRect(lx - 1, hipY + legLen - 4, 12, 5, 2);
+              ctx.fillStyle = "#191a22"; ctx.fill();
+            }
           }
-          // Jacket / torso
+          // Jacket / torso — top-lit gradient, waist taper, ink outline
           ctx.beginPath();
           ctx.moveTo(-13, hipY); ctx.lineTo(13, hipY);
           ctx.lineTo(11, riderTopY); ctx.lineTo(-11, riderTopY);
           ctx.closePath();
-          ctx.fillStyle = jacketCol; ctx.fill();
-          // Jacket shoulder seam
-          ctx.beginPath();
-          ctx.rect(-13, hipY, 26, 4);
+          ctx.fillStyle = litFill(jacketCol, riderTopY, hipY); ctx.fill(); ink(1.6);
+          // Centre zip + collar
+          ctx.beginPath(); ctx.moveTo(0, hipY - 1); ctx.lineTo(0, riderTopY + 2);
+          ctx.strokeStyle = shade(jacketCol, -0.4); ctx.lineWidth = 1.4; ctx.stroke();
+          ctx.beginPath(); ctx.rect(-13, hipY, 26, 4);
           ctx.fillStyle = trimCol; ctx.fill();
-          // Arms
-          ctx.lineWidth = 7; ctx.lineCap = "round";
-          ctx.strokeStyle = jacketCol;
+          ctx.beginPath(); ctx.rect(-11, riderTopY, 22, 3);
+          ctx.fillStyle = shade(jacketCol, -0.3); ctx.fill();
+          // Rim light down the left edge (sun side)
+          ctx.beginPath(); ctx.moveTo(-12.2, hipY - 1); ctx.lineTo(-10.4, riderTopY + 1);
+          ctx.strokeStyle = "rgba(255,246,220,0.5)"; ctx.lineWidth = 1.6; ctx.stroke();
+          // Arms: dark under-stroke then lit main stroke = cheap volume
+          const arm = (x0: number, y0: number, x1: number, y1: number) => {
+            ctx.lineCap = "round";
+            ctx.strokeStyle = shade(jacketCol, -0.35); ctx.lineWidth = 8.5;
+            ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+            ctx.strokeStyle = shade(jacketCol, 0.06); ctx.lineWidth = 6;
+            ctx.beginPath(); ctx.moveTo(x0, y0 - 0.8); ctx.lineTo(x1, y1 - 0.8); ctx.stroke();
+            ctx.lineCap = "butt";
+            // glove
+            ctx.beginPath(); ctx.arc(x1, y1, 3.6, 0, Math.PI * 2);
+            ctx.fillStyle = "#22242e"; ctx.fill();
+          };
           if (bar != null) {
-            ctx.beginPath(); ctx.moveTo(-10, hipY - 2); ctx.lineTo(-30, bar + 2); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo( 10, hipY - 2); ctx.lineTo( 30, bar + 2); ctx.stroke();
-            ctx.lineCap = "butt";
-            // Handlebar + grips
-            ctx.beginPath(); ctx.rect(-34, bar, 68, 7); ctx.fillStyle = chrome; ctx.fill();
+            arm(-10, hipY - 2, -30, bar + 2);
+            arm( 10, hipY - 2,  30, bar + 2);
+            // Handlebar: chrome gradient + rubber grips
+            const barGrd = ctx.createLinearGradient(0, bar, 0, bar + 7);
+            barGrd.addColorStop(0, "#f2f3f8"); barGrd.addColorStop(0.5, chrome); barGrd.addColorStop(1, "#8e909c");
+            ctx.beginPath(); ctx.roundRect(-34, bar, 68, 7, 3); ctx.fillStyle = barGrd; ctx.fill(); ink(1.2);
             ctx.fillStyle = "#111";
-            ctx.beginPath(); ctx.rect(-38, bar - 2, 8, 11); ctx.fill();
-            ctx.beginPath(); ctx.rect(30,  bar - 2, 8, 11); ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-38, bar - 2, 8, 11, 3); ctx.fill();
+            ctx.beginPath(); ctx.roundRect(30,  bar - 2, 8, 11, 3); ctx.fill();
           } else {
-            ctx.beginPath(); ctx.moveTo(-10, hipY - 2); ctx.lineTo(-19, hipY + 10); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo( 10, hipY - 2); ctx.lineTo( 19, hipY + 10); ctx.stroke();
-            ctx.lineCap = "butt";
+            arm(-10, hipY - 2, -19, hipY + 10);
+            arm( 10, hipY - 2,  19, hipY + 10);
           }
-          // Helmet
+          // Helmet: sphere-shaded shell, mirrored visor with a light sweep
           const helmetY = riderTopY - 15;
-          ctx.beginPath();
-          ctx.arc(0, helmetY, 14, 0, Math.PI*2);
-          ctx.fillStyle = bodyCol; ctx.fill();
+          const shell = ctx.createRadialGradient(-5, helmetY - 6, 2, 0, helmetY, 15);
+          shell.addColorStop(0, shade(bodyCol, 0.45));
+          shell.addColorStop(0.55, bodyCol);
+          shell.addColorStop(1, shade(bodyCol, -0.35));
+          ctx.beginPath(); ctx.arc(0, helmetY, 14, 0, Math.PI*2);
+          ctx.fillStyle = shell; ctx.fill(); ink(1.7);
+          // visor
+          const visor = ctx.createLinearGradient(-9, helmetY, 9, helmetY + 6);
+          visor.addColorStop(0, "#31527e"); visor.addColorStop(0.45, "#101c30"); visor.addColorStop(1, "#1c3252");
           ctx.beginPath();
           ctx.ellipse(0, helmetY + 3, 9, 6, 0, Math.PI*0.05, Math.PI*0.95);
-          ctx.fillStyle = "#1a3050"; ctx.fill();
+          ctx.fillStyle = visor; ctx.fill();
+          // visor reflection sweep
           ctx.beginPath();
-          ctx.arc(0, helmetY, 14, Math.PI*0.65, Math.PI*2.35);
+          ctx.ellipse(-3, helmetY + 2.2, 4.4, 1.7, -0.35, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(210,232,255,0.55)"; ctx.fill();
+          // trim stripe + spec highlight on the crown
+          ctx.beginPath(); ctx.arc(0, helmetY, 14, Math.PI*0.65, Math.PI*2.35);
           ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+          ctx.beginPath(); ctx.ellipse(-5.5, helmetY - 8, 4, 2, -0.5, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fill();
           return bar != null ? { sx: 32, sy: bar + 4 } : { sx: 26, sy: riderTopY + 6 };
         };
 
@@ -2013,35 +2086,50 @@ export default function Game() {
         } else {
           // ── Vespa (the trusty original) ──────────────────────────────────
           drawWheel(0, -21, 21);
-          // Lower rear panel — wide shield covering wheel
+          // Lower rear panel — wide shield covering wheel, sphere-shaded
+          const panel = ctx.createRadialGradient(-8, -42, 4, 0, -36, 27);
+          panel.addColorStop(0, shade(bodyCol, 0.3));
+          panel.addColorStop(0.6, bodyCol);
+          panel.addColorStop(1, shade(bodyCol, -0.32));
           ctx.beginPath();
           ctx.ellipse(0, -36, 26, 16, 0, 0, Math.PI*2);
-          ctx.fillStyle = bodyCol; ctx.fill();
-          // Mid body slab
+          ctx.fillStyle = panel; ctx.fill(); ink(1.7);
+          // Mid body slab with the same top-lit treatment
           ctx.beginPath();
           ctx.moveTo(-22, -44); ctx.lineTo(22, -44);
           ctx.lineTo(18, -66); ctx.lineTo(-18, -66);
           ctx.closePath();
-          ctx.fillStyle = bodyCol; ctx.fill();
+          ctx.fillStyle = litFill(bodyCol, -66, -44); ctx.fill(); ink(1.5);
           // Fender trim ring
           ctx.beginPath();
           ctx.ellipse(0, -36, 27, 17, 0, 0, Math.PI*2);
           ctx.strokeStyle = trimCol; ctx.lineWidth = 3; ctx.stroke();
+          // Panel glint arc
+          ctx.beginPath();
+          ctx.ellipse(0, -36, 22, 12, 0, Math.PI * 1.12, Math.PI * 1.55);
+          ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = 2.4; ctx.stroke();
           // Chrome carrier / rack
-          ctx.beginPath();
-          ctx.rect(-25, -50, 50, 5);
-          ctx.fillStyle = chrome; ctx.fill();
-          // Back light strip
-          ctx.beginPath();
-          ctx.rect(-16, -54, 32, 5);
+          const rack = ctx.createLinearGradient(0, -50, 0, -45);
+          rack.addColorStop(0, "#f2f3f8"); rack.addColorStop(0.5, chrome); rack.addColorStop(1, "#8e909c");
+          ctx.beginPath(); ctx.rect(-25, -50, 50, 5);
+          ctx.fillStyle = rack; ctx.fill();
+          // Back light strip with a soft glow
+          ctx.shadowColor = "#ff2020"; ctx.shadowBlur = 6;
+          ctx.beginPath(); ctx.roundRect(-16, -54, 32, 5, 2);
           ctx.fillStyle = "#ff2020"; ctx.fill();
-          // Seat
+          ctx.shadowBlur = 0;
+          // Leather seat: two-tone with stitch line
           ctx.beginPath();
           ctx.ellipse(0, -68, 16, 7, 0, 0, Math.PI*2);
-          ctx.fillStyle = "#111"; ctx.fill();
+          ctx.fillStyle = "#14151b"; ctx.fill(); ink(1.3);
+          const seat = ctx.createLinearGradient(0, -74, 0, -64);
+          seat.addColorStop(0, "#3d3f4a"); seat.addColorStop(1, "#20222a");
           ctx.beginPath();
           ctx.ellipse(0, -69, 14, 5, 0, 0, Math.PI*2);
-          ctx.fillStyle = "#2a2a2a"; ctx.fill();
+          ctx.fillStyle = seat; ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(0, -69, 10, 3, 0, Math.PI * 1.1, Math.PI * 1.9);
+          ctx.strokeStyle = "rgba(200,200,214,0.35)"; ctx.lineWidth = 1; ctx.stroke();
           saberAnchor = drawRider(-76, 14, slide ? -90 : -104);
         }
 

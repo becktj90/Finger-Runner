@@ -32,7 +32,7 @@ export const POOL_PUDDLES = 12;
 
 // ── Ghibli-inspired painterly theme palettes ──────────────────────────────
 // Warm golden-hour light, soft horizons, muted naturalistic colors.
-export type Theme3D = "suburb" | "city" | "highway" | "mountain" | "night";
+export type Theme3D = "suburb" | "city" | "highway" | "mountain" | "night" | "moon";
 
 export interface ThemePalette {
   fog: string; sky: string; ambient: string; sun: string; sunIntensity: number;
@@ -61,6 +61,11 @@ export const THEME_COLORS: Record<Theme3D, ThemePalette> = {
   night:    { fog: "#1c1430", sky: "#0e0820", ambient: "#3820a8", sun: "#7050e8", sunIntensity: 1.4,
     road: "#181020", shoulder: "#20182c", prop: "#281e40", propAccent: "#a888ff",
     cloudColor: "#282040", hillFar: "#181028", hillMid: "#201838" },
+  // Lunar surface: near-black sky, harsh white sun (no atmosphere), grey
+  // regolith road and dusty silver hills. Cool blue Earthlight fill.
+  moon:     { fog: "#0a0a12", sky: "#04040a", ambient: "#8a94b8", sun: "#ffffff", sunIntensity: 3.4,
+    road: "#6a6a72", shoulder: "#4c4c55", prop: "#7e7e88", propAccent: "#c8d4ff",
+    cloudColor: "#20202c", hillFar: "#3a3a44", hillMid: "#54545e" },
 };
 
 export const CHROME_ACCENT = "#e6e6f0";
@@ -198,6 +203,7 @@ export const BLOOM_CONFIG: Record<Theme3D, BloomThemeConfig> = {
   highway:  { intensity: 0.50, threshold: 0.65, smoothing: 0.20 },
   mountain: { intensity: 0.60, threshold: 0.62, smoothing: 0.24 },
   night:    { intensity: 1.10, threshold: 0.42, smoothing: 0.34 },
+  moon:     { intensity: 0.85, threshold: 0.50, smoothing: 0.30 },
 };
 
 export const BLOOM_LAYER = 1;

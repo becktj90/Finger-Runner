@@ -106,6 +106,11 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
   const accentRefs = useRef<THREE.Mesh[]>([]);
   const wheelLRefs = useRef<THREE.Mesh[]>([]);
   const wheelRRefs = useRef<THREE.Mesh[]>([]);
+  // Two extra generic meshes per obstacle (a box and a cylinder) so everyday
+  // items can afford the small identifying parts that make them readable:
+  // hydrant nozzle bar, mailbox post, cone stripe, trash-can lid, sign backing.
+  const xboxRefs = useRef<THREE.Mesh[]>([]);
+  const xcylRefs = useRef<THREE.Mesh[]>([]);
   const shadowRefs = useRef<THREE.Mesh[]>([]);
   const haloRefs = useRef<THREE.Sprite[]>([]);
   const haloTex = useMemo(() => getHaloTexture(), []);
@@ -120,9 +125,10 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
       const box = boxRefs.current[i], cyl = cylRefs.current[i], cone = coneRefs.current[i];
       const head = headRefs.current[i], accent = accentRefs.current[i];
       const wl = wheelLRefs.current[i], wr = wheelRRefs.current[i];
+      const xbox = xboxRefs.current[i], xcyl = xcylRefs.current[i];
       const shadow = shadowRefs.current[i];
       const halo = haloRefs.current[i];
-      if (!g || !box || !cyl || !cone || !head || !accent || !wl || !wr) continue;
+      if (!g || !box || !cyl || !cone || !head || !accent || !wl || !wr || !xbox || !xcyl) continue;
       const o = st.obstacles[i];
       if (!o) { g.position.set(0, 0, HIDE_Z); if (halo) halo.visible = false; continue; }
       const w = Math.max(0.5, o.obsWidth * 0.028);
@@ -151,7 +157,10 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
       if (halo) {
         halo.visible = isWarned;
         if (isWarned) {
-          halo.position.set(0, h + 0.34, 0.08);
+          // Barrier's nominal height is the whole gantry — pin its halo to the
+          // beam instead of floating it in the sky.
+          const haloY = kind === "barrier" ? 1.55 : h + 0.34;
+          halo.position.set(0, haloY, 0.08);
           const scale = 0.5 + warned!.urgency * 0.4 + pulse * 0.12;
           halo.scale.setScalar(scale);
           const mat = halo.material as THREE.SpriteMaterial;
@@ -193,22 +202,89 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
       accent.visible = kind === "sign" || (kind === "cylinder" && (o.type === "hydrant" || o.type === "trashcan"));
       wl.visible = kind === "bicycle";
       wr.visible = kind === "bicycle";
+      xbox.visible = false; xcyl.visible = false;
+      xbox.rotation.set(0, 0, 0); xcyl.rotation.set(0, 0, 0);
 
       if (kind === "box") {
-        box.scale.set(w, h, 0.5);
-        box.position.set(0, h / 2, 0);
-        applyFinish(box.material as THREE.MeshStandardMaterial, color);
+        if (o.type === "mailbox") {
+          // US kerbside mailbox: skinny post, deep box body, rounded tunnel
+          // top (a half-buried horizontal cylinder), little red flag knob.
+          xcyl.visible = true;
+          xcyl.scale.set(0.055, h * 0.55, 0.055);
+          xcyl.position.set(0, h * 0.28, 0);
+          const postMat = xcyl.material as THREE.MeshStandardMaterial;
+          postMat.color.set("#5a4632"); postMat.metalness = 0.1; postMat.roughness = 0.85;
+          postMat.emissive.set("#000000"); postMat.emissiveIntensity = 0;
+          box.scale.set(w * 0.78, h * 0.34, 0.62);
+          box.position.set(0, h * 0.68, 0);
+          applyFinish(box.material as THREE.MeshStandardMaterial, color);
+          xbox.visible = true; // rounded top approximated by a slimmer cap slab
+          xbox.scale.set(w * 0.78, h * 0.12, 0.5);
+          xbox.position.set(0, h * 0.88, 0);
+          applyFinish(xbox.material as THREE.MeshStandardMaterial, color);
+          head.visible = true; // red flag
+          head.position.set(w * 0.42, h * 0.86, 0.18);
+          head.scale.setScalar(0.06);
+          const flagMat = head.material as THREE.MeshStandardMaterial;
+          flagMat.color.set("#d02020"); flagMat.metalness = 0; flagMat.roughness = 0.6;
+          flagMat.emissive.set("#000000"); flagMat.emissiveIntensity = 0;
+        } else {
+          // newsbox: vending cabinet + inset window + coin slot cap
+          box.scale.set(w, h, 0.5);
+          box.position.set(0, h / 2, 0);
+          applyFinish(box.material as THREE.MeshStandardMaterial, color);
+          xbox.visible = true;
+          xbox.scale.set(w * 0.72, h * 0.42, 0.06);
+          xbox.position.set(0, h * 0.62, 0.24);
+          const winMat = xbox.material as THREE.MeshStandardMaterial;
+          winMat.color.set("#16202e"); winMat.metalness = 0.4; winMat.roughness = 0.15;
+          winMat.emissive.set("#000000"); winMat.emissiveIntensity = 0;
+        }
       } else if (kind === "cylinder") {
-        cyl.scale.set(w * 0.5, h, w * 0.5);
-        cyl.position.set(0, h / 2, 0);
-        applyFinish(cyl.material as THREE.MeshStandardMaterial, color);
-        if (accent.visible) {
-          accent.position.set(0, h + 0.06, 0);
-          accent.scale.set(w * 0.65, 0.12, w * 0.65);
-          const accentMat = accent.material as THREE.MeshStandardMaterial;
-          accentMat.color.set(CHROME_ACCENT);
-          accentMat.metalness = 0.75; accentMat.roughness = 0.2;
-          accentMat.emissive.set("#000000"); accentMat.emissiveIntensity = 0;
+        if (o.type === "hydrant") {
+          // Fire hydrant: squat barrel, domed bonnet, crossbar of side
+          // nozzles, and an operating nut on top. Instantly readable.
+          cyl.scale.set(w * 0.44, h * 0.78, w * 0.44);
+          cyl.position.set(0, h * 0.39, 0);
+          applyFinish(cyl.material as THREE.MeshStandardMaterial, color);
+          head.visible = true; // domed bonnet
+          head.position.set(0, h * 0.8, 0);
+          head.scale.set(w * 0.44, w * 0.4, w * 0.44);
+          applyFinish(head.material as THREE.MeshStandardMaterial, color);
+          xbox.visible = true; // side nozzle crossbar
+          xbox.scale.set(w * 1.15, w * 0.3, w * 0.3);
+          xbox.position.set(0, h * 0.48, 0);
+          applyFinish(xbox.material as THREE.MeshStandardMaterial, color);
+          accent.position.set(0, h * 0.98, 0); // operating nut
+          accent.scale.set(w * 0.14, 0.1, w * 0.14);
+          const nutMat = accent.material as THREE.MeshStandardMaterial;
+          nutMat.color.set(CHROME_ACCENT); nutMat.metalness = 0.75; nutMat.roughness = 0.2;
+          nutMat.emissive.set("#000000"); nutMat.emissiveIntensity = 0;
+        } else if (o.type === "trashcan") {
+          // Kerbside bin: ribbed barrel, overhanging lid, arch handle
+          cyl.scale.set(w * 0.5, h * 0.86, w * 0.5);
+          cyl.position.set(0, h * 0.43, 0);
+          applyFinish(cyl.material as THREE.MeshStandardMaterial, color);
+          accent.position.set(0, h * 0.9, 0); // lid, wider than the body
+          accent.scale.set(w * 0.6, h * 0.1, w * 0.6);
+          applyFinish(accent.material as THREE.MeshStandardMaterial, color);
+          xbox.visible = true; // arch handle on the lid
+          xbox.scale.set(w * 0.36, 0.05, 0.07);
+          xbox.position.set(0, h * 1.0, 0);
+          const hMat = xbox.material as THREE.MeshStandardMaterial;
+          hMat.color.set("#3a3a42"); hMat.metalness = 0.5; hMat.roughness = 0.4;
+          hMat.emissive.set("#000000"); hMat.emissiveIntensity = 0;
+        } else {
+          // pumpkin: squashed orange body + stubby green stem
+          cyl.scale.set(w * 0.55, h * 0.8, w * 0.55);
+          cyl.position.set(0, h * 0.4, 0);
+          applyFinish(cyl.material as THREE.MeshStandardMaterial, color);
+          xcyl.visible = true;
+          xcyl.scale.set(0.05, 0.16, 0.05);
+          xcyl.position.set(0, h * 0.86, 0);
+          const stemMat = xcyl.material as THREE.MeshStandardMaterial;
+          stemMat.color.set("#3f6b2a"); stemMat.metalness = 0; stemMat.roughness = 0.9;
+          stemMat.emissive.set("#000000"); stemMat.emissiveIntensity = 0;
         }
       } else if (kind === "cone" || o.type === "gnome") {
         cone.visible = true;
@@ -216,6 +292,19 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
         cone.scale.set(w * 0.5, h, w * 0.5);
         cone.position.set(0, h / 2, 0);
         applyFinish(cone.material as THREE.MeshStandardMaterial, color);
+        if (o.type === "cone") {
+          // Traffic cone extras: square rubber base + reflective white band
+          xbox.visible = true;
+          xbox.scale.set(w * 0.95, 0.05, w * 0.95);
+          xbox.position.set(0, 0.025, 0);
+          applyFinish(xbox.material as THREE.MeshStandardMaterial, "#c9560a");
+          xcyl.visible = true;
+          xcyl.scale.set(w * 0.34, h * 0.14, w * 0.34);
+          xcyl.position.set(0, h * 0.46, 0);
+          const bandMat = xcyl.material as THREE.MeshStandardMaterial;
+          bandMat.color.set("#f2f2f2"); bandMat.metalness = 0.05; bandMat.roughness = 0.35;
+          bandMat.emissive.set("#000000"); bandMat.emissiveIntensity = 0;
+        }
       } else if (kind === "animal") {
         box.visible = true;
         box.scale.set(w, h * 0.65, 0.42);
@@ -324,10 +413,19 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
         const poleMat = cyl.material as THREE.MeshStandardMaterial;
         poleMat.color.set(CHROME_ACCENT); poleMat.metalness = 0.75; poleMat.roughness = 0.2;
         poleMat.emissive.set("#000000"); poleMat.emissiveIntensity = 0;
+        // Stop-sign face: white rim disc behind a red disc, facing the rider
+        // (rotated so the flat face points down-road instead of skyward).
+        xcyl.visible = true;
+        xcyl.rotation.set(Math.PI / 2, 0, 0);
+        xcyl.scale.set(w * 0.72, 0.05, w * 0.72);
+        xcyl.position.set(0, h * 0.9, -0.01);
+        const rimMat = xcyl.material as THREE.MeshStandardMaterial;
+        rimMat.color.set("#f0f0f0"); rimMat.metalness = 0.1; rimMat.roughness = 0.4;
+        rimMat.emissive.set("#000000"); rimMat.emissiveIntensity = 0;
         accent.visible = true;
-        accent.position.set(0, h * 0.92, 0);
-        accent.rotation.set(0, 0, Math.PI / 8);
-        accent.scale.set(w * 0.6, 0.08, w * 0.6);
+        accent.position.set(0, h * 0.9, 0.02);
+        accent.rotation.set(Math.PI / 2, 0, 0);
+        accent.scale.set(w * 0.62, 0.05, w * 0.62);
         applyFinish(accent.material as THREE.MeshStandardMaterial, color);
       } else if (kind === "barrier") {
         // Overhead gantry: a neon beam hung at the slide-under gap height
@@ -395,6 +493,14 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
           <mesh ref={(r) => { if (r) wheelRRefs.current[i] = r; }} castShadow>
             <torusGeometry args={[0.7, 0.12, 10, 24]} />
             <meshStandardMaterial color="#111111" />
+          </mesh>
+          <mesh ref={(r) => { if (r) xboxRefs.current[i] = r; }} castShadow visible={false}>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshStandardMaterial color="#888888" />
+          </mesh>
+          <mesh ref={(r) => { if (r) xcylRefs.current[i] = r; }} castShadow visible={false}>
+            <cylinderGeometry args={[1, 1, 1, 16]} />
+            <meshStandardMaterial color="#888888" />
           </mesh>
         </group>
       ))}
@@ -877,15 +983,29 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
 // less flat than a single flat-colour dome.
 function makeSkyGradient(theme: Theme3D): THREE.CanvasTexture {
   const c = THEME_COLORS[theme];
-  const zenith = new THREE.Color(c.sky).multiplyScalar(theme === "night" ? 0.7 : 0.82);
-  const horizon = new THREE.Color(c.sky).lerp(new THREE.Color(c.ambient), theme === "night" ? 0.35 : 0.6);
-  const cvs = document.createElement("canvas"); cvs.width = 4; cvs.height = 256;
+  const dark = theme === "night" || theme === "moon";
+  const zenith = new THREE.Color(c.sky).multiplyScalar(dark ? 0.7 : 0.82);
+  const horizon = new THREE.Color(c.sky).lerp(new THREE.Color(c.ambient), dark ? 0.35 : 0.6);
+  const W = theme === "moon" ? 1024 : 4;
+  const H = theme === "moon" ? 512 : 256;
+  const cvs = document.createElement("canvas"); cvs.width = W; cvs.height = H;
   const g = cvs.getContext("2d")!;
-  const grad = g.createLinearGradient(0, 0, 0, 256);
+  const grad = g.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, `#${zenith.getHexString()}`);
   grad.addColorStop(0.55, `#${new THREE.Color(c.sky).getHexString()}`);
   grad.addColorStop(1, `#${horizon.getHexString()}`);
-  g.fillStyle = grad; g.fillRect(0, 0, 4, 256);
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  // Airless lunar sky: prick it with hard white stars (no twinkle blur).
+  if (theme === "moon") {
+    for (let i = 0; i < 900; i++) {
+      const y = Math.random() * H * 0.82; // keep the horizon band mostly clear
+      g.globalAlpha = 0.35 + Math.random() * 0.65;
+      g.fillStyle = Math.random() < 0.12 ? "#c8d4ff" : "#ffffff";
+      const s = Math.random() < 0.12 ? 2 : 1;
+      g.fillRect(Math.random() * W, y, s, s);
+    }
+    g.globalAlpha = 1;
+  }
   const tex = new THREE.CanvasTexture(cvs);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -903,7 +1023,8 @@ function GhibliSky({ theme }: { theme: Theme3D }) {
     sx: 0.55 + (i * 0.17 % 0.55),
     sy: 0.28 + (i * 0.09 % 0.22),
     speed: 0.006 + (i % 5) * 0.0025,
-    opacity: theme === "night" ? 0.12 : 0.70 - (i % 3) * 0.10,
+    // No clouds on the airless moon; night keeps faint wisps.
+    opacity: theme === "moon" ? 0 : theme === "night" ? 0.12 : 0.70 - (i % 3) * 0.10,
     color: theme === "night" ? "#282040" : theme === "highway" ? "#f0d890" : theme === "city" ? "#f0c888" : "#f5f8f2",
   })), [theme]);
 
@@ -917,10 +1038,35 @@ function GhibliSky({ theme }: { theme: Theme3D }) {
 
   return (
     <>
-      <mesh position={[0, -8, -12]} scale={[120, 65, 120]}>
+      {/* Sky dome must fit inside the camera far plane (80) or it clips away
+          entirely and the flat background colour shows instead. */}
+      <mesh position={[0, -8, -12]} scale={[58, 40, 58]}>
         <sphereGeometry args={[1, 24, 16]} />
         <meshBasicMaterial map={skyTex} side={THREE.BackSide} fog={false} toneMapped={false} />
       </mesh>
+      {theme === "moon" && (
+        // Earth hanging in the black sky — blue marble + white swirl + a
+        // whisper of atmosphere glow. The one landmark that sells "you're
+        // standing on the moon looking home".
+        <group position={[5.5, 7.2, -34]}>
+          <mesh>
+            <sphereGeometry args={[2.1, 24, 18]} />
+            <meshBasicMaterial color="#2f6fd0" fog={false} />
+          </mesh>
+          <mesh rotation={[0.5, 0.9, 0.3]} scale={[1.004, 1.004, 1.004]}>
+            <sphereGeometry args={[2.1, 16, 12, 0, Math.PI * 2, 0.7, 0.75]} />
+            <meshBasicMaterial color="#e8f2f8" transparent opacity={0.85} fog={false} />
+          </mesh>
+          <mesh rotation={[2.2, 0.2, 1.4]} scale={[1.004, 1.004, 1.004]}>
+            <sphereGeometry args={[2.1, 16, 12, 0, Math.PI * 2, 1.4, 0.5]} />
+            <meshBasicMaterial color="#4a9a58" transparent opacity={0.7} fog={false} />
+          </mesh>
+          <mesh scale={[1.09, 1.09, 1.09]}>
+            <sphereGeometry args={[2.1, 20, 16]} />
+            <meshBasicMaterial color="#7db8ff" transparent opacity={0.16} fog={false} />
+          </mesh>
+        </group>
+      )}
       {seeds.map((s, i) => (
         <group key={i} ref={(r) => { if (r) cloudRefs.current[i] = r; }} position={[s.x, s.y, s.z]}>
           <mesh scale={[s.sx * 2.6, s.sy * 1.7, s.sx * 1.5]}>
@@ -1098,6 +1244,19 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
             <mesh castShadow><boxGeometry args={[s.w, s.h, s.w * 0.72]} /><meshStandardMaterial color={colors.prop} roughness={0.45} /></mesh>
             <mesh position={[0, s.h * 0.14, s.w * 0.36 + 0.01]}><boxGeometry args={[0.09, 0.09, 0.02]} /><meshStandardMaterial color={colors.propAccent} emissive={colors.propAccent} emissiveIntensity={2.0} /></mesh>
           </>)}
+          {theme === "moon" && (i % 3 === 0 ? (
+            // Crater rim — a flattened ring half-sunk into the regolith
+            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[1, 1, 0.3]}>
+              <torusGeometry args={[s.w * 0.8, s.w * 0.2, 6, 18]} />
+              <meshStandardMaterial color={colors.hillMid} roughness={1} flatShading />
+            </mesh>
+          ) : (
+            // Big lunar boulder, faceted and squat
+            <mesh castShadow position={[0, s.h * 0.22, 0]} rotation={[0, i * 2.3, 0.12]} scale={[1, 0.72, 0.9]}>
+              <sphereGeometry args={[s.w * 0.7, 6, 5]} />
+              <meshStandardMaterial color={colors.prop} roughness={1} flatShading />
+            </mesh>
+          ))}
         </group>
       ))}
 
@@ -1117,6 +1276,13 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
           {theme === "highway" && <mesh position={[0, s.h * 0.28, 0]} rotation={[0, i * 0.52, 0]}><cylinderGeometry args={[0.015, s.h * 0.14, s.h * 0.55, 5]} /><meshBasicMaterial color={colors.hillMid} /></mesh>}
           {theme === "mountain" && <mesh position={[0, s.h * 0.5, 0]}><coneGeometry args={[s.h * 0.38, s.h, 5]} /><meshBasicMaterial color={colors.hillMid} /></mesh>}
           {theme === "night" && <mesh position={[0, s.h * 0.62, 0]}><sphereGeometry args={[0.055, 5, 4]} /><meshBasicMaterial color={colors.propAccent} /></mesh>}
+          {theme === "moon" && (
+            // Half-buried lunar rocks, squashed and randomly turned
+            <mesh position={[0, s.h * 0.16, 0]} rotation={[0, i * 1.7, 0]} scale={[1, 0.62, 0.85]} castShadow>
+              <sphereGeometry args={[s.h * 0.5, 6, 5]} />
+              <meshStandardMaterial color={colors.hillMid} roughness={1} flatShading />
+            </mesh>
+          )}
         </group>
       ))}
     </>
@@ -1150,6 +1316,18 @@ function makeGrassTexture(theme: Theme3D): THREE.Texture {
   for (let i = 0; i < 1400; i++) {
     g.fillStyle = jitterHex(c.prop, 0.2);
     g.fillRect(Math.random() * S, Math.random() * S, 1, 1 + Math.random() * 2);
+  }
+  // Lunar regolith: stamp small crater rings (lit rim + shadowed bowl)
+  if (theme === "moon") {
+    for (let i = 0; i < 26; i++) {
+      const x = Math.random() * S, y = Math.random() * S, r = 3 + Math.random() * 9;
+      g.globalAlpha = 0.28;
+      g.strokeStyle = "#9a9aa4"; g.lineWidth = Math.max(1, r * 0.25);
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+      g.globalAlpha = 0.30;
+      g.fillStyle = "#2e2e36";
+      g.beginPath(); g.arc(x + r * 0.12, y + r * 0.12, r * 0.62, 0, Math.PI * 2); g.fill();
+    }
   }
   g.globalAlpha = 1;
   const tex = new THREE.CanvasTexture(cvs);
@@ -1257,10 +1435,13 @@ function Lighting({ theme, accent }: { theme: Theme3D; accent: string }) {
     const sky = new THREE.Color(c.sky);
     const fog = new THREE.Color(c.fog);
     const acc = new THREE.Color(accent);
-    sky.lerp(acc, 0.18);
-    fog.lerp(acc, 0.12);
+    // Space is black — don't let the character accent tint the lunar sky/fog
+    // (18% toward a red saber glow turns a near-black sky visibly red).
+    const amt = theme === "moon" ? 0 : 1;
+    sky.lerp(acc, 0.18 * amt);
+    fog.lerp(acc, 0.12 * amt);
     return { bgColor: sky, fogColor: fog };
-  }, [c.sky, c.fog, accent]);
+  }, [c.sky, c.fog, accent, theme]);
   return (
     <>
       <ambientLight color={c.ambient} intensity={Math.min(1.8, c.sunIntensity * 0.56)} />
@@ -1288,7 +1469,7 @@ function Lighting({ theme, accent }: { theme: Theme3D; accent: string }) {
           color so the runner body and road are bathed in their signature hue.
           Apollo runs under blue light, Rocco under green, Santi under amber. */}
       <pointLight color={accent} intensity={0.65} distance={14} decay={2} position={[0, 3, -1.5]} />
-      <fog attach="fog" args={[fogColor, 6, theme === "night" ? 38 : 52]} />
+      <fog attach="fog" args={[fogColor, 6, theme === "night" ? 38 : theme === "moon" ? 46 : 52]} />
       <color attach="background" args={[bgColor]} />
     </>
   );
@@ -1361,7 +1542,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent 
       <Lighting theme={theme} accent={accent} />
       <EnvLighting theme={theme} accent={accent} />
       <GhibliSky theme={theme} />
-      <Birds theme={theme} />
+      {theme !== "moon" && <Birds theme={theme} />}
       <CameraRig stateRef={stateRef} />
       <GroundAndRoad stateRef={stateRef} theme={theme} />
       <ThemeProps stateRef={stateRef} theme={theme} />
