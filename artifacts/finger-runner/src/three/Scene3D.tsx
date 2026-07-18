@@ -61,12 +61,14 @@ const MODEL_FILES: Record<string, string> = {
   mailbox: "mailbox.glb", stopsign: "stopsign.glb", dog: "dog.glb",
   cat: "cat.glb", duck: "duck.glb", dino: "dino.glb", gnome: "gnome.glb",
   pumpkin: "pumpkin.glb", cactus: "cactus.glb", flamingo: "flamingo.glb",
+  toilet: "toilet.glb", pinata: "pinata.glb", poop: "poop.glb",
+  cart: "cart.glb", newsbox: "newsbox.glb",
 };
 // Extra yaw so each model faces the oncoming camera (+z) — some packs author
 // their characters looking down -z or sideways.
 const MODEL_ROT_Y: Record<string, number> = {
   dog: Math.PI / 2, cat: Math.PI / 2, dino: Math.PI / 2, flamingo: Math.PI / 2,
-  duck: Math.PI / 2, mailbox: Math.PI / 2,
+  duck: Math.PI / 2, mailbox: Math.PI / 2, pinata: Math.PI / 2, cart: Math.PI / 2,
 };
 const MODEL_TYPE_KEYS = Object.keys(MODEL_FILES);
 export const MODELED_OBSTACLES = new Set(MODEL_TYPE_KEYS);
