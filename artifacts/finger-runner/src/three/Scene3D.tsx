@@ -3,9 +3,9 @@
 // frame via `stateRef` and imperatively positions Three.js objects. No
 // gameplay logic lives here — Game.tsx still owns physics, spawning,
 // collision, scoring, and persistence exactly as before.
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState, useEffect, Suspense } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { PerspectiveCamera, Environment, Lightformer } from "@react-three/drei";
+import { PerspectiveCamera, Environment, Lightformer, Clone, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, SMAA, HueSaturation, BrightnessContrast, N8AO, ChromaticAberration } from "@react-three/postprocessing";
 import * as THREE from "three";
 import {
@@ -52,6 +52,150 @@ function findWarned(st: GameSceneState): WarnInfo | null {
   const urgency = Math.max(0, Math.min(1, 1 - (frames - ideal) / (WARN_WINDOW - ideal)));
   return { idx, type: bestType, frames, urgency };
 }
+// ── Real artist-made models (CC0, Quaternius & friends via poly.pizza) ─────
+// These replace the procedural primitive builds for the obstacle types we
+// have models for — the single biggest step away from "programmer art".
+// Files live in public/models/ and ship with the site.
+const MODEL_FILES: Record<string, string> = {
+  hydrant: "hydrant.glb", cone: "cone.glb", trashcan: "trashcan.glb",
+  mailbox: "mailbox.glb", stopsign: "stopsign.glb", dog: "dog.glb",
+  cat: "cat.glb", duck: "duck.glb", dino: "dino.glb", gnome: "gnome.glb",
+  pumpkin: "pumpkin.glb", cactus: "cactus.glb", flamingo: "flamingo.glb",
+};
+// Extra yaw so each model faces the oncoming camera (+z) — some packs author
+// their characters looking down -z or sideways.
+const MODEL_ROT_Y: Record<string, number> = {
+  dog: Math.PI / 2, cat: Math.PI / 2, dino: Math.PI / 2, flamingo: Math.PI / 2,
+  duck: Math.PI / 2, mailbox: Math.PI / 2,
+};
+const MODEL_TYPE_KEYS = Object.keys(MODEL_FILES);
+export const MODELED_OBSTACLES = new Set(MODEL_TYPE_KEYS);
+const modelUrl = (f: string) => `${import.meta.env.BASE_URL}models/${f}`;
+// Start streaming every model the moment the 3D chunk loads.
+MODEL_TYPE_KEYS.forEach((t) => useGLTF.preload(modelUrl(MODEL_FILES[t])));
+["tree1.glb", "tree2.glb", "rock.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
+
+interface ModelTemplate { scene: THREE.Object3D; height: number; minY: number; cx: number; cz: number }
+
+// One mounted model instance for a pool slot: normalized so its feet sit at
+// local y=0 and its height is exactly 1 unit (the pool scales it to the
+// obstacle's gameplay height). Materials are cloned per instance so the
+// hazard warn-glow can light THIS obstacle without lighting its siblings.
+function SlotModel({ template, rotY, matsOut }: { template: ModelTemplate; rotY: number; matsOut: (mats: THREE.MeshStandardMaterial[]) => void }) {
+  const ref = useRef<THREE.Group>(null);
+  useEffect(() => {
+    const mats: THREE.MeshStandardMaterial[] = [];
+    ref.current?.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.castShadow = true;
+        const src = mesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
+        const cloned = Array.isArray(src) ? src.map((m) => m.clone()) : src.clone();
+        mesh.material = cloned;
+        (Array.isArray(cloned) ? cloned : [cloned]).forEach((m) => mats.push(m as THREE.MeshStandardMaterial));
+      }
+    });
+    matsOut(mats);
+    return () => matsOut([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template]);
+  const s = 1 / Math.max(0.0001, template.height);
+  return (
+    <group ref={ref} rotation={[0, rotY, 0]} scale={[s, s, s]} position={[0, -template.minY / Math.max(0.0001, template.height), 0]}>
+      <Clone object={template.scene} position={[-template.cx, 0, -template.cz]} />
+    </group>
+  );
+}
+
+// Renders the modelled obstacle types over the pool slots. The procedural
+// ObstaclePool still owns the slot's ground shadow + warning halo + wobble
+// maths; this pool just supplies the artist-made body.
+function ModelObstaclePool({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
+  const gltfs = useGLTF(MODEL_TYPE_KEYS.map((t) => modelUrl(MODEL_FILES[t])));
+  const templates = useMemo(() => {
+    const out: Record<string, ModelTemplate> = {};
+    const box = new THREE.Box3(); const c = new THREE.Vector3(); const size = new THREE.Vector3();
+    MODEL_TYPE_KEYS.forEach((t, i) => {
+      const scene = (gltfs as { scene: THREE.Object3D }[])[i].scene;
+      box.setFromObject(scene); box.getCenter(c); box.getSize(size);
+      out[t] = { scene, height: size.y, minY: box.min.y, cx: c.x, cz: c.z };
+    });
+    return out;
+  }, [gltfs]);
+
+  const groupRefs = useRef<(THREE.Group | null)[]>([]);
+  const matsRef = useRef<THREE.MeshStandardMaterial[][]>([]);
+  const [slotTypes, setSlotTypes] = useState<(string | null)[]>(() => Array(N_OBSTACLES).fill(null));
+  const slotTypesRef = useRef(slotTypes);
+  slotTypesRef.current = slotTypes;
+
+  useFrame(() => {
+    const st = stateRef.current;
+    const warned = findWarned(st);
+    // Reconcile which model each slot should show (React re-renders only on change)
+    let changed: (string | null)[] | null = null;
+    for (let i = 0; i < N_OBSTACLES; i++) {
+      const o = st.obstacles[i];
+      const want = o && MODELED_OBSTACLES.has(o.type) ? o.type : null;
+      if (slotTypesRef.current[i] !== want) {
+        if (!changed) changed = [...slotTypesRef.current];
+        changed[i] = want;
+      }
+    }
+    if (changed) setSlotTypes(changed);
+
+    for (let i = 0; i < N_OBSTACLES; i++) {
+      const g = groupRefs.current[i]; if (!g) continue;
+      const o = st.obstacles[i];
+      const t = slotTypesRef.current[i];
+      if (!o || !t || o.type !== t) { g.position.set(0, 0, HIDE_Z); continue; }
+      const h = Math.max(0.4, o.obsHeight * 0.02);
+      const w = Math.max(0.5, o.obsWidth * 0.028);
+      // Same wobble personality the procedural pool uses
+      const wobble = OBSTACLE_WOBBLE[o.type] || [0.08, 0.04, 0];
+      const phase = i * 2.37;
+      const wobbleAmt = Math.sin(st.time * wobble[0] + phase) * wobble[1];
+      if (wobble[2] === 0) g.rotation.set(0, 0, wobbleAmt);
+      else if (wobble[2] === 1) g.rotation.set(0, wobbleAmt, 0);
+      else g.rotation.set(0, 0, 0);
+      const bobY = wobble[2] === 2 ? Math.abs(wobbleAmt) * 0.5 : 0;
+      g.position.set(LANE_X + o.lane * LANE_OFFSET, bobY, worldZ(o.x + o.obsWidth / 2));
+      // Uniform scale (height-normalized template × gameplay height) keeps the
+      // artist's proportions intact; the hitbox stays gameplay-side.
+      void w;
+      g.scale.set(h, h, h);
+      // Hazard warn glow on this instance's cloned materials
+      const isWarned = !!warned && warned.idx === i;
+      const mats = matsRef.current[i];
+      if (mats) {
+        if (isWarned) {
+          const pulse = 0.55 + 0.45 * Math.sin(st.time * (0.35 + warned!.urgency * 0.55));
+          const glow = 0.3 + warned!.urgency * 1.5 * Math.max(0.35, pulse);
+          for (const m of mats) { m.emissive.set(WARN_COLOR[warned!.type]); m.emissiveIntensity = glow; }
+        } else {
+          for (const m of mats) { if (m.emissiveIntensity !== 0) { m.emissive.set("#000000"); m.emissiveIntensity = 0; } }
+        }
+      }
+    }
+  });
+
+  return (
+    <>
+      {slotTypes.map((t, i) => (
+        <group key={i} ref={(r) => { groupRefs.current[i] = r; }} position={[0, 0, HIDE_Z]}>
+          {t && (
+            <SlotModel
+              template={templates[t]}
+              rotY={MODEL_ROT_Y[t] ?? 0}
+              matsOut={(m) => { matsRef.current[i] = m; }}
+            />
+          )}
+        </group>
+      ))}
+    </>
+  );
+}
+
 // Soft radial glow sprite, generated once (module scope — pure canvas, no
 // per-theme dependency) and shared/tinted across every warned obstacle.
 let haloTexCache: THREE.Texture | null = null;
@@ -196,6 +340,15 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
         shadow.scale.set(w * 1.05, 1, w * 0.5);
         const shadowMat = shadow.material as THREE.MeshBasicMaterial;
         shadowMat.opacity = Math.max(0, 0.16 - bobY * 0.06);
+      }
+
+      // Types with a real artist-made model get their body from
+      // ModelObstaclePool — this pool still runs the slot's ground shadow,
+      // warning halo, and wobble, but hides all its primitive shapes.
+      if (MODELED_OBSTACLES.has(o.type)) {
+        box.visible = cyl.visible = cone.visible = head.visible = accent.visible = false;
+        wl.visible = wr.visible = xbox.visible = xcyl.visible = false;
+        continue;
       }
 
       box.visible = kind === "box";
@@ -1194,6 +1347,25 @@ function Birds({ theme }: { theme: Theme3D }) {
 // ── Background scenery — three Ghibli parallax layers ─────────────────────
 function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; theme: Theme3D }) {
   const colors = THEME_COLORS[theme];
+  // Real CC0 scenery models: two tree species for the leafy themes, a lunar
+  // rock for the moon. Normalized (feet at y=0, height 1) then scaled per seed.
+  const [tree1G, tree2G, rockG] = useGLTF([modelUrl("tree1.glb"), modelUrl("tree2.glb"), modelUrl("rock.glb")]) as { scene: THREE.Object3D }[];
+  const sceneryT = useMemo(() => {
+    const box = new THREE.Box3(); const c = new THREE.Vector3(); const size = new THREE.Vector3();
+    const norm = (scene: THREE.Object3D) => {
+      box.setFromObject(scene); box.getCenter(c); box.getSize(size);
+      return { scene, height: Math.max(0.0001, size.y), minY: box.min.y, cx: c.x, cz: c.z };
+    };
+    return { tree1: norm(tree1G.scene), tree2: norm(tree2G.scene), rock: norm(rockG.scene) };
+  }, [tree1G, tree2G, rockG]);
+  const SceneryModel = ({ t, targetH }: { t: { scene: THREE.Object3D; height: number; minY: number; cx: number; cz: number }; targetH: number }) => {
+    const s = targetH / t.height;
+    return (
+      <group scale={[s, s, s]} position={[0, -t.minY * s, 0]}>
+        <Clone object={t.scene} position={[-t.cx, 0, -t.cz]} castShadow />
+      </group>
+    );
+  };
 
   // FAR layer — distant hills/silhouettes, slow parallax, pushed back in Z
   const COUNT_F = 10; const SPACING_F = 22; const SIDE_F = 5.2;
@@ -1284,11 +1456,11 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
       {/* MID: main scene props with Ghibli character */}
       {midSeeds.map((s, i) => (
         <group key={`m${i}`} ref={(r) => { if (r) midRefs.current[i] = r; }}>
-          {theme === "suburb" && (<>
-            <mesh castShadow position={[0, -s.h * 0.12, 0]}><cylinderGeometry args={[s.w * 0.13, s.w * 0.17, s.h * 0.5, 6]} /><meshStandardMaterial color="#4a2808" roughness={0.9} /></mesh>
-            <mesh castShadow position={[0, s.h * 0.30, 0]}><sphereGeometry args={[s.w * 0.90, 10, 8]} /><meshStandardMaterial color={colors.prop} roughness={0.65} /></mesh>
-            <mesh castShadow position={[0, s.h * 0.64, 0]}><sphereGeometry args={[s.w * 0.56, 8, 6]} /><meshStandardMaterial color={colors.propAccent} roughness={0.55} emissive={colors.propAccent} emissiveIntensity={0.06} /></mesh>
-          </>)}
+          {theme === "suburb" && (
+            <group position={[0, -s.h * 0.5, 0]}>
+              <SceneryModel t={i % 2 === 0 ? sceneryT.tree1 : sceneryT.tree2} targetH={s.h * 1.45} />
+            </group>
+          )}
           {theme === "city" && (
             <mesh castShadow><boxGeometry args={[s.w, s.h, s.w * 0.72]} /><meshStandardMaterial color={colors.prop} emissive={colors.propAccent} emissiveIntensity={0.16} metalness={0.35} roughness={0.42} /></mesh>
           )}
@@ -1311,11 +1483,10 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
               <meshStandardMaterial color={colors.hillMid} roughness={1} flatShading />
             </mesh>
           ) : (
-            // Big lunar boulder, faceted and squat
-            <mesh castShadow position={[0, s.h * 0.22, 0]} rotation={[0, i * 2.3, 0.12]} scale={[1, 0.72, 0.9]}>
-              <sphereGeometry args={[s.w * 0.7, 6, 5]} />
-              <meshStandardMaterial color={colors.prop} roughness={1} flatShading />
-            </mesh>
+            // Real lunar boulder model, randomly turned
+            <group position={[0, -s.h * 0.5, 0]} rotation={[0, i * 2.3, 0]}>
+              <SceneryModel t={sceneryT.rock} targetH={s.h * 0.7} />
+            </group>
           ))}
         </group>
       ))}
@@ -1639,7 +1810,12 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
       {theme !== "moon" && <Birds theme={theme} />}
       <CameraRig stateRef={stateRef} />
       <GroundAndRoad stateRef={stateRef} theme={theme} />
-      <ThemeProps stateRef={stateRef} theme={theme} />
+      {/* Model-driven pieces suspend while their GLBs stream in; the rest of
+          the scene renders immediately so first paint stays instant. */}
+      <Suspense fallback={null}>
+        <ThemeProps stateRef={stateRef} theme={theme} />
+        <ModelObstaclePool stateRef={stateRef} />
+      </Suspense>
       <Vespa stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
