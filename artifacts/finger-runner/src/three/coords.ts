@@ -60,6 +60,7 @@ export interface GameSceneState {
   saberCooldown: number;
   worldScroll: number;
   curSpeed: number;
+  boostTimer: number;
   obstacles: Obstacle3D[];
   particles: Particle3D[];
   bloodPuddles: BloodPuddle3D[];

@@ -6,7 +6,7 @@
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { PerspectiveCamera, Environment, Lightformer } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, SMAA, HueSaturation, BrightnessContrast } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette, SMAA, HueSaturation, BrightnessContrast, N8AO, ChromaticAberration } from "@react-three/postprocessing";
 import * as THREE from "three";
 import {
   FINGER_CENTER_X, LANE_X, LANE_OFFSET, worldZ, worldY, roadYOld, THEME_COLORS,
@@ -83,6 +83,9 @@ interface Scene3DProps {
   /** Character's saber-glow hex — used to tint the 3D sky, fog, and rim light
    *  so each runner feels like they own a different world. */
   accent: string;
+  /** Currently equipped vehicle id — "vespa" renders the true-3D scooter+rider
+   *  avatar in this scene; other vehicles fall back to the 2D HUD rider. */
+  vehicle: string;
 }
 
 // These match Game.tsx's hard spawn caps (see coords.ts POOL_* constants) —
@@ -565,35 +568,57 @@ function PowerUpPool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]
   );
 }
 
+// GPU-instanced particle renderer — the whole 100-particle pool is ONE
+// InstancedMesh (one draw call, was 100 meshes with 100 standard materials).
+// Additive blending makes overlapping particles glow hotter, the bloom pass
+// halos the bright ones, and fade-out is done by scaling instance colour
+// toward black (with additive blending, black = invisible) — the classic
+// GPU-particle technique used by dedicated VFX engines.
 function ParticlePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"] }) {
-  const refs = useRef<THREE.Mesh[]>([]);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const colScratch = useMemo(() => new THREE.Color(), []);
   useFrame(() => {
+    const mesh = meshRef.current; if (!mesh) return;
     const st = stateRef.current;
     const { height } = sizeRef.current;
     const roadY = roadYOld(height);
     for (let i = 0; i < N_PARTICLES; i++) {
-      const m = refs.current[i]; if (!m) continue;
       const p = st.particles[i];
-      if (!p) { m.position.set(0, 0, HIDE_Z); continue; }
-      const s = Math.max(0.03, p.size * 0.014);
-      m.position.set(LANE_X + (p.x - FINGER_CENTER_X) * 0.006, worldY(p.y, roadY), worldZ(FINGER_CENTER_X) + s * 0);
-      m.position.z = worldZ(p.x < 0 ? 0 : p.x) - 0.02 * i;
-      m.scale.setScalar(s);
-      const alpha = Math.max(0.05, p.life / 70);
-      const mat = m.material as THREE.MeshStandardMaterial;
-      mat.color.set(p.color);
-      mat.opacity = alpha; mat.transparent = true;
+      if (!p) {
+        dummy.position.set(0, 0, HIDE_Z);
+        dummy.scale.setScalar(0.0001);
+        dummy.rotation.set(0, 0, 0);
+      } else {
+        const s = Math.max(0.03, p.size * 0.014);
+        dummy.position.set(
+          LANE_X + (p.x - FINGER_CENTER_X) * 0.006,
+          worldY(p.y, roadY),
+          worldZ(p.x < 0 ? 0 : p.x) - 0.02 * i,
+        );
+        dummy.scale.setScalar(s);
+        dummy.rotation.set(0, 0, p.rot ?? 0);
+        const alpha = Math.min(1, Math.max(0.05, p.life / 70));
+        colScratch.set(p.color).multiplyScalar(alpha);
+        mesh.setColorAt(i, colScratch);
+      }
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
     }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   });
   return (
-    <>
-      {Array.from({ length: N_PARTICLES }).map((_, i) => (
-        <mesh key={i} ref={(r) => { if (r) refs.current[i] = r; }} position={[0, 0, HIDE_Z]}>
-          <dodecahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.4} transparent opacity={1} />
-        </mesh>
-      ))}
-    </>
+    <instancedMesh ref={meshRef} args={[undefined, undefined, N_PARTICLES]} frustumCulled={false}>
+      <dodecahedronGeometry args={[1, 0]} />
+      <meshBasicMaterial
+        color="#ffffff"
+        blending={THREE.AdditiveBlending}
+        transparent
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </instancedMesh>
   );
 }
 
@@ -725,7 +750,7 @@ function RopePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; s
 // and holds the saber. Skin colors map: backHand→body, finger→fender/trim,
 // knuckle→wheel hubs, nail→seat/rider jacket.
 
-function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo }) {
+function Vespa({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string }) {
   const group = useRef<THREE.Group>(null);
   const wheelFRef = useRef<THREE.Group>(null);
   const wheelRRef = useRef<THREE.Group>(null);
@@ -737,16 +762,21 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
   const bladeLen = useMemo(() => 0.62 + ((saber.reach - 120) / (185 - 120)) * 0.43, [saber.reach]);
   const bladeHalfLen = bladeLen / 2 + 0.16;
 
+  // The whole scooter+rider is authored at ~1.9 world units tall; play it at
+  // 0.78 so it sits believably against the obstacle heights (a stop sign is
+  // ~1.76 units) — full size was the "character is too big" complaint.
+  const BASE_SCALE = 0.78;
+
   useFrame(() => {
     const st = stateRef.current;
     const { height } = sizeRef.current;
     const roadY = roadYOld(height);
     if (!group.current) return;
-    // The rider/vehicle is drawn by the 2D HUD canvas (it supports every
-    // unlockable vehicle and the photo-based character colours). This 3D Vespa
-    // is a hardcoded stand-in, so keep it hidden to avoid a second, oversized
-    // avatar on top of the 2D one.
-    group.current.visible = false;
+    // The 3D scooter+rider is the real avatar when the Vespa is equipped —
+    // it casts true shadows, receives the scene lighting/AO, and tracks the
+    // actual 3D obstacle lanes. Other vehicles still render via the 2D HUD
+    // rider, so hide this while they're equipped.
+    group.current.visible = st.gameRunning && vehicle === "vespa";
 
     // Squash/stretch on jump & land impact — same feel as the old runner
     let stretchY = 1, stretchX = 1;
@@ -763,8 +793,10 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
     const sliding = st.gameRunning && st.sliding;
 
     const footY = worldY(st.playerY + FINGER_TIP_OFFSET, roadY);
-    group.current.position.set(LANE_X + st.laneVisual * LANE_OFFSET, footY, worldZ(FINGER_CENTER_X));
-    group.current.scale.set(stretchX, stretchY, stretchX);
+    // +0.082 lifts the tyres' lowest point exactly onto the road surface
+    // (wheel centre 0.26 minus tyre radius 0.365, at BASE_SCALE).
+    group.current.position.set(LANE_X + st.laneVisual * LANE_OFFSET, footY + 0.082, worldZ(FINGER_CENTER_X));
+    group.current.scale.set(stretchX * BASE_SCALE, stretchY * BASE_SCALE, stretchX * BASE_SCALE);
     group.current.rotation.x = sliding ? 0.45 : 0;
     group.current.rotation.z = -st.laneVel * 0.5;
 
@@ -938,10 +970,11 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
 
       {/* ── Rider ── */}
       <group ref={riderGroup} position={[0, 1.38, 0]}>
-        {/* Torso */}
+        {/* Torso — jacket in the character's signature colour (matches the
+            2D rider's jacket = saber colour, so Apollo reads red, etc.) */}
         <mesh castShadow position={[0, 0.24, -0.02]}>
           <capsuleGeometry args={[0.18, 0.36, 6, 10]} />
-          <meshStandardMaterial color={trimColor} roughness={0.6} />
+          <meshStandardMaterial color={saber.color} roughness={0.6} />
         </mesh>
         {/* Helmet — full-face, styled like a Vespa rider */}
         <mesh castShadow position={[0, 0.62, 0.04]}>
@@ -956,13 +989,40 @@ function Vespa({ stateRef, sizeRef, saber, skin }: { stateRef: Scene3DProps["sta
         {/* Left arm on handlebar */}
         <mesh castShadow position={[-0.22, 0.26, 0.24]} rotation={[-0.6, 0.15, -0.35]}>
           <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
-          <meshStandardMaterial color={trimColor} roughness={0.6} />
+          <meshStandardMaterial color={saber.color} roughness={0.6} />
         </mesh>
         {/* Right arm — holds saber */}
         <mesh castShadow position={[0.22, 0.26, 0.24]} rotation={[-0.6, -0.15, 0.35]}>
           <capsuleGeometry args={[0.065, 0.30, 6, 8]} />
-          <meshStandardMaterial color={trimColor} roughness={0.6} />
+          <meshStandardMaterial color={saber.color} roughness={0.6} />
         </mesh>
+        {/* Gloved hands at the ends of the arms */}
+        <mesh castShadow position={[-0.33, 0.06, 0.40]}>
+          <sphereGeometry args={[0.06, 8, 6]} />
+          <meshStandardMaterial color="#22242e" roughness={0.8} />
+        </mesh>
+        <mesh castShadow position={[0.30, 0.10, 0.36]}>
+          <sphereGeometry args={[0.06, 8, 6]} />
+          <meshStandardMaterial color="#22242e" roughness={0.8} />
+        </mesh>
+        {/* Legs — thighs forward off the seat, shins down to the step-through
+            deck, boots planted. Grounds the rider (it used to float torso-only). */}
+        {[-0.11, 0.11].map((lx) => (
+          <group key={lx}>
+            <mesh castShadow position={[lx, -0.06, 0.14]} rotation={[-1.15, 0, 0]}>
+              <capsuleGeometry args={[0.075, 0.26, 6, 8]} />
+              <meshStandardMaterial color="#3a3f58" roughness={0.75} />
+            </mesh>
+            <mesh castShadow position={[lx, -0.32, 0.30]} rotation={[-0.25, 0, 0]}>
+              <capsuleGeometry args={[0.06, 0.30, 6, 8]} />
+              <meshStandardMaterial color="#3a3f58" roughness={0.75} />
+            </mesh>
+            <mesh castShadow position={[lx, -0.52, 0.36]} scale={[1, 0.55, 1.7]}>
+              <sphereGeometry args={[0.075, 8, 6]} />
+              <meshStandardMaterial color="#191a22" roughness={0.85} />
+            </mesh>
+          </group>
+        ))}
 
         {/* Lightsaber — held up by the rider's right arm */}
         <group ref={saberGroup} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
@@ -1412,6 +1472,7 @@ export function roadCurve(_scroll: number) { return 0; }
 export function roadHill(_scroll: number) { return 0; }
 
 function CameraRig({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
+  const fovRef = useRef(62);
   useFrame(({ camera }) => {
     const st = stateRef.current;
     const bob = st.gameRunning ? worldYSafe(st) : 0;
@@ -1419,6 +1480,16 @@ function CameraRig({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
     camera.position.set(shakeX, 2.35 + bob * 0.12, 5.4);
     camera.lookAt(0, 1.1 + bob * 0.12, -2.5);
     camera.rotation.z = 0;
+    // FOV kick — the modern "sense of speed" trick: the field of view eases
+    // wider while the turbo is burning, so the world visibly rushes past,
+    // then relaxes back. (Racing-game standard.)
+    const targetFov = st.gameRunning && st.boostTimer > 0 ? 71 : 62;
+    fovRef.current += (targetFov - fovRef.current) * 0.08;
+    const cam = camera as THREE.PerspectiveCamera;
+    if (Math.abs(cam.fov - fovRef.current) > 0.01) {
+      cam.fov = fovRef.current;
+      cam.updateProjectionMatrix();
+    }
   });
   return null;
 }
@@ -1484,10 +1555,32 @@ function Lighting({ theme, accent }: { theme: Theme3D; accent: string }) {
 // chain for the blur (GPU-cheap, no extra full-res passes), and the effect
 // only runs once per frame regardless of scene complexity — safe for
 // lower-end phones/integrated GPUs.
-function NeonBloom({ theme }: { theme: Theme3D }) {
+// Crash impact FX — a chromatic-aberration pulse that fringes the whole frame
+// for a few frames when you eat an obstacle, then settles. Reads as a camera
+// "hit" the way modern action games sell impacts.
+function CrashAberration({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
+  // The effect keeps this exact Vector2 instance as its uniform, so mutating
+  // it per-frame drives the aberration without touching React. (No ref prop:
+  // in React 19 a ref lands in the effect wrapper's props, and the library
+  // JSON-stringifies props for memoization — circular-structure crash.)
+  const offset = useMemo(() => new THREE.Vector2(0, 0), []);
+  useFrame(() => {
+    const st = stateRef.current;
+    const k = Math.max(0, st.crashFlash) / 28; // 1 → fresh crash, 0 → calm
+    const amt = k * k * 0.006;
+    offset.set(amt, amt * 0.6);
+  });
+  return <ChromaticAberration offset={offset} />;
+}
+
+function NeonBloom({ theme, stateRef }: { theme: Theme3D; stateRef: Scene3DProps["stateRef"] }) {
   const cfg = BLOOM_CONFIG[theme];
   return (
     <EffectComposer multisampling={0} enableNormalPass={false}>
+      {/* Screen-space ambient occlusion (N8AO) — soft contact shading in every
+          crevice: under the scooter, between obstacle parts, where props meet
+          the road. halfRes + performance mode keeps it phone-friendly. */}
+      <N8AO halfRes quality="performance" aoRadius={1.1} intensity={2.4} distanceFalloff={1.0} />
       {/* Crisp edge antialiasing — kills the jaggies that read as "cheap". */}
       <SMAA />
       <Bloom
@@ -1497,6 +1590,7 @@ function NeonBloom({ theme }: { theme: Theme3D }) {
         mipmapBlur
         radius={0.72}
       />
+      <CrashAberration stateRef={stateRef} />
       {/* Gentle colour grade for a more "produced" look: a touch more contrast
           and saturation so the flat pastels get some richness and pop. */}
       <BrightnessContrast brightness={0.02} contrast={0.12} />
@@ -1526,7 +1620,7 @@ function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
   );
 }
 
-export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent }: Scene3DProps) {
+export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle }: Scene3DProps) {
   return (
     <Canvas
       dpr={[1, 2]}
@@ -1546,7 +1640,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent 
       <CameraRig stateRef={stateRef} />
       <GroundAndRoad stateRef={stateRef} theme={theme} />
       <ThemeProps stateRef={stateRef} theme={theme} />
-      <Vespa stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} />
+      <Vespa stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
       <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
@@ -1554,7 +1648,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent 
       <BloodPuddlePool stateRef={stateRef} sizeRef={sizeRef} />
       <PlatformPool stateRef={stateRef} sizeRef={sizeRef} />
       <RopePool stateRef={stateRef} sizeRef={sizeRef} />
-      <NeonBloom theme={theme} />
+      <NeonBloom theme={theme} stateRef={stateRef} />
     </Canvas>
   );
 }

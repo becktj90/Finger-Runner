@@ -1468,11 +1468,14 @@ export default function Game() {
         // pinned by the road floor-clamp (which only freezes "circle" droplets).
         if (st.boostTimer > 0) {
           const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
-          for (let g = 0; g < 2; g++) {
+          for (let g = 0; g < 3; g++) {
             pushCapped(st.particles, POOL_PARTICLES, {
+              // Negative vx maps to +z in the 3D scene — the plume streams
+              // BACK past the camera (exhaust behind the scooter), which
+              // doubles as a speed cue as the puffs whip by.
               x: 185 + (Math.random() - 0.5) * 16, y: gasBaseY + Math.random() * 10,
-              vx: 1.1 + Math.random() * 1.8, vy: -(0.7 + Math.random() * 1.3),
-              life: 28 + Math.random() * 12, size: 5 + Math.random() * 5,
+              vx: -(1.6 + Math.random() * 2.4), vy: -(0.7 + Math.random() * 1.3),
+              life: 26 + Math.random() * 12, size: 6 + Math.random() * 6,
               color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
               shape: "gas",
             });
@@ -1782,10 +1785,11 @@ export default function Game() {
       // ── Draw (HUD only — the game world is now rendered by <Scene3D/> in true 3D) ─
       ctx.clearRect(0, 0, width, height);
 
-      // ── Vehicle + rider — drawn on the 2D HUD canvas. This is the real
-      // avatar: it renders every unlockable vehicle and the character's
-      // photo-based colours. (The 3D Vespa in Scene3D is kept hidden.)
-      {
+      // ── Vehicle + rider — 2D HUD canvas for non-Vespa vehicles. When the
+      // Vespa is equipped the avatar is the true-3D scooter+rider in Scene3D
+      // (real shadows, scene lighting/AO, exact obstacle-lane tracking), so
+      // the 2D rider must stay off to avoid a doubled avatar.
+      if (getEquippedVehicle() !== "vespa") {
         const charId = getSelectedCharacter();
         const charDef = getCharacterDef(charId);
         const vehId = getEquippedVehicle();
@@ -2561,6 +2565,7 @@ export default function Game() {
             saber={{ color: currentChar.saberColor, glow: currentChar.saberGlow, reach: currentSaber.reach }}
             skin={{ backHand: currentChar.backHand, finger: currentChar.finger, knuckle: currentChar.knuckle, nail: currentChar.nail }}
             accent={currentChar.saberGlow}
+            vehicle={equippedVehicle}
           />
         </Suspense>
       </Scene3DBoundary>
