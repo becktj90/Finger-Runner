@@ -226,6 +226,30 @@ const CHAR_LINES: Record<string, { jump: string[]; slash: string[]; idle: string
     dead:  ["Yip!", "Ow ow ow!", "Santi sad...", "No like crash!", "Bad thing bad!", "Whimper..."],
     start: ["WOOF! Let's go!", "Santi ready!", "Sniff the path!", "BORK!", "Good boy running!"],
   },
+  goat: {
+    jump:  ["BAAAH-borne!", "Goat air!", "Gravity is a suggestion!", "Yeet!", "BLEAT MODE!", "Sky goat!"],
+    slash: ["Headbutt!", "BAAH-M!", "Ram it!", "Horns out!", "Get wrecked!", "Goated."],
+    idle:  ["Baaah.", "Must... lick... everything.", "Chaos time!", "I ate the map.", "MEHEHEHE!", "No brakes. Never had 'em."],
+    win:   ["G.O.A.T!", "BAAAAAH YEAH!", "Greatest Of All Time!", "Bow to the goat!", "Mehehe!", "Untoppable!"],
+    dead:  ["Baaad landing...", "I meant to do that.", "Physics betrayed me!", "MEH!!", "Respawn the goat!", "Rude."],
+    start: ["RELEASE THE GOAT!", "Baaah, let's go!", "Hooves up!", "Chaos incoming!", "MEHEHE!"],
+  },
+  pig: {
+    jump:  ["Pigs CAN fly!", "Wheee-oink!", "Ham-time!", "Boing oink!", "Airborne bacon!", "Squeee!"],
+    slash: ["Oink-slash!", "Chop chop!", "Squeal!", "Take that!", "Ham slam!", "Porkchop POW!"],
+    idle:  ["Oink oink zoom!", "Smells like victory!", "Mud later, speed now!", "Squee-heehee!", "Little pig, BIG speed!", "Truffle shuffle!"],
+    win:   ["OINK YEAH!", "Hog the podium!", "Bacon home the win!", "Squeeee!", "Piggy power!", "Hamtastic!"],
+    dead:  ["Oink... ouch.", "Hogwash!", "I'm bacon over here...", "Squeal!!", "Mud break...", "Try again-k oink!"],
+    start: ["Oink! GO!", "Porkchop's ready!", "Hot ham comin' through!", "Squee-GO!", "To the trough!"],
+  },
+  cow: {
+    jump:  ["Over the MOON!", "Moo-nar launch!", "Cow-abunga!", "MOOO up high!", "Udder liftoff!", "Holy cow!"],
+    slash: ["Moo-shu THAT!", "Beef it!", "Horn warning!", "MOO-POW!", "Sliced dice!", "Well done!"],
+    idle:  ["Moooove it!", "No cow-ards here!", "Milkin' this run!", "MOOO!", "Grass later. Glory now.", "Legen-dairy!"],
+    win:   ["LEGEN-DAIRY!", "MOO-VELOUS!", "Grade A win!", "Cream of the crop!", "MOOOO YEAH!", "Sir Loin delivers!"],
+    dead:  ["Moo-stake was made...", "I'm ground beef...", "MOO!!", "That's bull!", "Milked it too hard...", "Re-moo-match!"],
+    start: ["MOOOVE OUT!", "Sir Loin, charging!", "Hooves of fury!", "Got milk? Got SPEED!", "MOO-mentum!"],
+  },
 };
 function charLineFor(event: keyof typeof CHAR_LINES["apollo"]): string[] {
   const id = getSelectedCharacter();
@@ -2191,6 +2215,7 @@ export default function Game() {
             skin={{ backHand: currentChar.backHand, finger: currentChar.finger, knuckle: currentChar.knuckle, nail: currentChar.nail }}
             accent={currentChar.saberGlow}
             vehicle={equippedVehicle}
+            charModel={currentChar.model}
           />
         </Suspense>
       </Scene3DBoundary>

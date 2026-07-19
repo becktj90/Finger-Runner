@@ -142,7 +142,7 @@ export const HAT_COLORS: Record<HatId, string> = {
 };
 
 // ── Playable characters ────────────────────────────────────────────────
-export type CharacterId = "apollo" | "rocco" | "santi";
+export type CharacterId = "apollo" | "rocco" | "santi" | "goat" | "pig" | "cow";
 
 export interface CharacterDef {
   id: CharacterId;
@@ -159,6 +159,9 @@ export interface CharacterDef {
   crossguard?: boolean;
   tagline: string;
   voice: "cheer" | "giggle" | "bark";
+  /** GLB file in public/models/ — when set, this real 3D animal model rides
+   *  the vehicle instead of the built-up humanoid rider. */
+  model?: string;
 }
 
 export const CHARACTERS: CharacterDef[] = [
@@ -174,6 +177,18 @@ export const CHARACTERS: CharacterDef[] = [
     backHand: "#b3743f", finger: "#c2824a", knuckle: "#a76a38", nail: "#e6c193",
     saberColor: "#ff8c00", saberGlow: "#ffbb33",
     tagline: "Treats ahead! Sniff sniff!", voice: "bark" },
+  { id: "goat", name: "Gruff", ageLabel: "Chaos goat", emoji: "🐐",
+    backHand: "#d8d3c8", finger: "#e5e0d6", knuckle: "#b0aa96", nail: "#f5f2ea",
+    saberColor: "#f8f8ff", saberGlow: "#ccddff",
+    tagline: "BAAAAH! Physics optional!", voice: "bark", model: "char_goat.glb" },
+  { id: "pig", name: "Porkchop", ageLabel: "Speedy piglet", emoji: "🐷",
+    backHand: "#f0a0b4", finger: "#f7b7c6", knuckle: "#d98a9e", nail: "#ffe0e8",
+    saberColor: "#ff5fa2", saberGlow: "#ff9ec6",
+    tagline: "Oink outta my way!", voice: "giggle", model: "char_pig.glb" },
+  { id: "cow", name: "Sir Loin", ageLabel: "Udderly fearless", emoji: "🐮",
+    backHand: "#f2f2f2", finger: "#ffffff", knuckle: "#3a3a3a", nail: "#ffd9e8",
+    saberColor: "#7db2ff", saberGlow: "#b3d4ff",
+    tagline: "MOOOVE over!", voice: "bark", model: "char_cow.glb" },
 ];
 
 export const DEFAULT_CHARACTER: CharacterId = "apollo";

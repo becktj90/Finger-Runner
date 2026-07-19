@@ -58,7 +58,7 @@ function findWarned(st: GameSceneState): WarnInfo | null {
 // Files live in public/models/ and ship with the site.
 const MODEL_FILES: Record<string, string> = {
   hydrant: "hydrant.glb", cone: "cone.glb", trashcan: "trashcan.glb",
-  mailbox: "mailbox.glb", stopsign: "stopsign.glb", dog: "dog.glb",
+  mailbox: "mailbox.glb", dog: "dog.glb",
   cat: "cat.glb", duck: "duck.glb", dino: "dino.glb", gnome: "gnome.glb",
   pumpkin: "pumpkin.glb", cactus: "cactus.glb", flamingo: "flamingo.glb",
   toilet: "toilet.glb", pinata: "pinata.glb", poop: "poop.glb",
@@ -76,6 +76,9 @@ const modelUrl = (f: string) => `${import.meta.env.BASE_URL}models/${f}`;
 // Start streaming every model the moment the 3D chunk loads.
 MODEL_TYPE_KEYS.forEach((t) => useGLTF.preload(modelUrl(MODEL_FILES[t])));
 ["tree1.glb", "tree2.glb", "rock.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
+// Playable animal characters (Quaternius CC0) — preload so switching to a
+// beast rider never hitches mid-menu.
+["char_goat.glb", "char_pig.glb", "char_cow.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
 
 interface ModelTemplate { scene: THREE.Object3D; height: number; minY: number; cx: number; cz: number }
 
@@ -232,6 +235,9 @@ interface Scene3DProps {
   /** Currently equipped vehicle id — "vespa" renders the true-3D scooter+rider
    *  avatar in this scene; other vehicles fall back to the 2D HUD rider. */
   vehicle: string;
+  /** Optional animal-character GLB (public/models/) — replaces the humanoid
+   *  rider body on every vehicle while keeping the saber in hoof. */
+  charModel?: string;
 }
 
 // These match Game.tsx's hard spawn caps (see coords.ts POOL_* constants) —
@@ -941,11 +947,40 @@ function ChunkyWheel({ pos, r, w, hub, reg }: { pos: [number, number, number]; r
   );
 }
 
+// A real 3D animal (Quaternius CC0) as the rider body — goat/pig/cow perched
+// on whatever vehicle is equipped, saber still in hoof. Height-normalized so
+// every species sits the same vs the vehicle; always faces the camera (+z)
+// regardless of the pose's stance yaw.
+function AnimalBody({ file, pose }: { file: string; pose: VehiclePose }) {
+  const { scene } = useGLTF(modelUrl(file)) as unknown as { scene: THREE.Object3D };
+  const norm = useMemo(() => {
+    const box = new THREE.Box3().setFromObject(scene);
+    const c = new THREE.Vector3(); const size = new THREE.Vector3();
+    box.getCenter(c); box.getSize(size);
+    return { h: Math.max(0.0001, size.y), minY: box.min.y, cx: c.x, cz: c.z };
+  }, [scene]);
+  const ref = useRef<THREE.Group>(null);
+  useEffect(() => {
+    ref.current?.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
+  }, [scene]);
+  const dome = pose.mode === "dome";
+  const standing = pose.mode === "standing";
+  const H = dome ? 0.62 : 0.95;                    // ~humanoid rider height
+  const s = H / norm.h;
+  const baseY = standing ? -0.60 : dome ? -0.28 : -0.35; // hooves at deck / sunk into seat
+  return (
+    <group ref={ref} position={[0, baseY, 0]} rotation={[0, -pose.rotY, 0]} scale={[s, s, s]}>
+      <Clone object={scene} position={[-norm.cx, -norm.minY, -norm.cz]} />
+    </group>
+  );
+}
+
 // The rider, posed per vehicle. Torso/helmet/saber shared; legs + arms vary.
-function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef, bladeLen, bladeHalfLen, riderRef }: {
+function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef, bladeLen, bladeHalfLen, riderRef, charModel }: {
   pose: VehiclePose; jacket: string; helmet: string; trim: string; saber: SaberInfo;
   saberGroupRef: React.RefObject<THREE.Group | null>; saberBladeRef: React.RefObject<THREE.Mesh | null>;
   bladeLen: number; bladeHalfLen: number; riderRef: React.RefObject<THREE.Group | null>;
+  charModel?: string;
 }) {
   const seated = pose.mode === "seated";
   const standing = pose.mode === "standing";
@@ -955,6 +990,7 @@ function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef
   const bootMat = <meshStandardMaterial color="#191a22" roughness={0.85} />;
   return (
     <group ref={riderRef} position={[0, pose.riderY, pose.riderZ]} rotation={[0, pose.rotY, 0]}>
+      {charModel ? <Suspense fallback={null}><AnimalBody file={charModel} pose={pose} /></Suspense> : <>
       {/* Torso */}
       <mesh castShadow position={[0, 0.24, -0.02]} scale={dome ? [1, 0.8, 1] : [1, 1, 1]}>
         <capsuleGeometry args={[0.18, 0.36, 6, 10]} />
@@ -1023,6 +1059,7 @@ function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef
           <mesh castShadow position={[lx * 1.35, -0.32, 0.04]}><capsuleGeometry args={[0.06, 0.24, 6, 8]} />{legMat}</mesh>
         </group>
       ))}
+      </>}
       {/* Lightsaber — right hand for every pose */}
       <group ref={saberGroupRef} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
         <mesh castShadow position={[0, 0.12, 0]}><cylinderGeometry args={[0.03, 0.03, 0.18, 6]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.2} /></mesh>
@@ -1036,7 +1073,7 @@ function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef
   );
 }
 
-function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string }) {
+function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string; charModel?: string }) {
   const group = useRef<THREE.Group>(null);
   const riderGroup = useRef<THREE.Group>(null);
   const saberBlade = useRef<THREE.Mesh>(null);
@@ -1335,8 +1372,9 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle }: { stateRef: 
 
       {/* ── Rider (posed per vehicle) ── */}
       <Rider
-        key={vehicle}
+        key={`${vehicle}-${charModel ?? "kid"}`}
         pose={pose}
+        charModel={charModel}
         jacket={saber.color}
         helmet={bodyColor}
         trim={trimColor}
@@ -1953,7 +1991,7 @@ function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
   );
 }
 
-export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle }: Scene3DProps) {
+export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle, charModel }: Scene3DProps) {
   return (
     <Canvas
       dpr={[1, 2]}
@@ -1978,7 +2016,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
         <ThemeProps stateRef={stateRef} theme={theme} />
         <ModelObstaclePool stateRef={stateRef} />
       </Suspense>
-      <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} />
+      <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} charModel={charModel} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
       <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
