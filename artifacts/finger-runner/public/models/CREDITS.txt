@@ -2,3 +2,6 @@
 sourced via poly.pizza. Most are by Quaternius (quaternius.com) —
 thank you for the incredible free packs. Others by CreativeTrio.
 No attribution required by the license; credited here with gratitude.
+
+char_goat.glb, char_pig.glb, char_cow.glb, stopsign.glb, and bicycle.glb
+were generated with Meshy AI (meshy.ai) on the site owner's account.

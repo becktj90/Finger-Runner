@@ -59,6 +59,7 @@ function findWarned(st: GameSceneState): WarnInfo | null {
 const MODEL_FILES: Record<string, string> = {
   hydrant: "hydrant.glb", cone: "cone.glb", trashcan: "trashcan.glb",
   mailbox: "mailbox.glb", dog: "dog.glb",
+  stopsign: "stopsign.glb", bicycle: "bicycle.glb",
   cat: "cat.glb", duck: "duck.glb", dino: "dino.glb", gnome: "gnome.glb",
   pumpkin: "pumpkin.glb", cactus: "cactus.glb", flamingo: "flamingo.glb",
   toilet: "toilet.glb", pinata: "pinata.glb", poop: "poop.glb",
@@ -965,9 +966,9 @@ function AnimalBody({ file, pose }: { file: string; pose: VehiclePose }) {
   }, [scene]);
   const dome = pose.mode === "dome";
   const standing = pose.mode === "standing";
-  const H = dome ? 0.62 : 0.95;                    // ~humanoid rider height
+  const H = dome ? 0.62 : standing ? 0.82 : 0.95;  // ~humanoid rider height; smaller on boards so the deck shows
   const s = H / norm.h;
-  const baseY = standing ? -0.60 : dome ? -0.28 : -0.35; // hooves at deck / sunk into seat
+  const baseY = standing ? -0.42 : dome ? -0.28 : -0.35; // hooves at deck / sunk into seat
   return (
     <group ref={ref} position={[0, baseY, 0]} rotation={[0, -pose.rotY, 0]} scale={[s, s, s]}>
       <Clone object={scene} position={[-norm.cx, -norm.minY, -norm.cz]} />
