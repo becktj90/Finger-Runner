@@ -18,9 +18,24 @@ const retroFont = "'Press Start 2P', monospace";
 
 type Tab = "garage" | "sabers" | "achievements" | "stats";
 
+// Paint-shop swatches for the ride. "" = auto (matches your character).
+const PAINT_COLORS: { c: string; name: string }[] = [
+  { c: "", name: "AUTO" },
+  { c: "#e23b3b", name: "CHERRY" },
+  { c: "#ff7f2a", name: "TANGERINE" },
+  { c: "#ffd23c", name: "BANANA" },
+  { c: "#39c26d", name: "SLIME" },
+  { c: "#33bfd6", name: "SEAFOAM" },
+  { c: "#3f74e8", name: "BLUEBERRY" },
+  { c: "#8a52e0", name: "GRAPE" },
+  { c: "#ff6ad5", name: "BUBBLEGUM" },
+  { c: "#f0ede2", name: "CREAM" },
+  { c: "#23262e", name: "MIDNIGHT" },
+];
+
 export default function WardrobeScreen({
-  coinBalance, equippedVehicle, ownedVehicles, maxLevel, saberLevel, musicOn,
-  onEquipVehicle, onBuyVehicle, onBuySaber, onEquipSaber, onToggleMusic, onToggleKids, onClose,
+  coinBalance, equippedVehicle, ownedVehicles, maxLevel, saberLevel, musicOn, vehicleColor,
+  onEquipVehicle, onBuyVehicle, onBuySaber, onEquipSaber, onToggleMusic, onToggleKids, onSetVehicleColor, onClose,
 }: {
   coinBalance: number;
   equippedVehicle: VehicleId;
@@ -28,6 +43,8 @@ export default function WardrobeScreen({
   maxLevel: number;
   saberLevel: number;
   musicOn: boolean;
+  vehicleColor: string;
+  onSetVehicleColor: (c: string) => void;
   onEquipVehicle: (id: VehicleId) => void;
   onBuyVehicle: (v: VehicleDef) => void;
   onBuySaber: (tier: number) => void;
@@ -115,6 +132,35 @@ export default function WardrobeScreen({
         {/* Content */}
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {tab === "garage" && (
+            <>
+            {/* ── Paint shop — recolor your ride ── */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: "0.52rem", fontFamily: retroFont, color: "#ff88ff", textShadow: "0 0 8px #ff88ff", lineHeight: 2.2 }}>
+                🎨 PAINT SHOP
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                {PAINT_COLORS.map((p) => {
+                  const active = vehicleColor === p.c;
+                  return (
+                    <button key={p.name} onClick={() => onSetVehicleColor(p.c)} className="retro-btn"
+                      aria-label={`Paint: ${p.name}`} title={p.name}
+                      style={{
+                        width: 34, height: 34, borderRadius: 6, cursor: "pointer", padding: 0,
+                        background: p.c === "" ? "linear-gradient(135deg,#e23b3b,#3f74e8,#39c26d)" : p.c,
+                        border: `3px solid ${active ? "#00ffcc" : "#333"}`,
+                        boxShadow: active ? "0 0 10px rgba(0,255,204,0.6)" : "none",
+                        fontSize: "0.4rem", fontFamily: retroFont,
+                        color: p.c === "" ? "#fff" : "transparent",
+                      }}>
+                      {p.c === "" ? "A" : "."}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: "0.5rem", color: "#666", fontFamily: font, marginTop: 3 }}>
+                {vehicleColor === "" ? "Auto: paint matches your character" : `Painted: ${PAINT_COLORS.find(p => p.c === vehicleColor)?.name ?? vehicleColor}`}
+              </div>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {VEHICLES.map(v => {
                 const owned = isVehicleUnlocked(v, ownedVehicles, maxLevel);
@@ -174,6 +220,7 @@ export default function WardrobeScreen({
                 );
               })}
             </div>
+            </>
           )}
 
           {tab === "sabers" && (

@@ -177,6 +177,8 @@ function getSelectedCharacter(): string { return getSaveValue("selectedCharacter
 function setSelectedCharacterLS(id: string) { setSaveValue("selectedCharacter", id); }
 function getKidsMode(): boolean { return getSaveValue("kidsMode"); }
 function setKidsModeLS(on: boolean) { setSaveValue("kidsMode", on); }
+function getVehicleColor(): string { return getSaveValue("vehicleColor"); }
+function setVehicleColorLS(c: string) { setSaveValue("vehicleColor", c); }
 
 // ── Storyline & dialog ────────────────────────────────────────────────────────
 const STORY_INTRO =
@@ -377,6 +379,7 @@ export default function Game() {
   const [maxLevel, setMaxLevelState] = useState(getMaxLevel());
   const [equippedVehicle, setEquippedVehicleState] = useState<VehicleId>(getEquippedVehicle());
   const [selectedCharacter, setSelectedCharacterState] = useState<string>(getSelectedCharacter());
+  const [vehicleColor, setVehicleColorState] = useState<string>(getVehicleColor());
   const [boostActive, setBoostActive] = useState(false);
   const [boostReady, setBoostReady] = useState(true);
   const boostActiveRef = useRef(false);
@@ -1491,14 +1494,16 @@ export default function Game() {
         // Uses shape "gas" (not "circle") + upward vy so it floats and never gets
         // pinned by the road floor-clamp (which only freezes "circle" droplets).
         if (st.boostTimer > 0) {
-          const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 6;
+          // Butt height: the rider's rear faces the camera, so the plume must
+          // erupt from THERE — not from the road under the vehicle.
+          const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 58;
           for (let g = 0; g < 3; g++) {
             pushCapped(st.particles, POOL_PARTICLES, {
               // Negative vx maps to +z in the 3D scene — the plume streams
               // BACK past the camera (exhaust behind the scooter), which
               // doubles as a speed cue as the puffs whip by.
-              x: 185 + (Math.random() - 0.5) * 16, y: gasBaseY + Math.random() * 10,
-              vx: -(1.6 + Math.random() * 2.4), vy: -(0.7 + Math.random() * 1.3),
+              x: 185 + (Math.random() - 0.5) * 7, y: gasBaseY + Math.random() * 8,
+              vx: -(1.6 + Math.random() * 2.4), vy: -(0.2 + Math.random() * 0.7),
               life: 26 + Math.random() * 12, size: 6 + Math.random() * 6,
               color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],
               shape: "gas",
@@ -1853,10 +1858,11 @@ export default function Game() {
       // into unreadable green mush over the daylight backdrop).
       ctx.font = `bold 44px ${AF}`;
       ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,20,0.85)";
-      ctx.strokeText(String(Math.floor(st.levelScore)).padStart(6, "0"), 20, 68);
+      // x=72 clears the 44px pause button pinned at top-left
+      ctx.strokeText(String(Math.floor(st.levelScore)).padStart(6, "0"), 72, 68);
       ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 8;
       ctx.fillStyle = "#00ffff";
-      ctx.fillText(String(Math.floor(st.levelScore)).padStart(6, "0"), 20, 68);
+      ctx.fillText(String(Math.floor(st.levelScore)).padStart(6, "0"), 72, 68);
       ctx.shadowBlur = 0;
 
       // Best score — same treatment, smaller footprint
@@ -2166,6 +2172,9 @@ export default function Game() {
     const v = !getKidsMode();
     setKidsModeLS(v); setKidsModeState(v); stateRef.current.kidsMode = v;
   };
+  const handleSetVehicleColor = (c: string) => {
+    setVehicleColorLS(c); setVehicleColorState(c);
+  };
   const openWardrobe = () => {
     setCoinBalanceState(getCoins());
     setOwnedVehiclesState(getOwnedVehicles());
@@ -2216,6 +2225,7 @@ export default function Game() {
             accent={currentChar.saberGlow}
             vehicle={equippedVehicle}
             charModel={currentChar.model}
+            vehicleColor={vehicleColor || undefined}
           />
         </Suspense>
       </Scene3DBoundary>
@@ -2413,6 +2423,8 @@ export default function Game() {
             maxLevel={maxLevel}
             saberLevel={saberLevel}
             musicOn={musicOn}
+            vehicleColor={vehicleColor}
+            onSetVehicleColor={handleSetVehicleColor}
             onEquipSaber={handleEquipSaber}
             onEquipVehicle={handleEquipVehicle}
             onBuyVehicle={handleBuyVehicle}

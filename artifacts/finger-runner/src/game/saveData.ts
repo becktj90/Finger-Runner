@@ -14,6 +14,8 @@ export interface GameSave {
   ownedHats: string[];
   equippedVehicle: string;
   ownedVehicles: string[];
+  /** Paint-shop hex for the ride's body; "" = auto (character palette). */
+  vehicleColor: string;
   saberLevel: number;
   ownedSabers: number[];
   equippedSaber: number;
@@ -51,6 +53,7 @@ function createDefaultSave(): GameSave {
     ownedHats: ["none"],
     equippedVehicle: "vespa",
     ownedVehicles: ["vespa"],
+    vehicleColor: "",
     saberLevel: 1,
     ownedSabers: [1],
     equippedSaber: 1,

@@ -79,7 +79,7 @@ MODEL_TYPE_KEYS.forEach((t) => useGLTF.preload(modelUrl(MODEL_FILES[t])));
 ["tree1.glb", "tree2.glb", "rock.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
 // Playable animal characters (Quaternius CC0) — preload so switching to a
 // beast rider never hitches mid-menu.
-["char_goat.glb", "char_pig.glb", "char_cow.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
+["char_goat.glb", "char_pig.glb", "char_cow.glb", "char_apollo.glb", "char_rocco.glb", "char_santi.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
 
 interface ModelTemplate { scene: THREE.Object3D; height: number; minY: number; cx: number; cz: number }
 
@@ -239,6 +239,8 @@ interface Scene3DProps {
   /** Optional animal-character GLB (public/models/) — replaces the humanoid
    *  rider body on every vehicle while keeping the saber in hoof. */
   charModel?: string;
+  /** Paint-shop override for the vehicle body; undefined = character palette. */
+  vehicleColor?: string;
 }
 
 // These match Game.tsx's hard spawn caps (see coords.ts POOL_* constants) —
@@ -968,7 +970,7 @@ function AnimalBody({ file, pose }: { file: string; pose: VehiclePose }) {
   const standing = pose.mode === "standing";
   const H = dome ? 0.62 : standing ? 0.82 : 0.95;  // ~humanoid rider height; smaller on boards so the deck shows
   const s = H / norm.h;
-  const baseY = standing ? -0.42 : dome ? -0.28 : -0.35; // hooves at deck / sunk into seat
+  const baseY = standing ? -0.42 : dome ? -0.28 : -0.44; // hooves at deck / sunk into seat
   return (
     <group ref={ref} position={[0, baseY, 0]} rotation={[0, -pose.rotY, 0]} scale={[s, s, s]}>
       <Clone object={scene} position={[-norm.cx, -norm.minY, -norm.cz]} />
@@ -1061,8 +1063,8 @@ function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef
         </group>
       ))}
       </>}
-      {/* Lightsaber — right hand for every pose */}
-      <group ref={saberGroupRef} position={[0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
+      {/* Lightsaber — right hand for every pose (tucked to the flank on model riders) */}
+      <group ref={saberGroupRef} position={charModel ? [0.30, 0.14, 0.10] : [0.28, 0.30, 0.22]} rotation={[0, 0, -1.1]}>
         <mesh castShadow position={[0, 0.12, 0]}><cylinderGeometry args={[0.03, 0.03, 0.18, 6]} /><meshStandardMaterial color={CHROME_ACCENT} metalness={0.85} roughness={0.2} /></mesh>
         <mesh ref={saberBladeRef} position={[0, bladeHalfLen, 0]}>
           <cylinderGeometry args={[0.025, 0.025, bladeLen, 6]} />
@@ -1074,7 +1076,7 @@ function Rider({ pose, jacket, helmet, trim, saber, saberGroupRef, saberBladeRef
   );
 }
 
-function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string; charModel?: string }) {
+function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, vehicleColor }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"]; saber: SaberInfo; skin: SkinInfo; vehicle: string; charModel?: string; vehicleColor?: string }) {
   const group = useRef<THREE.Group>(null);
   const riderGroup = useRef<THREE.Group>(null);
   const saberBlade = useRef<THREE.Mesh>(null);
@@ -1119,7 +1121,8 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel }: {
       worldZ(FINGER_CENTER_X),
     );
     group.current.scale.set(stretchX * BASE_SCALE, stretchY * BASE_SCALE, stretchX * BASE_SCALE);
-    group.current.rotation.x = sliding ? (pose.mode === "standing" ? 0.2 : 0.45) : 0;
+    // Negative pitch = nose-down into the screen, matching the travel direction.
+    group.current.rotation.x = sliding ? (pose.mode === "standing" ? -0.2 : -0.45) : 0;
     group.current.rotation.z = -st.laneVel * 0.5;
     if (st.shake > 0) group.current.position.x += (Math.random() - 0.5) * st.shake * 0.01;
 
@@ -1149,7 +1152,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel }: {
     if (exhaustRef.current) exhaustRef.current.scale.setScalar(0.9 + Math.sin(st.time * 0.4) * 0.15);
   });
 
-  const bodyColor = skin.backHand;
+  const bodyColor = vehicleColor || skin.backHand;
   const trimColor = skin.finger;
   const hubColor  = skin.knuckle;
   const seatColor = skin.nail;
@@ -1157,6 +1160,10 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel }: {
 
   return (
     <group ref={group} visible={false}>
+      {/* Vehicles are authored front = +z, but the player DRIVES INTO the
+          screen (-z). This flip points headlights/handlebars/rider down the
+          road, with the rider's back (and butt — fart nozzle) to the camera. */}
+      <group rotation={[0, Math.PI, 0]}>
       {/* ── Vehicle body ── */}
       {vehicle === "skateboard" && (
         <group>
@@ -1386,6 +1393,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel }: {
         bladeHalfLen={bladeHalfLen}
         riderRef={riderGroup}
       />
+      </group>
     </group>
   );
 }
@@ -1992,7 +2000,7 @@ function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
   );
 }
 
-export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle, charModel }: Scene3DProps) {
+export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle, charModel, vehicleColor }: Scene3DProps) {
   return (
     <Canvas
       dpr={[1, 2]}
@@ -2017,7 +2025,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
         <ThemeProps stateRef={stateRef} theme={theme} />
         <ModelObstaclePool stateRef={stateRef} />
       </Suspense>
-      <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} charModel={charModel} />
+      <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} charModel={charModel} vehicleColor={vehicleColor} />
       <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
       <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
       <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
