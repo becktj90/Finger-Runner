@@ -19,6 +19,7 @@ import {
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
   getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
+  LANE_HIT_RADIUS, STEER_CLAMP,
 } from "./three/coords";
 
 // Lazily loaded: these pull in the Three.js/R3F render stack and the
@@ -83,8 +84,16 @@ const NEAR_MISS_BASE_BONUS = 4;
 const NEAR_MISS_CHAIN_BONUS = 2;
 const NEAR_MISS_DIALOG_CHANCE = 0.4;
 const NEAR_MISS_DIALOG_FRAMES = 55;
-const NEAR_MISS_LANE_DODGE_DRIFT = 0.22;
 const NEAR_MISS_ADJACENT_LANE = 1;
+
+// ── Normal-mode steering (Mario-Kart style) ─────────────────────────────
+// Kids mode keeps the original 3-lane snap (see moveLane). Normal mode
+// replaces it with continuous hold-to-steer: accelerate sideways while a
+// direction is held, coast to a stop on release — no snapping to lanes,
+// so the rider can sit anywhere across the road.
+const STEER_ACCEL = 0.007;      // lateral accel per frame while held
+const STEER_FRICTION = 0.90;    // per-frame velocity decay (both held and released)
+const STEER_MAX_VEL = 0.07;     // hard velocity cap
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -315,6 +324,10 @@ export default function Game() {
     lane: 0,
     laneVisual: 0,
     laneVel: 0,
+    steerX: 0,
+    steerVel: 0,
+    steerLeftHeld: false,
+    steerRightHeld: false,
     lastObstacleLane: 0,
     jumpsUsed: 0,
     jumpHeld: false,
@@ -889,6 +902,13 @@ export default function Game() {
     }
   };
 
+  // Normal-mode continuous steering: LEFT/RIGHT buttons and arrow keys hold
+  // (rather than tap-shift-a-lane) — each side's flag is independent so
+  // holding both at once cleanly cancels out instead of one clobbering
+  // the other.
+  const setSteerLeft = (held: boolean) => { stateRef.current.steerLeftHeld = held; };
+  const setSteerRight = (held: boolean) => { stateRef.current.steerRightHeld = held; };
+
   // ── Game events ────────────────────────────────────────────────────────────
   const createCrashExplosion = (x: number, y: number, roadY: number) => {
     const st = stateRef.current;
@@ -1276,6 +1296,10 @@ export default function Game() {
     st.lane = 0;
     st.laneVisual = 0;
     st.laneVel = 0;
+    st.steerX = 0;
+    st.steerVel = 0;
+    st.steerLeftHeld = false;
+    st.steerRightHeld = false;
     st.lastObstacleLane = 0;
     st.dialog = { text: LEVEL_STORY[levelNum] || pick(charLineFor("start")), life: 200, maxLife: 200 };
     st.dialogCooldown = 320;
@@ -1346,16 +1370,18 @@ export default function Game() {
         slash();
       } else if (e.code === "ArrowLeft" || e.code === "KeyA") {
         e.preventDefault();
-        if (e.repeat) return;
-        moveLane(-1);
+        if (stateRef.current.kidsMode) { if (!e.repeat) moveLane(-1); }
+        else setSteerLeft(true);
       } else if (e.code === "ArrowRight" || e.code === "KeyD") {
         e.preventDefault();
-        if (e.repeat) return;
-        moveLane(1);
+        if (stateRef.current.kidsMode) { if (!e.repeat) moveLane(1); }
+        else setSteerRight(true);
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); releaseJump(); }
+      if (e.code === "ArrowLeft" || e.code === "KeyA") setSteerLeft(false);
+      if (e.code === "ArrowRight" || e.code === "KeyD") setSteerRight(false);
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("keyup", onKeyUp);
@@ -1394,13 +1420,30 @@ export default function Game() {
         if (st.saberSwing > 0) st.saberSwing--;
         if (st.saberCooldown > 0) st.saberCooldown--;
 
-        // Spring-based lane visual — accelerates toward the target lane then
-        // overshoots slightly for a "weighted" feel. Collision always uses the
-        // instant `st.lane`; laneVisual is purely cosmetic for the 3D layer.
-        st.laneVel += (st.lane - st.laneVisual) * 0.22;
-        st.laneVel *= 0.74;
-        st.laneVisual += st.laneVel;
-        st.laneVisual = Math.max(-1.3, Math.min(1.3, st.laneVisual));
+        // Kids mode: spring-based lane visual — accelerates toward the target
+        // lane then overshoots slightly for a "weighted" feel. Normal mode:
+        // continuous Mario-Kart-style steering — hold a direction to
+        // accelerate sideways, release and momentum decays, no lane-snap.
+        // Every hit-test below reads `st.steerX`, so kids mode mirrors its
+        // discrete `lane` into it each frame and gets identical collisions
+        // to before; normal mode drives it freely.
+        if (st.kidsMode) {
+          st.laneVel += (st.lane - st.laneVisual) * 0.22;
+          st.laneVel *= 0.74;
+          st.laneVisual += st.laneVel;
+          st.laneVisual = Math.max(-STEER_CLAMP, Math.min(STEER_CLAMP, st.laneVisual));
+          st.steerX = st.lane;
+        } else {
+          if (st.steerLeftHeld) st.steerVel -= STEER_ACCEL;
+          if (st.steerRightHeld) st.steerVel += STEER_ACCEL;
+          st.steerVel *= STEER_FRICTION;
+          st.steerVel = Math.max(-STEER_MAX_VEL, Math.min(STEER_MAX_VEL, st.steerVel));
+          st.steerX += st.steerVel;
+          if (st.steerX < -STEER_CLAMP) { st.steerX = -STEER_CLAMP; st.steerVel = 0; }
+          if (st.steerX > STEER_CLAMP) { st.steerX = STEER_CLAMP; st.steerVel = 0; }
+          st.laneVisual = st.steerX;
+          st.laneVel = st.steerVel;
+        }
 
         // Physics — a near-symmetric parabolic arc, like a real thrown object.
         // The old arcade tricks (heavy 1.55× fall gravity + an artificial apex
@@ -1446,7 +1489,7 @@ export default function Game() {
           st.slideTimer--;
           if (st.slideTimer <= 0) {
             const underBarrier = st.obstacles.some(o =>
-              o.type === "barrier" && o.lane === st.lane &&
+              o.type === "barrier" && Math.abs(o.lane - st.steerX) < LANE_HIT_RADIUS &&
               o.x < 202 + 14 && o.x + o.obsWidth > 168 - 14);
             if (underBarrier) st.slideTimer = 1;
             else { st.sliding = false; st.slideTimer = 0; }
@@ -1541,7 +1584,7 @@ export default function Game() {
           // kicks you into a monster launch (higher than a max hold-jump).
           if (o.type === "ramp") {
             const xOverlapR = fingerRight - 4 > o.x && fingerLeft + 4 < o.x + o.obsWidth;
-            if (xOverlapR && o.lane === st.lane && st.onGround && st.velocity >= 0) {
+            if (xOverlapR && Math.abs(o.lane - st.steerX) < LANE_HIT_RADIUS && st.onGround && st.velocity >= 0) {
               st.velocity = JUMP_FORCE * 1.5;
               st.onGround = false;
               st.jumpsUsed = 0; // ramp air still allows the double-jump
@@ -1555,14 +1598,14 @@ export default function Game() {
             if (o.x < -o.obsWidth - 40) st.obstacles.splice(i, 1);
             continue; // never a crash, never sliceable
           }
-          if (st.saberSwing > 0 && !didCrash && o.type !== "barrier" && o.lane === st.lane
+          if (st.saberSwing > 0 && !didCrash && o.type !== "barrier" && Math.abs(o.lane - st.steerX) < LANE_HIT_RADIUS
               && o.x + o.obsWidth >= fingerLeft - 6 && o.x <= fingerRight + saberReach
               && fingerHigh <= roadY && fingerTipY + vReach >= obsTopSlice) {
             sliceObstacle(o, roadY);
             st.obstacles.splice(i, 1);
             continue;
           }
-          if (!didCrash && o.lane === st.lane) {
+          if (!didCrash && Math.abs(o.lane - st.steerX) < LANE_HIT_RADIUS) {
             // Slightly tighter hitbox than the visual — avoids cheap corner-clip
             // deaths while keeping collisions fair and predictable.
             const xOverlap = fingerRight - 4 > o.x && fingerLeft + 4 < o.x + o.obsWidth;
@@ -1598,13 +1641,13 @@ export default function Game() {
             if (o.type !== "barrier") {
               const isWithinHorizontalThreshold =
                 Math.abs(o.x + o.obsWidth * OBSTACLE_CENTER_FACTOR - fingerCenter) < NEAR_MISS_X_THRESHOLD;
-              const laneDelta = Math.abs(o.lane - st.lane);
+              const laneDelta = Math.abs(o.lane - st.steerX);
               const clearance = roadY - o.obsHeight * OBSTACLE_HIT_HEIGHT_FACTOR - fingerTipY;
-              const isNearMissJump = laneDelta === 0
+              const isNearMissJump = laneDelta < LANE_HIT_RADIUS
                 && clearance >= NEAR_MISS_MIN_CLEARANCE
                 && clearance <= NEAR_MISS_MAX_CLEARANCE;
-              // laneVisual is spring-smoothed (not discrete), so drift indicates a recent lane-swap near-pass.
-              const isNearMissDodge = laneDelta === NEAR_MISS_ADJACENT_LANE && Math.abs(st.lane - st.laneVisual) > NEAR_MISS_LANE_DODGE_DRIFT;
+              // Cleared it by steering into an adjacent lane rather than jumping.
+              const isNearMissDodge = laneDelta >= LANE_HIT_RADIUS && laneDelta < NEAR_MISS_ADJACENT_LANE + 0.5;
               if (isWithinHorizontalThreshold && (isNearMissJump || isNearMissDodge)) {
                 st.nearMissTimer = NEAR_MISS_CHAIN_WINDOW;
                 st.nearMissChain = Math.min(NEAR_MISS_MAX_CHAIN, st.nearMissChain + 1);
@@ -1635,7 +1678,7 @@ export default function Game() {
           const px = 185; // rider collision centre (matches fingerLeft/fingerRight)
           let best: Obstacle | null = null; let bestDist = Infinity;
           for (const o of st.obstacles) {
-            if (o.lane !== st.lane || o.type === "ramp") continue; // ramps are friendly — no warning
+            if (Math.abs(o.lane - st.steerX) >= LANE_HIT_RADIUS || o.type === "ramp") continue; // ramps are friendly — no warning
             const dist = o.x + o.obsWidth * 0.5 - px;
             if (dist < -12) continue;              // already passed the rider
             if (dist < bestDist) { bestDist = dist; best = o; }
@@ -2131,7 +2174,10 @@ export default function Game() {
     t.consumed = true;
     if (Math.abs(dx) > Math.abs(dy)) {
       const direction = dx > 0 ? 1 : -1;
-      moveLane(direction);
+      if (stateRef.current.kidsMode) moveLane(direction);
+      // Normal mode: a swipe is a quick steering flick — punchier than a
+      // held button, decays via the same per-frame friction afterward.
+      else stateRef.current.steerVel = direction * STEER_MAX_VEL * 1.4;
     }
     else if (dy < 0) { if (stateRef.current.gameRunning) jump(); }
     else slide();
@@ -2284,8 +2330,12 @@ export default function Game() {
           <button
             onPointerDown={(e) => {
               e.preventDefault();
-              if (stateRef.current.gameRunning) moveLane(-1);
+              if (!stateRef.current.gameRunning) return;
+              if (stateRef.current.kidsMode) moveLane(-1); else setSteerLeft(true);
             }}
+            onPointerUp={(e) => { e.preventDefault(); setSteerLeft(false); }}
+            onPointerLeave={() => setSteerLeft(false)}
+            onPointerCancel={() => setSteerLeft(false)}
             style={{
               flex: 1,
               maxWidth: "140px",
@@ -2308,8 +2358,12 @@ export default function Game() {
           <button
             onPointerDown={(e) => {
               e.preventDefault();
-              if (stateRef.current.gameRunning) moveLane(1);
+              if (!stateRef.current.gameRunning) return;
+              if (stateRef.current.kidsMode) moveLane(1); else setSteerRight(true);
             }}
+            onPointerUp={(e) => { e.preventDefault(); setSteerRight(false); }}
+            onPointerLeave={() => setSteerRight(false)}
+            onPointerCancel={() => setSteerRight(false)}
             style={{
               flex: 1,
               maxWidth: "140px",
@@ -2411,9 +2465,14 @@ export default function Game() {
               cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
             🧒 KIDS EASY MODE: {kidsMode ? "ON" : "OFF"}
           </button>
-          {kidsMode && (
+          {kidsMode ? (
             <p style={{ fontSize:"0.5rem", fontFamily:retroFont, margin:"8px 0 0", color:"#00ff88aa", lineHeight:2.2, textAlign:"center" }}>
-              SLOWER · MORE SPACE · FLOATIER JUMPS · FASTER SABER
+              SLOWER · MORE SPACE · FLOATIER JUMPS · FASTER SABER<br />
+              TAP LEFT/RIGHT TO HOP LANES
+            </p>
+          ) : (
+            <p style={{ fontSize:"0.5rem", fontFamily:retroFont, margin:"8px 0 0", color:"#00aaff99", lineHeight:2.2, textAlign:"center" }}>
+              HOLD LEFT/RIGHT TO STEER — KART-STYLE FREE POSITIONING
             </p>
           )}
           {/* Level select */}

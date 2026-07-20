@@ -4,6 +4,14 @@ export const DEPTH_SCALE = 0.032;
 export const HEIGHT_SCALE = 0.02;
 export const LANE_X = 0;
 export const LANE_OFFSET = 0.85;
+/** Normal-mode continuous steering: an obstacle counts as "in the rider's
+ *  path" when |obstacle.lane - steerX| is under this. Kept under half the
+ *  0.85 lane spacing so two obstacles in adjacent lanes never both register
+ *  as hittable at once. */
+export const LANE_HIT_RADIUS = 0.42;
+/** Clamp for both kids-mode laneVisual spring and normal-mode steerX —
+ *  keeps the rider on the paved road without touching the grass edge. */
+export const STEER_CLAMP = 1.3;
 export const ROAD_SURFACE_OFFSET = 108;
 export const FINGER_TIP_OFFSET = 90;
 export const HIDE_Z = -9999;

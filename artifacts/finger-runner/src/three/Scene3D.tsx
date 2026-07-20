@@ -9,7 +9,7 @@ import { PerspectiveCamera, Environment, Lightformer, Clone, useGLTF } from "@re
 import { EffectComposer, Bloom, Vignette, SMAA, HueSaturation, BrightnessContrast, N8AO, ChromaticAberration } from "@react-three/postprocessing";
 import * as THREE from "three";
 import {
-  FINGER_CENTER_X, LANE_X, LANE_OFFSET, worldZ, worldY, roadYOld, THEME_COLORS,
+  FINGER_CENTER_X, LANE_X, LANE_OFFSET, LANE_HIT_RADIUS, worldZ, worldY, roadYOld, THEME_COLORS,
   OBSTACLE_COLORS, OBSTACLE_KIND, POWERUP_COLORS,
   CHROME_ACCENT, OBSTACLE_METAL, OBSTACLE_WOBBLE, BLOOM_CONFIG,
   ROAD_SURFACE_OFFSET, FINGER_TIP_OFFSET, HIDE_Z, BARRIER_GAP,
@@ -35,7 +35,7 @@ function findWarned(st: GameSceneState): WarnInfo | null {
   let idx = -1; let bestDist = Infinity; let bestType: WarnType = "JUMP";
   for (let i = 0; i < st.obstacles.length; i++) {
     const o = st.obstacles[i];
-    if (!o || o.lane !== st.lane || o.type === "ramp") continue; // ramps are friendly
+    if (!o || Math.abs(o.lane - st.steerX) >= LANE_HIT_RADIUS || o.type === "ramp") continue; // ramps are friendly
     const dist = o.x + o.obsWidth * 0.5 - FINGER_CENTER_X;
     if (dist < -12) continue;
     if (dist < bestDist) {

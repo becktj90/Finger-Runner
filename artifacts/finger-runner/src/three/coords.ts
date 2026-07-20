@@ -13,7 +13,7 @@
 // the exact same data at build time instead of a hand-copied duplicate.
 // This module just re-exports them plus the web-only React state typings.
 export {
-  FINGER_CENTER_X, DEPTH_SCALE, HEIGHT_SCALE, LANE_X, LANE_OFFSET,
+  FINGER_CENTER_X, DEPTH_SCALE, HEIGHT_SCALE, LANE_X, LANE_OFFSET, LANE_HIT_RADIUS, STEER_CLAMP,
   ROAD_SURFACE_OFFSET, FINGER_TIP_OFFSET, HIDE_Z,
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
   worldZ, worldY, roadYOld,
@@ -49,6 +49,9 @@ export interface GameSceneState {
   lane: number;
   laneVisual: number;
   laneVel: number;
+  /** Continuous lateral position: normal-mode free steering, or kids-mode's
+   *  `lane` mirrored in every frame so hit-test code never has to branch. */
+  steerX: number;
   lastObstacleLane: number;
   time: number;
   shake: number;
