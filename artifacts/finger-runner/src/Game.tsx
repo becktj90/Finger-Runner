@@ -1505,12 +1505,19 @@ export default function Game() {
           // Butt height: the rider's rear faces the camera, so the plume must
           // erupt from THERE — not from the road under the vehicle.
           const gasBaseY = st.playerY + FINGER_TIP_OFFSET - 58;
+          // Particle x maps to 3D world x via (x - 185) * 0.006 (ParticlePool in
+          // Scene3D.tsx), while the rider itself moves via laneVisual * 0.85 —
+          // a much bigger swing. Without this, the plume stayed pinned near
+          // centre while the rider swerved off to the side lanes. 141.67 =
+          // 0.85 / 0.006, so the two mappings agree and the trail rides
+          // exactly behind the butt through every lane change.
+          const gasBaseX = 185 + st.laneVisual * 141.67;
           for (let g = 0; g < 3; g++) {
             pushCapped(st.particles, POOL_PARTICLES, {
               // Negative vx maps to +z in the 3D scene — the plume streams
               // BACK past the camera (exhaust behind the scooter), which
               // doubles as a speed cue as the puffs whip by.
-              x: 185 + (Math.random() - 0.5) * 7, y: gasBaseY + Math.random() * 8,
+              x: gasBaseX + (Math.random() - 0.5) * 7, y: gasBaseY + Math.random() * 8,
               vx: -(1.6 + Math.random() * 2.4), vy: -(0.2 + Math.random() * 0.7),
               life: 26 + Math.random() * 12, size: 6 + Math.random() * 6,
               color: BOOST_GAS_COLORS[Math.floor(Math.random() * BOOST_GAS_COLORS.length)],

@@ -927,6 +927,57 @@ interface VehiclePose {
   float?: boolean;              // hovering ride (adds a gentle bob, no ground contact)
   lift?: number;                // extra y so the body's lowest point kisses the road
 }
+// Meshy AI vehicle bodies. `len` = target world length along z (the ride's
+// long axis); riderY replaces the procedural pose's saddle height since each
+// model's proportions differ. Vehicles without an entry fall back to the
+// procedural build.
+// rotY: Meshy authors these side-on (long axis = x, nose at -x); +π/2 swings
+// the nose onto +z, which the avatar's 180° flip then points down the road.
+const VEHICLE_MODEL: Record<string, { file: string; len: number; riderY: number; lift?: number; rotY: number }> = {
+  vespa:        { file: "veh_vespa.glb",        len: 1.60, riderY: 1.06, lift: 0.02, rotY: Math.PI / 2 },
+  skateboard:   { file: "veh_skateboard.glb",   len: 0.95, riderY: 0.16, rotY: Math.PI / 2 },
+  hoverboard:   { file: "veh_hoverboard.glb",   len: 0.95, riderY: 0.24, rotY: Math.PI / 2 },
+  bmx:          { file: "veh_bmx.glb",          len: 1.45, riderY: 0.95, rotY: Math.PI / 2 },
+  gokart:       { file: "veh_gokart.glb",       len: 1.40, riderY: 0.50, rotY: Math.PI / 2 },
+  firetruck:    { file: "veh_firetruck.glb",    len: 1.65, riderY: 1.18, rotY: Math.PI / 2 },
+  monstertruck: { file: "veh_monstertruck.glb", len: 1.60, riderY: 1.28, rotY: Math.PI / 2 },
+  rocket:       { file: "veh_rocket.glb",       len: 1.75, riderY: 0.88, rotY: Math.PI / 2 },
+  ufo:          { file: "veh_ufo.glb",          len: 1.00, riderY: 0.56, rotY: Math.PI / 2 },
+};
+Object.values(VEHICLE_MODEL).forEach((v) => useGLTF.preload(modelUrl(v.file)));
+
+// Normalized Meshy vehicle: ground at y=0, centred, scaled to `len` along z.
+// Materials are cloned per mount so the paint-shop tint never leaks into the
+// shared GLTF cache; tinting multiplies the texture (dark parts stay dark).
+function VehicleBody({ file, len, tint, rotY }: { file: string; len: number; tint?: string; rotY: number }) {
+  const { scene } = useGLTF(modelUrl(file)) as unknown as { scene: THREE.Object3D };
+  const sideways = Math.abs(Math.sin(rotY)) > 0.5; // long axis authored on x
+  const norm = useMemo(() => {
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = new THREE.Vector3(); const c = new THREE.Vector3();
+    box.getSize(size); box.getCenter(c);
+    return { zLen: Math.max(0.0001, sideways ? size.x : size.z), minY: box.min.y, cx: c.x, cz: c.z };
+  }, [scene, sideways]);
+  const ref = useRef<THREE.Group>(null);
+  useEffect(() => {
+    ref.current?.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = true;
+      const src = mesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[];
+      const cloned = Array.isArray(src) ? src.map((m) => m.clone()) : src.clone();
+      mesh.material = cloned;
+      if (tint) (Array.isArray(cloned) ? cloned : [cloned]).forEach((m) => m.color?.set(tint));
+    });
+  }, [scene, tint]);
+  const s = len / norm.zLen;
+  return (
+    <group ref={ref} scale={[s, s, s]} position={[0, -norm.minY * s, 0]} rotation={[0, rotY, 0]}>
+      <Clone object={scene} position={[-norm.cx, 0, -norm.cz]} />
+    </group>
+  );
+}
+
 const VEHICLE_POSE: Record<string, VehiclePose> = {
   vespa:        { riderY: 1.38, riderZ: 0,     mode: "seated",   rotY: 0,    bar: [1.28, 0.34], lift: 0.082 },
   skateboard:   { riderY: 0.19, riderZ: 0,     mode: "standing", rotY: 0.55, bar: null },
@@ -976,7 +1027,11 @@ function AnimalBody({ file, pose }: { file: string; pose: VehiclePose }) {
   const standing = pose.mode === "standing";
   const H = dome ? 0.62 : standing ? 0.82 : 0.95;  // ~humanoid rider height; smaller on boards so the deck shows
   const s = H / norm.h;
-  const baseY = standing ? -0.42 : dome ? -0.28 : -0.44; // hooves at deck / sunk into seat
+  // Every playable character now has a real GLB (AnimalBody handles ALL
+  // riders), so "dome" here means "perched atop the flying saucer's hull" —
+  // the Meshy UFO's dome is solid/opaque, not a see-through cockpit bubble,
+  // so the rider must clear the top of the disc rather than sink into it.
+  const baseY = standing ? -0.42 : dome ? 0.04 : -0.44; // hooves at deck / sunk into seat
   return (
     <group ref={ref} position={[0, baseY, 0]} rotation={[0, -pose.rotY, 0]} scale={[s, s, s]}>
       <Clone object={scene} position={[-norm.cx, -norm.minY, -norm.cz]} />
@@ -1093,7 +1148,11 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
 
   const bladeLen = useMemo(() => 0.62 + ((saber.reach - 120) / (185 - 120)) * 0.43, [saber.reach]);
   const bladeHalfLen = bladeLen / 2 + 0.16;
-  const pose = VEHICLE_POSE[vehicle] ?? VEHICLE_POSE.vespa;
+  const basePose = VEHICLE_POSE[vehicle] ?? VEHICLE_POSE.vespa;
+  const vm = VEHICLE_MODEL[vehicle];
+  // Meshy body proportions differ from the procedural builds — override the
+  // saddle height (and ground lift) when a model is in play.
+  const pose = vm ? { ...basePose, riderY: vm.riderY, lift: vm.lift ?? basePose.lift } : basePose;
 
   // Authored ~1.9 units tall; played at 0.78 so it sits right vs obstacles.
   const BASE_SCALE = 0.78;
@@ -1170,8 +1229,13 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           screen (-z). This flip points headlights/handlebars/rider down the
           road, with the rider's back (and butt — fart nozzle) to the camera. */}
       <group rotation={[0, Math.PI, 0]}>
-      {/* ── Vehicle body ── */}
-      {vehicle === "skateboard" && (
+      {/* ── Vehicle body — Meshy AI model when available, else procedural ── */}
+      {vm && (
+        <Suspense fallback={null}>
+          <VehicleBody file={vm.file} len={vm.len} tint={vehicleColor} rotY={vm.rotY} />
+        </Suspense>
+      )}
+      {!vm && vehicle === "skateboard" && (
         <group>
           <mesh castShadow position={[0, 0.13, 0]}><boxGeometry args={[0.30, 0.045, 0.84]} /><meshStandardMaterial color={bodyColor} roughness={0.5} /></mesh>
           <mesh castShadow position={[0, 0.17, 0.44]} rotation={[0.5, 0, 0]}><boxGeometry args={[0.30, 0.04, 0.16]} /><meshStandardMaterial color={trimColor} roughness={0.5} /></mesh>
@@ -1182,7 +1246,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <ChunkyWheel pos={[0.11, 0.06, -0.30]} r={0.06} w={0.05} hub="#f5a623" reg={regWheel} />
         </group>
       )}
-      {vehicle === "hoverboard" && (
+      {!vm && vehicle === "hoverboard" && (
         <group>
           <mesh castShadow position={[0, 0.20, 0]}><boxGeometry args={[0.34, 0.06, 0.80]} /><meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.3} /></mesh>
           <mesh position={[0, 0.155, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -1193,7 +1257,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <mesh castShadow position={[0, 0.22, -0.40]} rotation={[-Math.PI / 2, 0, 0]}><coneGeometry args={[0.05, 0.12, 8]} /><meshStandardMaterial color={chrome} metalness={0.8} roughness={0.15} /></mesh>
         </group>
       )}
-      {vehicle === "bmx" && (
+      {!vm && vehicle === "bmx" && (
         <group>
           <ChunkyWheel pos={[0, 0.30, 0.42]} r={0.30} w={0.06} hub={hubColor} reg={regWheel} />
           <ChunkyWheel pos={[0, 0.30, -0.42]} r={0.30} w={0.06} hub={hubColor} reg={regWheel} />
@@ -1205,7 +1269,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <mesh castShadow position={[0, 1.18, 0.36]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.03, 0.03, 0.52, 8]} /><meshStandardMaterial color={chrome} metalness={0.85} roughness={0.12} /></mesh>
         </group>
       )}
-      {vehicle === "gokart" && (
+      {!vm && vehicle === "gokart" && (
         <group>
           <mesh castShadow position={[0, 0.22, 0]}><boxGeometry args={[0.52, 0.10, 0.95]} /><meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} /></mesh>
           <mesh castShadow position={[0, 0.30, 0.44]} rotation={[0.35, 0, 0]}><boxGeometry args={[0.44, 0.16, 0.22]} /><meshStandardMaterial color={trimColor} roughness={0.45} /></mesh>
@@ -1218,7 +1282,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <ChunkyWheel pos={[0.30, 0.18, -0.36]} r={0.18} w={0.12} hub={hubColor} reg={regWheel} />
         </group>
       )}
-      {vehicle === "firetruck" && (
+      {!vm && vehicle === "firetruck" && (
         <group>
           <mesh castShadow position={[0, 0.66, -0.06]}><boxGeometry args={[0.70, 0.52, 1.10]} /><meshStandardMaterial color="#d62828" roughness={0.4} metalness={0.15} /></mesh>
           <mesh castShadow position={[0, 0.80, 0.50]} rotation={[0.28, 0, 0]}><boxGeometry args={[0.62, 0.30, 0.10]} /><meshStandardMaterial color="#182838" metalness={0.5} roughness={0.15} /></mesh>
@@ -1233,7 +1297,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <ChunkyWheel pos={[0.34, 0.17, -0.40]} r={0.17} w={0.12} hub={chrome} reg={regWheel} />
         </group>
       )}
-      {vehicle === "monstertruck" && (
+      {!vm && vehicle === "monstertruck" && (
         <group>
           <mesh castShadow position={[0, 1.02, 0]}><boxGeometry args={[0.60, 0.28, 0.92]} /><meshStandardMaterial color={bodyColor} roughness={0.4} metalness={0.2} /></mesh>
           <mesh castShadow position={[0, 1.14, 0.30]} rotation={[0.3, 0, 0]}><boxGeometry args={[0.52, 0.20, 0.08]} /><meshStandardMaterial color="#182838" metalness={0.5} roughness={0.15} /></mesh>
@@ -1250,7 +1314,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <ChunkyWheel pos={[0.36, 0.34, -0.38]} r={0.34} w={0.22} hub={hubColor} reg={regWheel} />
         </group>
       )}
-      {vehicle === "rocket" && (
+      {!vm && vehicle === "rocket" && (
         <group>
           <mesh castShadow position={[0, 0.55, 0]} rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.22, 0.62, 8, 12]} /><meshStandardMaterial color="#e8e8f2" roughness={0.3} metalness={0.4} /></mesh>
           <mesh castShadow position={[0, 0.55, 0.62]} rotation={[Math.PI / 2, 0, 0]}><coneGeometry args={[0.20, 0.34, 12]} /><meshStandardMaterial color={trimColor} roughness={0.35} metalness={0.3} /></mesh>
@@ -1267,7 +1331,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           <mesh position={[0, 0.72, 0.24]}><sphereGeometry args={[0.07, 8, 8]} /><meshStandardMaterial color="#1a3050" metalness={0.5} roughness={0.1} /></mesh>
         </group>
       )}
-      {vehicle === "ufo" && (
+      {!vm && vehicle === "ufo" && (
         <group>
           <mesh castShadow position={[0, 0.42, 0]} scale={[1, 0.32, 1]}><sphereGeometry args={[0.58, 18, 12]} /><meshStandardMaterial color={chrome} metalness={0.85} roughness={0.15} /></mesh>
           <mesh position={[0, 0.56, 0]}><sphereGeometry args={[0.34, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color="#9fd8ff" transparent opacity={0.32} metalness={0.3} roughness={0.05} /></mesh>
@@ -1286,7 +1350,7 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
           </mesh>
         </group>
       )}
-      {vehicle === "vespa" && (
+      {!vm && vehicle === "vespa" && (
         <group>
           {/* Main body — rounded front shield + step-through frame */}
           <mesh castShadow position={[0, 0.72, 0.08]}>
