@@ -35,7 +35,7 @@ function findWarned(st: GameSceneState): WarnInfo | null {
   let idx = -1; let bestDist = Infinity; let bestType: WarnType = "JUMP";
   for (let i = 0; i < st.obstacles.length; i++) {
     const o = st.obstacles[i];
-    if (!o || o.lane !== st.lane) continue;
+    if (!o || o.lane !== st.lane || o.type === "ramp") continue; // ramps are friendly
     const dist = o.x + o.obsWidth * 0.5 - FINGER_CENTER_X;
     if (dist < -12) continue;
     if (dist < bestDist) {
@@ -59,7 +59,7 @@ function findWarned(st: GameSceneState): WarnInfo | null {
 const MODEL_FILES: Record<string, string> = {
   hydrant: "hydrant.glb", cone: "cone.glb", trashcan: "trashcan.glb",
   mailbox: "mailbox.glb", dog: "dog.glb",
-  stopsign: "stopsign.glb", bicycle: "bicycle.glb",
+  stopsign: "stopsign.glb", bicycle: "bicycle.glb", ramp: "ramp.glb",
   cat: "cat.glb", duck: "duck.glb", dino: "dino.glb", gnome: "gnome.glb",
   pumpkin: "pumpkin.glb", cactus: "cactus.glb", flamingo: "flamingo.glb",
   toilet: "toilet.glb", pinata: "pinata.glb", poop: "poop.glb",
@@ -70,6 +70,8 @@ const MODEL_FILES: Record<string, string> = {
 const MODEL_ROT_Y: Record<string, number> = {
   dog: Math.PI / 2, cat: Math.PI / 2, dino: Math.PI / 2, flamingo: Math.PI / 2,
   duck: Math.PI / 2, mailbox: Math.PI / 2, pinata: Math.PI / 2, cart: Math.PI / 2,
+  // Kicker authored with its tall end at +z — flip so the low lip greets the rider
+  ramp: Math.PI,
 };
 const MODEL_TYPE_KEYS = Object.keys(MODEL_FILES);
 export const MODELED_OBSTACLES = new Set(MODEL_TYPE_KEYS);
@@ -241,6 +243,10 @@ interface Scene3DProps {
   charModel?: string;
   /** Paint-shop override for the vehicle body; undefined = character palette. */
   vehicleColor?: string;
+  /** Downhill grade for this level (0 = flat). Tilts the whole world group
+   *  around the player (who sits at z=0), so the road visibly drops away
+   *  ahead while the camera stays locked dead-centre — no sway, no drift. */
+  hill?: number;
 }
 
 // These match Game.tsx's hard spawn caps (see coords.ts POOL_* constants) —
@@ -1553,6 +1559,57 @@ function Birds({ theme }: { theme: Theme3D }) {
   );
 }
 
+// ── Italian street — Meshy AI townhouses lining both sides of the road ─────
+// Level 1's Tuscan descent: terracotta/ochre/pink facades scroll past close
+// to the kerb, facades turned toward the road like a real narrow street.
+function ItalyStreet({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
+  const [b1, b2, b3] = useGLTF([modelUrl("bldg1.glb"), modelUrl("bldg2.glb"), modelUrl("bldg3.glb")]) as { scene: THREE.Object3D }[];
+  const T = useMemo(() => {
+    const box = new THREE.Box3(); const c = new THREE.Vector3(); const size = new THREE.Vector3();
+    const norm = (scene: THREE.Object3D) => {
+      box.setFromObject(scene); box.getCenter(c); box.getSize(size);
+      return { scene, height: Math.max(0.0001, size.y), minY: box.min.y, cx: c.x, cz: c.z };
+    };
+    return [norm(b1.scene), norm(b2.scene), norm(b3.scene)];
+  }, [b1, b2, b3]);
+  const COUNT = 12; const SPACING = 7.2; const SIDE = 4.35;
+  const refs = useRef<THREE.Group[]>([]);
+  const seeds = useMemo(() => Array.from({ length: COUNT }, (_, i) => ({
+    side: (i % 2 === 0 ? -1 : 1) as -1 | 1,
+    t: i % 3,
+    h: 3.1 + ((i * 7) % 5) * 0.35,
+    baseZ: -(Math.floor(i / 2) * SPACING) - (i % 2) * 3.4,
+  })), []);
+  useFrame(() => {
+    const st = stateRef.current;
+    const scroll = st.worldScroll * 0.032;
+    const range = (COUNT / 2) * SPACING;
+    for (let i = 0; i < COUNT; i++) {
+      const g = refs.current[i]; if (!g) continue;
+      const s = seeds[i];
+      let z = s.baseZ + scroll;
+      z = ((z % range) + range) % range - range;
+      g.position.set(s.side * SIDE, 0, z);
+    }
+  });
+  return (
+    <>
+      {seeds.map((s, i) => {
+        const t = T[s.t]; const sc = s.h / t.height;
+        return (
+          // Facade (authored facing +z) turned to face the road centre
+          <group key={i} ref={(r) => { if (r) refs.current[i] = r; }} rotation={[0, -s.side * Math.PI / 2, 0]}>
+            <group scale={[sc, sc, sc]} position={[0, -t.minY * sc, 0]}>
+              <Clone object={t.scene} position={[-t.cx, 0, -t.cz]} castShadow receiveShadow />
+            </group>
+          </group>
+        );
+      })}
+    </>
+  );
+}
+["bldg1.glb", "bldg2.glb", "bldg3.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
+
 // ── Background scenery — three Ghibli parallax layers ─────────────────────
 function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; theme: Theme3D }) {
   const colors = THEME_COLORS[theme];
@@ -1712,6 +1769,11 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
             <mesh position={[0, s.h * 0.5, 0]}><boxGeometry args={[0.035, s.h * 0.88, 0.035]} /><meshBasicMaterial color={colors.hillMid} /></mesh>
             <mesh position={[0.065, s.h * 0.45, 0]} rotation={[0, 0, -0.25]}><boxGeometry args={[0.035, s.h * 0.78, 0.035]} /><meshBasicMaterial color={colors.hillMid} /></mesh>
           </>)}
+          {theme === "italy" && (<>
+            {/* Terracotta flower pots along the kerb */}
+            <mesh castShadow position={[0, s.h * 0.25, 0]}><cylinderGeometry args={[s.h * 0.22, s.h * 0.15, s.h * 0.5, 8]} /><meshStandardMaterial color="#b5654a" roughness={0.85} /></mesh>
+            <mesh position={[0, s.h * 0.62, 0]}><sphereGeometry args={[s.h * 0.26, 6, 5]} /><meshBasicMaterial color={i % 2 === 0 ? "#e8506e" : "#3f8f3f"} /></mesh>
+          </>)}
           {theme === "city" && <mesh position={[0, s.h * 0.5, 0]}><boxGeometry args={[0.1, s.h, 0.1]} /><meshBasicMaterial color={colors.hillMid} /></mesh>}
           {theme === "highway" && <mesh position={[0, s.h * 0.28, 0]} rotation={[0, i * 0.52, 0]}><cylinderGeometry args={[0.015, s.h * 0.14, s.h * 0.55, 5]} /><meshBasicMaterial color={colors.hillMid} /></mesh>}
           {theme === "mountain" && <mesh position={[0, s.h * 0.5, 0]}><coneGeometry args={[s.h * 0.38, s.h, 5]} /><meshBasicMaterial color={colors.hillMid} /></mesh>}
@@ -1785,6 +1847,19 @@ function makeRoadTexture(theme: Theme3D): THREE.Texture {
     g.globalAlpha = 0.04 + Math.random() * 0.08;
     g.fillStyle = Math.random() < 0.5 ? "#000000" : "#ffffff";
     g.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+  }
+  // Italian street: cobblestone rings instead of plain asphalt
+  if (theme === "italy") {
+    for (let y = 7; y < H; y += 13) {
+      for (let x = 7; x < W; x += 13) {
+        g.globalAlpha = 0.16 + Math.random() * 0.14;
+        g.strokeStyle = Math.random() < 0.5 ? "#57504a" : "#948b7e";
+        g.lineWidth = 1.4;
+        g.beginPath();
+        g.arc(x + (Math.random() - 0.5) * 4, y + (Math.random() - 0.5) * 4, 4.6 + Math.random() * 1.8, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
   }
   // two darker tyre tracks
   g.globalAlpha = 0.14; g.fillStyle = "#000000";
@@ -2000,7 +2075,7 @@ function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
   );
 }
 
-export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle, charModel, vehicleColor }: Scene3DProps) {
+export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle, charModel, vehicleColor, hill = 0 }: Scene3DProps) {
   return (
     <Canvas
       dpr={[1, 2]}
@@ -2018,21 +2093,27 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
       <GhibliSky theme={theme} />
       {theme !== "moon" && <Birds theme={theme} />}
       <CameraRig stateRef={stateRef} />
-      <GroundAndRoad stateRef={stateRef} theme={theme} />
-      {/* Model-driven pieces suspend while their GLBs stream in; the rest of
-          the scene renders immediately so first paint stays instant. */}
-      <Suspense fallback={null}>
-        <ThemeProps stateRef={stateRef} theme={theme} />
-        <ModelObstaclePool stateRef={stateRef} />
-      </Suspense>
-      <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} charModel={charModel} vehicleColor={vehicleColor} />
-      <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
-      <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
-      <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
-      <ParticlePool stateRef={stateRef} sizeRef={sizeRef} />
-      <BloodPuddlePool stateRef={stateRef} sizeRef={sizeRef} />
-      <PlatformPool stateRef={stateRef} sizeRef={sizeRef} />
-      <RopePool stateRef={stateRef} sizeRef={sizeRef} />
+      {/* Downhill: the player rides the crest at z=0, so pitching the whole
+          world group around the origin drops the road away into the distance.
+          Positive rotation.x raises the far (-z) edge, so negate the grade. */}
+      <group rotation={[-Math.atan(hill), 0, 0]}>
+        <GroundAndRoad stateRef={stateRef} theme={theme} />
+        {/* Model-driven pieces suspend while their GLBs stream in; the rest of
+            the scene renders immediately so first paint stays instant. */}
+        <Suspense fallback={null}>
+          <ThemeProps stateRef={stateRef} theme={theme} />
+          {theme === "italy" && <ItalyStreet stateRef={stateRef} />}
+          <ModelObstaclePool stateRef={stateRef} />
+        </Suspense>
+        <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} charModel={charModel} vehicleColor={vehicleColor} />
+        <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
+        <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
+        <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
+        <ParticlePool stateRef={stateRef} sizeRef={sizeRef} />
+        <BloodPuddlePool stateRef={stateRef} sizeRef={sizeRef} />
+        <PlatformPool stateRef={stateRef} sizeRef={sizeRef} />
+        <RopePool stateRef={stateRef} sizeRef={sizeRef} />
+      </group>
       <NeonBloom theme={theme} stateRef={stateRef} />
     </Canvas>
   );

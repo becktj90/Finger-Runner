@@ -30,9 +30,9 @@ const WardrobeScreen = lazy(() => import("./components/WardrobeScreen"));
 const CharacterSelectScreen = lazy(() => import("./components/CharacterSelectScreen"));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type ObstacleType = "mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart"
+type ObstacleType = "ramp"|"mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart"
   |"poop"|"toilet"|"duck"|"dino"|"pinata"|"undies";
-type Theme = "suburb"|"city"|"highway"|"mountain"|"night"|"moon";
+type Theme = "italy"|"suburb"|"city"|"highway"|"mountain"|"night"|"moon";
 
 interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; lane: number; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; size: number; color: string; shape?: "rect"|"circle"|"bone"|"gas"; rot?: number; rotV?: number; }
@@ -95,6 +95,7 @@ function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFF
 //   tall: mailbox 68, bicycle 68, stopsign 88 — need a committed hold-jump
 // A full hold-jump clears ~228px, so even the stopsign stays fair.
 const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
+  ramp:     { w:52, h:28 },   // jump ramp — NOT a hazard: ride into it for big air
   poop:     { w:40, h:40 },   // giant cartoon poop swirl — easiest hop
   cat:      { w:28, h:42 },
   undies:   { w:48, h:44 },   // giant lost underpants
@@ -121,27 +122,29 @@ const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
 // Per-level obstacle pools. Repeated entries bias the random pick, so the mix
 // escalates: early levels are short, friendly hops; later levels lean tall and
 // dense, with the stopsign showing up more often as the finale approaches.
+// `hill` = downhill grade (world tilt in the 3D scene — pure visual descent);
+// "ramp" entries in obs are jump kickers: ride into one for launch-assisted air.
 const LEVELS = [
-  { num:1, name:"Neighborhood Cruise",  target:780,  theme:"suburb"   as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0,
-    obs:["cat","dog","poop","duck","cone","pinata","poop","pumpkin","duck","cat","pinata"] as ObstacleType[] },
-  { num:2, name:"Shopping District",    target:920,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0,
-    obs:["cat","dog","poop","duck","undies","hydrant","pinata","trashcan","cone","cart","pinata","barrier"] as ObstacleType[] },
-  { num:3, name:"Downtown",             target:1000, theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6,
-    obs:["dog","cone","poop","toilet","hydrant","newsbox","dino","undies","gnome","cart","pinata","pinata","barrier"] as ObstacleType[] },
-  { num:4, name:"City Center",          target:1080, theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2,
-    obs:["cone","hydrant","toilet","newsbox","dino","gnome","flamingo","cart","undies","pinata","pinata","mailbox","barrier"] as ObstacleType[] },
-  { num:5, name:"Highway On-Ramp",      target:1160, theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8,
-    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","trashcan","cart","pinata","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
-  { num:6, name:"Open Highway",         target:1240, theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4,
-    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","stopsign","pinata","pinata","cactus","barrier","barrier"] as ObstacleType[] },
-  { num:7, name:"Mountain Pass",        target:1400, theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0,
-    obs:["cactus","gnome","trashcan","mailbox","bicycle","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
-  { num:8, name:"Night Drive",          target:1560, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6,
-    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
+  { num:1, name:"Via Italia Downhill",  target:780,  theme:"italy"    as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0, hill:0.055,
+    obs:["cat","dog","poop","duck","cone","ramp","pinata","poop","pumpkin","ramp","duck","cat","pinata"] as ObstacleType[] },
+  { num:2, name:"Shopping District",    target:920,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0, hill:0.03,
+    obs:["cat","dog","poop","duck","undies","hydrant","ramp","pinata","trashcan","cone","cart","ramp","pinata","barrier"] as ObstacleType[] },
+  { num:3, name:"Downtown",             target:1000, theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6, hill:0.035,
+    obs:["dog","cone","poop","toilet","hydrant","newsbox","ramp","dino","undies","gnome","cart","pinata","pinata","barrier"] as ObstacleType[] },
+  { num:4, name:"City Center",          target:1080, theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2, hill:0.04,
+    obs:["cone","hydrant","toilet","newsbox","dino","gnome","ramp","flamingo","cart","undies","pinata","pinata","mailbox","barrier"] as ObstacleType[] },
+  { num:5, name:"Highway On-Ramp",      target:1160, theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8, hill:0.045,
+    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","ramp","trashcan","cart","pinata","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
+  { num:6, name:"Open Highway",         target:1240, theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4, hill:0.05,
+    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","ramp","stopsign","pinata","pinata","cactus","barrier","barrier"] as ObstacleType[] },
+  { num:7, name:"Mountain Pass",        target:1400, theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0, hill:0.065,
+    obs:["cactus","gnome","trashcan","mailbox","bicycle","ramp","stopsign","stopsign","pinata","ramp","pinata","barrier","barrier"] as ObstacleType[] },
+  { num:8, name:"Night Drive",          target:1560, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6, hill:0.045,
+    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","ramp","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
   // Finale: lunar gravity — jumps launch high and hang forever, so the level
   // runs fast and long to compensate. gravityMult scales the whole jump arc.
-  { num:9, name:"Sea of Tranquility",   target:1700, theme:"moon"     as Theme, speedMult:3.2,  minSpawn:70,  ramp:3.6, gravityMult:0.38,
-    obs:["trashcan","mailbox","dino","duck","stopsign","bicycle","toilet","pinata","pinata","barrier","barrier"] as ObstacleType[] },
+  { num:9, name:"Sea of Tranquility",   target:1700, theme:"moon"     as Theme, speedMult:3.2,  minSpawn:70,  ramp:3.6, gravityMult:0.38, hill:0.02,
+    obs:["trashcan","mailbox","dino","duck","stopsign","bicycle","ramp","toilet","pinata","pinata","barrier","barrier"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 
@@ -157,6 +160,7 @@ interface MusicTheme {
 }
 const MUSIC_THEMES: Record<MusicThemeId, MusicTheme> = {
   start:    { source: REQUESTED_TRACK_URL, fallbackFile: "title-theme.mp3",   leadGain: 0.85 },
+  italy:    { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-1.mp3", leadGain: 1.0  },
   suburb:   { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-1.mp3", leadGain: 1.0  },
   city:     { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-2.mp3", leadGain: 1.0  },
   highway:  { source: REQUESTED_TRACK_URL, fallbackFile: "level-theme-3.mp3", leadGain: 1.05 },
@@ -185,7 +189,7 @@ const STORY_INTRO =
   "Two butt-shaped scooter legends — Lefty Cheek & Middy Buns — are blasting down the world's most ridiculous road on their trusty boosted scooters. Eight wild stretches of pavement, countless ridiculous obstacles, and one legendary destination: freedom (and snacks).";
 
 const LEVEL_STORY: Record<number, string> = {
-  1: "Day one of freedom — the open suburb awaits!",
+  1: "Day one of freedom — a sunny Italian street, all downhill from here!",
   2: "So many shoppers, so many feet to dodge…",
   3: "Downtown! Keep it together, knuckles.",
   4: "Rush hour. Everyone's in a hurry but us!",
@@ -813,10 +817,14 @@ export default function Game() {
     // barrier arriving while a platform is on screen is an unavoidable death
     // trap. Never pick "barrier" while any platform is still ahead/above.
     const platformAhead = st.platforms.some(pl => pl.x + pl.w > 140);
+    // Same trap logic for ramps: a ramp launch under an incoming overhead
+    // barrier is an unavoidable head-bonk, so keep the two apart.
+    const rampAhead = st.obstacles.some(o => o.type === "ramp" && o.x + o.obsWidth > 100);
     const pickType = (): ObstacleType => {
       for (let tries = 0; tries < 6; tries++) {
         const t = pool[Math.floor(Math.random() * pool.length)];
-        if (!(t === "barrier" && platformAhead)) return t;
+        if (t === "barrier" && (platformAhead || rampAhead)) continue;
+        return t;
       }
       return pool.find(t => t !== "barrier") ?? pool[0];
     };
@@ -1522,6 +1530,24 @@ export default function Game() {
           const obsTopSlice = roadY - o.obsHeight;
           const vReach = saberReach * 0.6;
           const fingerHigh = fingerTipY - vReach;
+          // Jump ramp — a friendly obstacle: roll into it on the ground and it
+          // kicks you into a monster launch (higher than a max hold-jump).
+          if (o.type === "ramp") {
+            const xOverlapR = fingerRight - 4 > o.x && fingerLeft + 4 < o.x + o.obsWidth;
+            if (xOverlapR && o.lane === st.lane && st.onGround && st.velocity >= 0) {
+              st.velocity = JUMP_FORCE * 1.5;
+              st.onGround = false;
+              st.jumpsUsed = 0; // ramp air still allows the double-jump
+              st.shake = Math.max(st.shake, 4);
+              playJumpSound();
+              spawnDust(12, 8);
+              showComboPopup("RAMP LAUNCH!", "#ffb066");
+              if (Math.random() < 0.4) showDialog(pick(charLineFor("jump")), 70);
+            }
+            if (!o.passed && o.x + o.obsWidth < fingerLeft) o.passed = true;
+            if (o.x < -o.obsWidth - 40) st.obstacles.splice(i, 1);
+            continue; // never a crash, never sliceable
+          }
           if (st.saberSwing > 0 && !didCrash && o.type !== "barrier" && o.lane === st.lane
               && o.x + o.obsWidth >= fingerLeft - 6 && o.x <= fingerRight + saberReach
               && fingerHigh <= roadY && fingerTipY + vReach >= obsTopSlice) {
@@ -1602,7 +1628,7 @@ export default function Game() {
           const px = 185; // rider collision centre (matches fingerLeft/fingerRight)
           let best: Obstacle | null = null; let bestDist = Infinity;
           for (const o of st.obstacles) {
-            if (o.lane !== st.lane) continue;
+            if (o.lane !== st.lane || o.type === "ramp") continue; // ramps are friendly — no warning
             const dist = o.x + o.obsWidth * 0.5 - px;
             if (dist < -12) continue;              // already passed the rider
             if (dist < bestDist) { bestDist = dist; best = o; }
@@ -2226,6 +2252,7 @@ export default function Game() {
             vehicle={equippedVehicle}
             charModel={currentChar.model}
             vehicleColor={vehicleColor || undefined}
+            hill={getLevelDef(currentLevel).hill ?? 0}
           />
         </Suspense>
       </Scene3DBoundary>

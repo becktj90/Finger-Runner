@@ -32,7 +32,7 @@ export const POOL_PUDDLES = 12;
 
 // ── Ghibli-inspired painterly theme palettes ──────────────────────────────
 // Warm golden-hour light, soft horizons, muted naturalistic colors.
-export type Theme3D = "suburb" | "city" | "highway" | "mountain" | "night" | "moon";
+export type Theme3D = "italy" | "suburb" | "city" | "highway" | "mountain" | "night" | "moon";
 
 export interface ThemePalette {
   fog: string; sky: string; ambient: string; sun: string; sunIntensity: number;
@@ -41,6 +41,10 @@ export interface ThemePalette {
 }
 
 export const THEME_COLORS: Record<Theme3D, ThemePalette> = {
+  // Tuscan hill town: golden stucco, terracotta roofs, cypress-green hills
+  italy:    { fog: "#ecd9ae", sky: "#8ec8e8", ambient: "#ffd9a0", sun: "#fff0c8", sunIntensity: 3.0,
+    road: "#7a7268", shoulder: "#c3ac82", prop: "#d8956a", propAccent: "#ffb066",
+    cloudColor: "#f8f0e0", hillFar: "#8aa050", hillMid: "#6f8a40" },
   // Totoro-style: warm sun, lush green, cream sky
   suburb:   { fog: "#bce4c2", sky: "#72c8e8", ambient: "#ffd880", sun: "#fff6cc", sunIntensity: 3.0,
     road: "#786850", shoulder: "#5a8048", prop: "#1e6820", propAccent: "#78e040",
@@ -88,6 +92,8 @@ export const OBSTACLE_COLORS: Record<string, string> = {
   // Silly kid obstacles
   poop: "#8a5a2b", toilet: "#f0f0f5", duck: "#ffd23f", dino: "#34b23e",
   pinata: "#ef3d97", undies: "#f7f7ff",
+  // Jump ramp — a GOOD obstacle: ride into it for big air
+  ramp: "#b07a3f",
 };
 
 export const OBSTACLE_KIND: Record<string, ObstacleRenderKind> = {
@@ -99,6 +105,7 @@ export const OBSTACLE_KIND: Record<string, ObstacleRenderKind> = {
   // Silly kid obstacles
   poop: "poop", toilet: "toilet", duck: "duck", dino: "dino",
   pinata: "pinata", undies: "undies",
+  ramp: "box",
 };
 
 export const OBSTACLE_GLOW: Record<string, boolean> = {
@@ -213,6 +220,7 @@ export const POWERUP_COLORS: Record<string, string> = {
 export interface BloomThemeConfig { intensity: number; threshold: number; smoothing: number; }
 
 export const BLOOM_CONFIG: Record<Theme3D, BloomThemeConfig> = {
+  italy:    { intensity: 0.45, threshold: 0.68, smoothing: 0.20 },
   suburb:   { intensity: 0.45, threshold: 0.68, smoothing: 0.20 },
   city:     { intensity: 0.70, threshold: 0.55, smoothing: 0.28 },
   highway:  { intensity: 0.50, threshold: 0.65, smoothing: 0.20 },
