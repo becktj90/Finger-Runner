@@ -20,6 +20,7 @@ import {
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
   getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
   LANE_HIT_RADIUS, STEER_CLAMP,
+  type CharacterTraits,
 } from "./three/coords";
 
 // Lazily loaded: these pull in the Three.js/R3F render stack and the
@@ -365,9 +366,11 @@ export default function Game() {
     saberSwing: 0,
     saberCooldown: 0,
     kidsMode: getKidsMode(),
+    traits: null as CharacterTraits | null,
     worldScroll: 0,
     boostTimer: 0,
     boostCooldown: 0,
+    boostCooldownMax: BOOST_COOLDOWN,
     lastRunBonus: 0,
     paused: false,
     curSpeed: BASE_SPEED,
@@ -705,18 +708,54 @@ export default function Game() {
     const { base, dur, rise = 1.7, fall = 0.7, lfoStart = 19, lfoEnd = 8,
       lfoDepth = 0.55, gain = 0.34, filter = 900, noise = 0.13, squeak = 0.5,
       wave = "sawtooth" } = o;
+    // ── BODY: filtered noise buzz — a real fart is turbulent air through a
+    // fluttering opening, which reads as buzzy noise, not a clean pitched
+    // tone. This is the dominant layer; the oscillator below is now just a
+    // quiet sub-body underneath it, not the main voice.
+    const nBuf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+    const nd = nBuf.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+    const noiseSrc = ctx.createBufferSource(); noiseSrc.buffer = nBuf;
+    // Two resonant bandpass filters at different formant ratios, both
+    // sweeping down — gives the noise a "vocal tract" buzz instead of a
+    // flat hiss (this is what makes it read as organic vs. synthetic).
+    const f1 = ctx.createBiquadFilter(); f1.type = "bandpass"; f1.Q.value = 3.4;
+    f1.frequency.setValueAtTime(base * rise, t);
+    f1.frequency.exponentialRampToValueAtTime(Math.max(50, base * fall), t + dur);
+    const f2 = ctx.createBiquadFilter(); f2.type = "bandpass"; f2.Q.value = 5.2;
+    f2.frequency.setValueAtTime(Math.min(filter, base * rise * 2.7), t);
+    f2.frequency.exponentialRampToValueAtTime(Math.max(110, base * fall * 2.7), t + dur);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(0.0001, t); bodyGain.gain.linearRampToValueAtTime(gain, t + 0.015);
+    bodyGain.gain.setValueAtTime(gain * 0.85, t + dur * 0.6); bodyGain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    noiseSrc.connect(f1); noiseSrc.connect(f2); f1.connect(bodyGain); f2.connect(bodyGain);
+    bodyGain.connect(ctx.destination);
+    noiseSrc.start(t); noiseSrc.stop(t + dur + 0.02);
+    // Irregular flutter: two amplitude-modulating LFOs at slightly mismatched
+    // rates beating against each other, riding on bodyGain's own AudioParam —
+    // a single clean LFO sounds like an electronic tremolo, two out-of-sync
+    // ones sound like a wet, sputtering buzz.
+    const buzz1 = ctx.createOscillator(); buzz1.type = "square";
+    buzz1.frequency.setValueAtTime(lfoStart, t); buzz1.frequency.exponentialRampToValueAtTime(Math.max(3, lfoEnd), t + dur);
+    const buzz1Gain = ctx.createGain(); buzz1Gain.gain.value = gain * lfoDepth * 0.55;
+    buzz1.connect(buzz1Gain); buzz1Gain.connect(bodyGain.gain);
+    buzz1.start(t); buzz1.stop(t + dur + 0.02);
+    const buzz2 = ctx.createOscillator(); buzz2.type = "sine";
+    buzz2.frequency.setValueAtTime(lfoStart * 1.34 + 2.3, t); buzz2.frequency.exponentialRampToValueAtTime(Math.max(3, lfoEnd * 1.3), t + dur);
+    const buzz2Gain = ctx.createGain(); buzz2Gain.gain.value = gain * lfoDepth * 0.28;
+    buzz2.connect(buzz2Gain); buzz2Gain.connect(bodyGain.gain);
+    buzz2.start(t); buzz2.stop(t + dur + 0.02);
+    // ── quiet oscillator sub-body for warmth/fullness under the buzz ──
     const osc = ctx.createOscillator(); const g = ctx.createGain(); const f = ctx.createBiquadFilter();
-    osc.type = wave; f.type = "lowpass"; f.frequency.value = filter;
+    osc.type = wave; f.type = "lowpass"; f.frequency.value = filter * 0.6;
     osc.frequency.setValueAtTime(base, t);
     osc.frequency.linearRampToValueAtTime(base * rise, t + dur * 0.3);
     osc.frequency.linearRampToValueAtTime(base * fall, t + dur);
-    const lfo = ctx.createOscillator(); const lg = ctx.createGain();
-    lfo.type = "square"; lfo.frequency.setValueAtTime(lfoStart, t); lfo.frequency.linearRampToValueAtTime(lfoEnd, t + dur);
-    lg.gain.value = base * lfoDepth; lfo.connect(lg); lg.connect(osc.frequency);
-    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + 0.03);
-    g.gain.setValueAtTime(gain * 0.88, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain * 0.4, t + 0.03);
+    g.gain.setValueAtTime(gain * 0.35, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     osc.connect(f); f.connect(g); g.connect(ctx.destination);
-    osc.start(t); osc.stop(t + dur + 0.02); lfo.start(t); lfo.stop(t + dur + 0.02);
+    osc.start(t); osc.stop(t + dur + 0.02);
+    // ── wet spray noise (kept from before — the "moisture") ──
     if (noise > 0) {
       const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
       const d = buf.getChannelData(0);
@@ -726,6 +765,17 @@ export default function Game() {
       const ng = ctx.createGain(); ng.gain.setValueAtTime(noise, t); ng.gain.exponentialRampToValueAtTime(0.001, t + dur);
       src.connect(nf); nf.connect(ng); ng.connect(ctx.destination); src.start(t);
     }
+    // ── initial "release" transient — a sharp low thump at the very start,
+    // like the first pop of pressure escaping. Cheap and sells realism.
+    const thumpBuf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * 0.045)), ctx.sampleRate);
+    const thd = thumpBuf.getChannelData(0);
+    for (let i = 0; i < thd.length; i++) thd[i] = (Math.random() * 2 - 1) * (1 - i / thd.length) ** 0.6;
+    const thumpSrc = ctx.createBufferSource(); thumpSrc.buffer = thumpBuf;
+    const thumpFilt = ctx.createBiquadFilter(); thumpFilt.type = "lowpass"; thumpFilt.frequency.value = 220;
+    const thumpGain = ctx.createGain();
+    thumpGain.gain.setValueAtTime(gain * 0.8, t); thumpGain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    thumpSrc.connect(thumpFilt); thumpFilt.connect(thumpGain); thumpGain.connect(ctx.destination);
+    thumpSrc.start(t);
     if (Math.random() < squeak) {
       const sq = ctx.createOscillator(); const sg = ctx.createGain();
       sq.type = "sawtooth"; sq.frequency.setValueAtTime(base * 3, t + dur * 0.72);
@@ -1095,7 +1145,8 @@ export default function Game() {
   const doJump = (isDouble: boolean) => {
     const st = stateRef.current;
     st.jumpsUsed += 1;
-    st.velocity = isDouble ? JUMP_FORCE * 0.9 : JUMP_FORCE;
+    const jumpMult = st.traits?.jumpMult ?? 1;
+    st.velocity = (isDouble ? JUMP_FORCE * 0.9 : JUMP_FORCE) * jumpMult;
     if (isDouble) incrementStat("totalDoubleJumps");
     incrementStat("totalJumps");
     st.onGround = false;
@@ -1178,7 +1229,8 @@ export default function Game() {
     if (!st.gameRunning) return;
     if (st.boostTimer > 0 || st.boostCooldown > 0) return;
     st.boostTimer = BOOST_FRAMES;
-    st.boostCooldown = BOOST_COOLDOWN;
+    st.boostCooldownMax = Math.round(BOOST_COOLDOWN * (st.traits?.boostCooldownMult ?? 1));
+    st.boostCooldown = st.boostCooldownMax;
     playFart();
   };
 
@@ -1260,7 +1312,8 @@ export default function Game() {
     st.powerUpSpawnTimer = 0;
     st.magnetTimer = 0;
     st.multiplierTimer = 0;
-    st.shieldCharges = 0;
+    st.traits = getCharacterDef(getSelectedCharacter()).traits;
+    st.shieldCharges = st.traits.startingShield ? 1 : 0;
     st.comboCount = 0;
     st.comboTimer = 0;
     st.nearMissChain = 0;
@@ -1275,6 +1328,7 @@ export default function Game() {
     st.saberCooldown = 0;
     st.boostTimer = 0;
     st.boostCooldown = 0;
+    st.boostCooldownMax = BOOST_COOLDOWN;
     boostActiveRef.current = false; boostReadyRef.current = true;
     setBoostActive(false); setBoostReady(true);
     st.kidsMode = getKidsMode();
@@ -1434,10 +1488,12 @@ export default function Game() {
           st.laneVisual = Math.max(-STEER_CLAMP, Math.min(STEER_CLAMP, st.laneVisual));
           st.steerX = st.lane;
         } else {
-          if (st.steerLeftHeld) st.steerVel -= STEER_ACCEL;
-          if (st.steerRightHeld) st.steerVel += STEER_ACCEL;
+          const steerMult = st.traits?.steerMult ?? 1;
+          if (st.steerLeftHeld) st.steerVel -= STEER_ACCEL * steerMult;
+          if (st.steerRightHeld) st.steerVel += STEER_ACCEL * steerMult;
           st.steerVel *= STEER_FRICTION;
-          st.steerVel = Math.max(-STEER_MAX_VEL, Math.min(STEER_MAX_VEL, st.steerVel));
+          const maxVel = STEER_MAX_VEL * steerMult;
+          st.steerVel = Math.max(-maxVel, Math.min(maxVel, st.steerVel));
           st.steerX += st.steerVel;
           if (st.steerX < -STEER_CLAMP) { st.steerX = -STEER_CLAMP; st.steerVel = 0; }
           if (st.steerX > STEER_CLAMP) { st.steerX = STEER_CLAMP; st.steerVel = 0; }
@@ -1537,8 +1593,9 @@ export default function Game() {
         if (boostActiveNow !== boostActiveRef.current) { boostActiveRef.current = boostActiveNow; setBoostActive(boostActiveNow); }
         if (boostReadyNow !== boostReadyRef.current) { boostReadyRef.current = boostReadyNow; setBoostReady(boostReadyNow); }
         // Speed = level base + score ramp (ramp alone capped — Runner-2 maxSpeed
-        // pattern, but level base speeds stay intact), then kids/boost multipliers.
-        const speed = (BASE_SPEED * lvlDef.speedMult + Math.min(st.levelScore * 0.0014, SCORE_RAMP_CAP)) * kidsSpeedMult * boostMult;
+        // pattern, but level base speeds stay intact), then character/kids/boost multipliers.
+        const charSpeedMult = st.traits?.speedMult ?? 1;
+        const speed = (BASE_SPEED * lvlDef.speedMult + Math.min(st.levelScore * 0.0014, SCORE_RAMP_CAP)) * kidsSpeedMult * boostMult * charSpeedMult;
         st.curSpeed = speed;
         st.worldScroll += speed; // visual-only: drives 3D background/road scroll, no gameplay effect
         // Fart-boost green gas trail — puffs out behind the runner while boosting.
@@ -1568,7 +1625,7 @@ export default function Game() {
             });
           }
         }
-        const saberReach = getSaberDef(getSaberLevel()).reach;
+        const saberReach = getSaberDef(getSaberLevel()).reach + (st.traits?.saberReachBonus ?? 0);
         let didCrash = false;
         for (let i = st.obstacles.length - 1; i >= 0; i--) {
           const o = st.obstacles[i];
@@ -1903,7 +1960,7 @@ export default function Game() {
       if (boostFillElRef.current) {
         const el = boostFillElRef.current;
         if (st.boostTimer <= 0 && st.boostCooldown > 0) {
-          const pct = 1 - st.boostCooldown / BOOST_COOLDOWN;
+          const pct = 1 - st.boostCooldown / st.boostCooldownMax;
           el.style.opacity = "1";
           el.style.height = `${Math.round(pct * 100)}%`;
         } else {
@@ -2177,7 +2234,7 @@ export default function Game() {
       if (stateRef.current.kidsMode) moveLane(direction);
       // Normal mode: a swipe is a quick steering flick — punchier than a
       // held button, decays via the same per-frame friction afterward.
-      else stateRef.current.steerVel = direction * STEER_MAX_VEL * 1.4;
+      else stateRef.current.steerVel = direction * STEER_MAX_VEL * (stateRef.current.traits?.steerMult ?? 1) * 1.4;
     }
     else if (dy < 0) { if (stateRef.current.gameRunning) jump(); }
     else slide();
@@ -2299,7 +2356,7 @@ export default function Game() {
             stateRef={stateRef as unknown as React.MutableRefObject<GameSceneState>}
             sizeRef={sizeRef}
             theme={currentTheme}
-            saber={{ color: currentChar.saberColor, glow: currentChar.saberGlow, reach: currentSaber.reach }}
+            saber={{ color: currentChar.saberColor, glow: currentChar.saberGlow, reach: currentSaber.reach + currentChar.traits.saberReachBonus }}
             skin={{ backHand: currentChar.backHand, finger: currentChar.finger, knuckle: currentChar.knuckle, nail: currentChar.nail }}
             accent={currentChar.saberGlow}
             vehicle={equippedVehicle}

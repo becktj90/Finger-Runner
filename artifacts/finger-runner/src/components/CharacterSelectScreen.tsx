@@ -86,6 +86,17 @@ export default function CharacterSelectScreen({
                 }}>
                   "{ch.tagline}"
                 </div>
+                <div style={{
+                  background: "rgba(255,255,255,0.04)", border: `1px solid ${ch.saberColor}55`,
+                  borderRadius: 3, padding: "4px 6px", width: "100%", boxSizing: "border-box",
+                }}>
+                  <div style={{ fontSize: "0.42rem", fontFamily: retroFont, color: ch.saberColor, lineHeight: 1.8, letterSpacing: "0.03em" }}>
+                    ★ {ch.traitName}
+                  </div>
+                  <div style={{ fontSize: "0.42rem", fontFamily: font, color: "#999", lineHeight: 1.5, marginTop: 2 }}>
+                    {ch.traitDesc}
+                  </div>
+                </div>
                 <span style={{
                   fontSize: "0.44rem", fontFamily: retroFont, lineHeight: 1.8,
                   color: picked ? ch.saberColor : "#555",

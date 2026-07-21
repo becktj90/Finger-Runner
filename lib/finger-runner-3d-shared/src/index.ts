@@ -159,6 +159,22 @@ export const HAT_COLORS: Record<HatId, string> = {
 // ── Playable characters ────────────────────────────────────────────────
 export type CharacterId = "apollo" | "rocco" | "santi" | "goat" | "pig" | "cow";
 
+// ── Per-character gameplay identity ─────────────────────────────────────
+// Every runner trades a strength for a weakness — no two characters play the
+// same. All multipliers are relative to 1.0 = neutral/no change.
+export interface CharacterTraits {
+  speedMult: number;         // scroll speed
+  jumpMult: number;          // jump force (higher = taller hop)
+  saberReachBonus: number;   // flat px added to the equipped saber's reach
+  steerMult: number;         // normal-mode steering accel/max-speed
+  boostCooldownMult: number; // fart-boost recharge time (lower = faster)
+  startingShield: boolean;   // begins each run with one free hit absorbed
+}
+const NEUTRAL_TRAITS: CharacterTraits = {
+  speedMult: 1, jumpMult: 1, saberReachBonus: 0, steerMult: 1,
+  boostCooldownMult: 1, startingShield: false,
+};
+
 export interface CharacterDef {
   id: CharacterId;
   name: string;
@@ -177,33 +193,48 @@ export interface CharacterDef {
   /** GLB file in public/models/ — when set, this real 3D animal model rides
    *  the vehicle instead of the built-up humanoid rider. */
   model?: string;
+  traits: CharacterTraits;
+  /** Short trait callout + one-line explanation, shown on the select screen. */
+  traitName: string;
+  traitDesc: string;
 }
 
 export const CHARACTERS: CharacterDef[] = [
   { id: "apollo", name: "Apollo", ageLabel: "5 yrs", emoji: "🧢",
     backHand: "#dfae8a", finger: "#e8b892", knuckle: "#e0ac86", nail: "#f7ddc4",
     saberColor: "#ff2b2b", saberGlow: "#ff6b6b", crossguard: true,
-    tagline: "Catch me if you can!", voice: "cheer", model: "char_apollo.glb" },
+    tagline: "Catch me if you can!", voice: "cheer", model: "char_apollo.glb",
+    traits: NEUTRAL_TRAITS, traitName: "ALL-ROUNDER", traitDesc: "No edges, no weaknesses — the steady pick." },
   { id: "rocco", name: "Rocco", ageLabel: "2 yrs", emoji: "🧒",
     backHand: "#c98f63", finger: "#d89b6f", knuckle: "#c1885c", nail: "#f0d3ad",
     saberColor: "#34ff5e", saberGlow: "#86ff9e",
-    tagline: "ZOOM ZOOM ZOOM!!!", voice: "giggle", model: "char_rocco.glb" },
+    tagline: "ZOOM ZOOM ZOOM!!!", voice: "giggle", model: "char_rocco.glb",
+    traits: { ...NEUTRAL_TRAITS, speedMult: 1.12, steerMult: 0.82 },
+    traitName: "SPEEDSTER", traitDesc: "+12% speed, but wobblier steering." },
   { id: "santi", name: "Santi", ageLabel: "Good Boy dog", emoji: "🐶",
     backHand: "#b3743f", finger: "#c2824a", knuckle: "#a76a38", nail: "#e6c193",
     saberColor: "#ff8c00", saberGlow: "#ffbb33",
-    tagline: "Treats ahead! Sniff sniff!", voice: "bark", model: "char_santi.glb" },
+    tagline: "Treats ahead! Sniff sniff!", voice: "bark", model: "char_santi.glb",
+    traits: { ...NEUTRAL_TRAITS, saberReachBonus: 22, jumpMult: 0.85 },
+    traitName: "SHARP SLASH", traitDesc: "+22 saber reach, but jumps a bit lower." },
   { id: "goat", name: "Gruff", ageLabel: "Chaos goat", emoji: "🐐",
     backHand: "#d8d3c8", finger: "#e5e0d6", knuckle: "#b0aa96", nail: "#f5f2ea",
     saberColor: "#f8f8ff", saberGlow: "#ccddff",
-    tagline: "BAAAAH! Physics optional!", voice: "bark", model: "char_goat.glb" },
+    tagline: "BAAAAH! Physics optional!", voice: "bark", model: "char_goat.glb",
+    traits: { ...NEUTRAL_TRAITS, jumpMult: 1.22, speedMult: 0.90 },
+    traitName: "MOUNTAIN HOPPER", traitDesc: "+22% jump height, but -10% speed." },
   { id: "pig", name: "Porkchop", ageLabel: "Speedy piglet", emoji: "🐷",
     backHand: "#f0a0b4", finger: "#f7b7c6", knuckle: "#d98a9e", nail: "#ffe0e8",
     saberColor: "#ff5fa2", saberGlow: "#ff9ec6",
-    tagline: "Oink outta my way!", voice: "giggle", model: "char_pig.glb" },
+    tagline: "Oink outta my way!", voice: "giggle", model: "char_pig.glb",
+    traits: { ...NEUTRAL_TRAITS, boostCooldownMult: 0.7, jumpMult: 0.85 },
+    traitName: "TURBO SNOUT", traitDesc: "Fart-boost recharges 30% faster, but jumps lower." },
   { id: "cow", name: "Sir Loin", ageLabel: "Udderly fearless", emoji: "🐮",
     backHand: "#d9d9de", finger: "#ebebef", knuckle: "#3a3a3a", nail: "#ffd9e8",
     saberColor: "#7db2ff", saberGlow: "#b3d4ff",
-    tagline: "MOOOVE over!", voice: "bark", model: "char_cow.glb" },
+    tagline: "MOOOVE over!", voice: "bark", model: "char_cow.glb",
+    traits: { ...NEUTRAL_TRAITS, startingShield: true, speedMult: 0.88 },
+    traitName: "HEAVY DUTY", traitDesc: "Starts every run with a free shield hit, but -12% speed." },
 ];
 
 export const DEFAULT_CHARACTER: CharacterId = "apollo";

@@ -25,7 +25,7 @@ export {
   CHARACTERS, DEFAULT_CHARACTER, getCharacterDef,
   BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
   type Theme3D, type ThemePalette, type ObstacleRenderKind, type HatId, type BloomThemeConfig,
-  type CharacterId, type CharacterDef,
+  type CharacterId, type CharacterDef, type CharacterTraits,
 } from "@workspace/finger-runner-3d-shared";
 
 // ── Structural mirror of Game.tsx's runtime state, kept loose (string
