@@ -1676,21 +1676,28 @@ function ItalyStreet({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
   );
 }
 ["bldg1.glb", "bldg2.glb", "bldg3.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
+["scn_citybuilding.glb", "scn_streetlamp.glb", "scn_billboard.glb", "scn_pinetree.glb", "scn_boulder.glb"].forEach((f) => useGLTF.preload(modelUrl(f)));
 
 // ── Background scenery — three Ghibli parallax layers ─────────────────────
 function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; theme: Theme3D }) {
   const colors = THEME_COLORS[theme];
-  // Real CC0 scenery models: two tree species for the leafy themes, a lunar
-  // rock for the moon. Normalized (feet at y=0, height 1) then scaled per seed.
-  const [tree1G, tree2G, rockG] = useGLTF([modelUrl("tree1.glb"), modelUrl("tree2.glb"), modelUrl("rock.glb")]) as { scene: THREE.Object3D }[];
+  // Real CC0/Meshy scenery models: two tree species for the leafy themes, a
+  // lunar rock for the moon, plus Meshy AI city/highway/mountain dressing.
+  // Normalized (feet at y=0, height 1) then scaled per seed.
+  const sceneryFiles = ["tree1.glb", "tree2.glb", "rock.glb", "scn_citybuilding.glb", "scn_streetlamp.glb", "scn_billboard.glb", "scn_pinetree.glb", "scn_boulder.glb"];
+  const [tree1G, tree2G, rockG, cityG, lampG, billboardG, pineG, boulderG] = useGLTF(sceneryFiles.map(modelUrl)) as { scene: THREE.Object3D }[];
   const sceneryT = useMemo(() => {
     const box = new THREE.Box3(); const c = new THREE.Vector3(); const size = new THREE.Vector3();
     const norm = (scene: THREE.Object3D) => {
       box.setFromObject(scene); box.getCenter(c); box.getSize(size);
       return { scene, height: Math.max(0.0001, size.y), minY: box.min.y, cx: c.x, cz: c.z };
     };
-    return { tree1: norm(tree1G.scene), tree2: norm(tree2G.scene), rock: norm(rockG.scene) };
-  }, [tree1G, tree2G, rockG]);
+    return {
+      tree1: norm(tree1G.scene), tree2: norm(tree2G.scene), rock: norm(rockG.scene),
+      city: norm(cityG.scene), lamp: norm(lampG.scene), billboard: norm(billboardG.scene),
+      pine: norm(pineG.scene), boulder: norm(boulderG.scene),
+    };
+  }, [tree1G, tree2G, rockG, cityG, lampG, billboardG, pineG, boulderG]);
   const SceneryModel = ({ t, targetH }: { t: { scene: THREE.Object3D; height: number; minY: number; cx: number; cz: number }; targetH: number }) => {
     const s = targetH / t.height;
     return (
@@ -1794,21 +1801,27 @@ function ThemeProps({ stateRef, theme }: { stateRef: Scene3DProps["stateRef"]; t
               <SceneryModel t={i % 2 === 0 ? sceneryT.tree1 : sceneryT.tree2} targetH={s.h * 1.45} />
             </group>
           )}
-          {theme === "city" && (
-            <mesh castShadow><boxGeometry args={[s.w, s.h, s.w * 0.72]} /><meshStandardMaterial color={colors.prop} emissive={colors.propAccent} emissiveIntensity={0.16} metalness={0.35} roughness={0.42} /></mesh>
+          {(theme === "city" || theme === "night") && (
+            <group position={[0, -s.h * 0.5, 0]}>
+              {i % 4 === 3
+                ? <SceneryModel t={sceneryT.lamp} targetH={s.h * 0.85} />
+                : <SceneryModel t={sceneryT.city} targetH={s.h * 1.6} />}
+            </group>
           )}
-          {theme === "highway" && (<>
-            <mesh castShadow><boxGeometry args={[0.16, s.h * 0.42, 0.16]} /><meshStandardMaterial color={colors.prop} metalness={0.52} roughness={0.28} /></mesh>
-            <mesh position={[0, s.h * 0.24, 0]}><sphereGeometry args={[0.13, 8, 8]} /><meshStandardMaterial color={colors.propAccent} emissive={colors.propAccent} emissiveIntensity={1.2} /></mesh>
-          </>)}
-          {theme === "mountain" && (<>
-            <mesh castShadow position={[0, -s.h * 0.08, 0]}><cylinderGeometry args={[s.w * 0.11, s.w * 0.14, s.h * 0.38, 5]} /><meshStandardMaterial color="#2a1a08" roughness={0.9} /></mesh>
-            <mesh castShadow position={[0, s.h * 0.14, 0]}><coneGeometry args={[s.w * 0.78, s.h * 0.85, 6]} /><meshStandardMaterial color={colors.prop} roughness={0.75} /></mesh>
-          </>)}
-          {theme === "night" && (<>
-            <mesh castShadow><boxGeometry args={[s.w, s.h, s.w * 0.72]} /><meshStandardMaterial color={colors.prop} roughness={0.45} /></mesh>
-            <mesh position={[0, s.h * 0.14, s.w * 0.36 + 0.01]}><boxGeometry args={[0.09, 0.09, 0.02]} /><meshStandardMaterial color={colors.propAccent} emissive={colors.propAccent} emissiveIntensity={2.0} /></mesh>
-          </>)}
+          {theme === "highway" && (
+            <group position={[0, -s.h * 0.3, 0]}>
+              {i % 3 === 1
+                ? <SceneryModel t={sceneryT.billboard} targetH={s.h * 0.95} />
+                : <SceneryModel t={sceneryT.lamp} targetH={s.h * 0.9} />}
+            </group>
+          )}
+          {theme === "mountain" && (
+            <group position={[0, -s.h * 0.5, 0]}>
+              {i % 3 === 2
+                ? <SceneryModel t={sceneryT.boulder} targetH={s.h * 0.7} />
+                : <SceneryModel t={sceneryT.pine} targetH={s.h * 1.5} />}
+            </group>
+          )}
           {theme === "moon" && (i % 3 === 0 ? (
             // Crater rim — a flattened ring half-sunk into the regolith
             <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[1, 1, 0.3]}>
