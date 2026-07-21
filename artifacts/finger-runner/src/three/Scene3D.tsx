@@ -939,8 +939,11 @@ const VEHICLE_MODEL: Record<string, { file: string; len: number; riderY: number;
   hoverboard:   { file: "veh_hoverboard.glb",   len: 0.95, riderY: 0.24, rotY: Math.PI / 2 },
   bmx:          { file: "veh_bmx.glb",          len: 1.45, riderY: 0.95, rotY: Math.PI / 2 },
   gokart:       { file: "veh_gokart.glb",       len: 1.40, riderY: 0.50, rotY: Math.PI / 2 },
-  firetruck:    { file: "veh_firetruck.glb",    len: 1.65, riderY: 1.18, rotY: Math.PI / 2 },
-  monstertruck: { file: "veh_monstertruck.glb", len: 1.60, riderY: 1.28, rotY: Math.PI / 2 },
+  // Closed-cab vehicles: the rider stands ON the roof (there's no way to seat
+  // them "inside" a solid-mesh cab), so riderY must land feet flush with the
+  // roof surface — the old procedural-body height left a visible gap/float.
+  firetruck:    { file: "veh_firetruck.glb",    len: 1.65, riderY: 0.98, rotY: Math.PI / 2 },
+  monstertruck: { file: "veh_monstertruck.glb", len: 1.60, riderY: 1.06, rotY: Math.PI / 2 },
   rocket:       { file: "veh_rocket.glb",       len: 1.75, riderY: 0.88, rotY: Math.PI / 2 },
   ufo:          { file: "veh_ufo.glb",          len: 1.00, riderY: 0.56, rotY: Math.PI / 2 },
 };
