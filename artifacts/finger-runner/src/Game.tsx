@@ -134,26 +134,26 @@ const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
 // `hill` = downhill grade (world tilt in the 3D scene — pure visual descent);
 // "ramp" entries in obs are jump kickers: ride into one for launch-assisted air.
 const LEVELS = [
-  { num:1, name:"Via Italia Downhill",  target:780,  theme:"italy"    as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0, hill:0.055,
-    obs:["cat","dog","poop","duck","cone","ramp","pinata","poop","pumpkin","ramp","duck","cat","pinata"] as ObstacleType[] },
-  { num:2, name:"Shopping District",    target:920,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0, hill:0.03,
-    obs:["cat","dog","poop","duck","undies","hydrant","ramp","pinata","trashcan","cone","cart","ramp","pinata","barrier"] as ObstacleType[] },
-  { num:3, name:"Downtown",             target:1000, theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6, hill:0.035,
-    obs:["dog","cone","poop","toilet","hydrant","newsbox","ramp","dino","undies","gnome","cart","pinata","pinata","barrier"] as ObstacleType[] },
-  { num:4, name:"City Center",          target:1080, theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2, hill:0.04,
-    obs:["cone","hydrant","toilet","newsbox","dino","gnome","ramp","flamingo","cart","undies","pinata","pinata","mailbox","barrier"] as ObstacleType[] },
-  { num:5, name:"Highway On-Ramp",      target:1160, theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8, hill:0.045,
-    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","ramp","trashcan","cart","pinata","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
-  { num:6, name:"Open Highway",         target:1240, theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4, hill:0.05,
-    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","ramp","stopsign","pinata","pinata","cactus","barrier","barrier"] as ObstacleType[] },
-  { num:7, name:"Mountain Pass",        target:1400, theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0, hill:0.065,
-    obs:["cactus","gnome","trashcan","mailbox","bicycle","ramp","stopsign","stopsign","pinata","ramp","pinata","barrier","barrier"] as ObstacleType[] },
-  { num:8, name:"Night Drive",          target:1560, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6, hill:0.045,
-    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","ramp","stopsign","stopsign","pinata","pinata","barrier","barrier"] as ObstacleType[] },
+  { num:1, name:"Via Italia Downhill",  target:780,  theme:"italy"    as Theme, speedMult:1.0,  minSpawn:135, ramp:6.0, hill:0.065,
+    obs:["cat","dog","poop","duck","cone","ramp","pinata","poop","pumpkin","ramp","duck","ramp","cat","pinata"] as ObstacleType[] },
+  { num:2, name:"Shopping District",    target:920,  theme:"suburb"   as Theme, speedMult:1.2,  minSpawn:122, ramp:6.0, hill:0.038,
+    obs:["cat","dog","poop","duck","undies","hydrant","ramp","pinata","trashcan","cone","cart","ramp","pinata","ramp","barrier"] as ObstacleType[] },
+  { num:3, name:"Downtown",             target:1000, theme:"city"     as Theme, speedMult:1.45, minSpawn:110, ramp:5.6, hill:0.042,
+    obs:["dog","cone","poop","toilet","hydrant","newsbox","ramp","dino","undies","gnome","ramp","cart","pinata","pinata","barrier"] as ObstacleType[] },
+  { num:4, name:"City Center",          target:1080, theme:"city"     as Theme, speedMult:1.75, minSpawn:100, ramp:5.2, hill:0.048,
+    obs:["cone","hydrant","toilet","newsbox","dino","gnome","ramp","flamingo","cart","undies","ramp","pinata","pinata","mailbox","barrier"] as ObstacleType[] },
+  { num:5, name:"Highway On-Ramp",      target:1160, theme:"highway"  as Theme, speedMult:2.1,  minSpawn:90,  ramp:4.8, hill:0.055,
+    obs:["hydrant","newsbox","cactus","dino","toilet","gnome","ramp","trashcan","cart","ramp","pinata","pinata","mailbox","bicycle","barrier"] as ObstacleType[] },
+  { num:6, name:"Open Highway",         target:1240, theme:"highway"  as Theme, speedMult:2.5,  minSpawn:80,  ramp:4.4, hill:0.06,
+    obs:["newsbox","cactus","gnome","trashcan","mailbox","bicycle","ramp","stopsign","pinata","ramp","pinata","cactus","barrier","barrier"] as ObstacleType[] },
+  { num:7, name:"Mountain Pass",        target:1400, theme:"mountain" as Theme, speedMult:3.0,  minSpawn:70,  ramp:4.0, hill:0.078,
+    obs:["cactus","gnome","trashcan","mailbox","bicycle","ramp","stopsign","stopsign","pinata","ramp","pinata","ramp","barrier","barrier"] as ObstacleType[] },
+  { num:8, name:"Night Drive",          target:1560, theme:"night"    as Theme, speedMult:3.6,  minSpawn:62,  ramp:3.6, hill:0.055,
+    obs:["trashcan","mailbox","bicycle","stopsign","bicycle","ramp","stopsign","stopsign","pinata","ramp","pinata","barrier","barrier"] as ObstacleType[] },
   // Finale: lunar gravity — jumps launch high and hang forever, so the level
   // runs fast and long to compensate. gravityMult scales the whole jump arc.
   { num:9, name:"Sea of Tranquility",   target:1700, theme:"moon"     as Theme, speedMult:3.2,  minSpawn:70,  ramp:3.6, gravityMult:0.38, hill:0.02,
-    obs:["trashcan","mailbox","dino","duck","stopsign","bicycle","ramp","toilet","pinata","pinata","barrier","barrier"] as ObstacleType[] },
+    obs:["trashcan","mailbox","dino","duck","stopsign","bicycle","ramp","toilet","pinata","ramp","pinata","barrier","barrier"] as ObstacleType[] },
 ];
 function getLevelDef(num: number) { return LEVELS[Math.min(num - 1, LEVELS.length - 1)]; }
 

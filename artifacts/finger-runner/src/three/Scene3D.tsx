@@ -3,7 +3,7 @@
 // frame via `stateRef` and imperatively positions Three.js objects. No
 // gameplay logic lives here — Game.tsx still owns physics, spawning,
 // collision, scoring, and persistence exactly as before.
-import { useMemo, useRef, useState, useEffect, Suspense } from "react";
+import { useMemo, useRef, useState, useEffect, Suspense, type ReactNode } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { PerspectiveCamera, Environment, Lightformer, Clone, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, SMAA, HueSaturation, BrightnessContrast, N8AO, ChromaticAberration } from "@react-three/postprocessing";
@@ -2139,6 +2139,33 @@ function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
   );
 }
 
+// Rolling terrain: rather than one constant grade for the whole level, the
+// pitch alternates between properly steep plunges and flatter breather
+// stretches as the course scrolls by. Two out-of-phase sines blended and
+// mildly sharpened (the pow) read as distinct sections rather than a smooth
+// ripple; the multiplier is clamped well above zero so the road is always
+// heading downhill, just at a varying steepness.
+function hillGradeAt(scroll: number, base: number): number {
+  const w = Math.sin(scroll * 0.0032) * 0.55 + Math.sin(scroll * 0.0009 + 1.7) * 0.35;
+  const shaped = Math.sign(w) * Math.abs(w) ** 0.7;
+  return base * Math.max(0.15, 1 + shaped * 0.85);
+}
+
+// Pitches the whole world group around the player (who rides the crest at
+// z=0) each frame, driven by hillGradeAt — the camera stays locked
+// dead-centre (see CameraRig), only the world tilts, so there's none of the
+// old panning-camera drift.
+function WorldTilt({ stateRef, hill, children }: { stateRef: Scene3DProps["stateRef"]; hill: number; children: ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const g = ref.current; if (!g) return;
+    const st = stateRef.current;
+    const grade = st.gameRunning ? hillGradeAt(st.worldScroll, hill) : hill;
+    g.rotation.x = -Math.atan(grade);
+  });
+  return <group ref={ref}>{children}</group>;
+}
+
 export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent, vehicle, charModel, vehicleColor, hill = 0 }: Scene3DProps) {
   return (
     <Canvas
@@ -2157,10 +2184,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
       <GhibliSky theme={theme} />
       {theme !== "moon" && <Birds theme={theme} />}
       <CameraRig stateRef={stateRef} />
-      {/* Downhill: the player rides the crest at z=0, so pitching the whole
-          world group around the origin drops the road away into the distance.
-          Positive rotation.x raises the far (-z) edge, so negate the grade. */}
-      <group rotation={[-Math.atan(hill), 0, 0]}>
+      <WorldTilt stateRef={stateRef} hill={hill}>
         <GroundAndRoad stateRef={stateRef} theme={theme} />
         {/* Model-driven pieces suspend while their GLBs stream in; the rest of
             the scene renders immediately so first paint stays instant. */}
@@ -2177,7 +2201,7 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
         <BloodPuddlePool stateRef={stateRef} sizeRef={sizeRef} />
         <PlatformPool stateRef={stateRef} sizeRef={sizeRef} />
         <RopePool stateRef={stateRef} sizeRef={sizeRef} />
-      </group>
+      </WorldTilt>
       <NeonBloom theme={theme} stateRef={stateRef} />
     </Canvas>
   );
