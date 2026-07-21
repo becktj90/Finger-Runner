@@ -393,6 +393,8 @@ export default function Game() {
 
   type Screen = "start"|"playing"|"levelComplete"|"dead"|"wardrobe"|"character";
   const [screen, setScreen] = useState<Screen>("start");
+  const [showLevels, setShowLevels] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [paused, setPaused] = useState(false);
   const [musicOn, setMusicOn] = useState(isMusicEnabled());
   const [currentLevel, setCurrentLevel] = useState(1);
@@ -2455,110 +2457,141 @@ export default function Game() {
 
       {/* ── Start screen ── */}
       {screen === "start" && (
-        <div style={{ ...overlay, background:"rgba(0,0,0,0.82)" }}>
-          <div className="arcade-neon-pulse" style={{ fontFamily:retroFont, fontSize:"1.4rem", color:"#ffee00", marginBottom:8, letterSpacing:"0.04em", textAlign:"center", textShadow:"0 0 12px #ffee00, 0 0 30px #ff8800" }}>
-            🛵 BOOTY BUTT SCOOTER
-          </div>
-          <p style={{ fontSize:"0.58rem", fontFamily:retroFont, margin:"8px auto 4px", maxWidth:500, lineHeight:2.5, color:"#00ffcc", textShadow:"0 0 8px #00ffcc", textAlign:"center" }}>
-            {STORY_INTRO}
-          </p>
-          <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff88ff", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff88ff", textAlign:"center" }}>
-            SWIPE ↑ JUMP · ↓ SLIDE · ← → SWITCH LANES · TAP = JUMP
-          </p>
-          <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff5555", lineHeight:2.5, letterSpacing:"0.03em", textShadow:"0 0 8px #ff5555", textAlign:"center" }}>
-            ⚔ SLASH BUTTON / F TO SWING THE LIGHTSABER
-          </p>
-          <p style={{ fontSize:"0.52rem", fontFamily:retroFont, margin:"0 0 4px", color:"#555", lineHeight:2.5, textAlign:"center" }}>
-            {VEHICLES.filter(v=>isVehicleUnlocked(v, ownedVehicles, maxLevel)).map(v=>v.emoji).join(" ")||"🛵"} rides unlocked · collect ★ coins
-          </p>
-          <div style={{ display:"flex", gap:16, marginTop:20, flexWrap:"wrap", justifyContent:"center" }}>
-            {/* Primary path: START routes through character select so first-time
-                players actually see Apollo/Rocco/Santi and their taglines
-                before jumping into gameplay. */}
-            <button onClick={openCharacterSelect} className="retro-btn retro-btn-chrome"
-              style={{ padding:"14px 30px", fontSize:"0.78rem", fontFamily:retroFont,
-                background:"transparent", color:"#ff4444",
-                border:"3px solid #ff4444",
-                boxShadow:"0 0 14px #ff4444, inset 0 0 14px rgba(255,68,68,0.08)",
-                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
-              ▶ START
+        <div style={{ ...overlay, background:"rgba(0,0,0,0.82)", overflowY:"auto", padding:"20px 16px" }}>
+          {/* Top-corner utility icons — modern-game convention: keep the hero
+              area clean, tuck secondary controls (info/settings) into small
+              icon buttons instead of walls of always-visible text. */}
+          {/* right:104 clears the always-present global music toggle
+              (top:18/right:18, ~80px wide, zIndex:20) pinned in this corner
+              on every screen. */}
+          <div style={{ position:"absolute", top:14, left:14, right:104, display:"flex", justifyContent:"space-between", zIndex:1 }}>
+            <button onClick={() => setShowInfo(true)} className="retro-btn" aria-label="How to play"
+              style={{ width:36, height:36, borderRadius:8, fontSize:"0.85rem", fontFamily:retroFont,
+                background:"rgba(0,0,0,0.6)", color:"#00ffcc", border:"2px solid #00ffcc55",
+                cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              ℹ
             </button>
-            {/* Quick-play with the last selected runner */}
+            <button onClick={handleToggleKids} className="retro-btn" aria-label="Toggle kids mode"
+              style={{ padding:"7px 12px", borderRadius:8, fontSize:"0.5rem", fontFamily:retroFont,
+                background: kidsMode ? "rgba(0,255,136,0.14)" : "rgba(0,0,0,0.6)",
+                color: kidsMode ? "#00ff88" : "#777",
+                border:`2px solid ${kidsMode ? "#00ff88" : "#444"}`,
+                cursor:"pointer", letterSpacing:"0.03em" }}>
+              🧒 KIDS {kidsMode ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          {/* Hero */}
+          <div style={{ marginTop:34, display:"flex", flexDirection:"column", alignItems:"center" }}>
+            <div className="arcade-neon-pulse" style={{ fontFamily:retroFont, fontSize:"1.5rem", color:"#ffee00", letterSpacing:"0.04em", textAlign:"center", textShadow:"0 0 12px #ffee00, 0 0 30px #ff8800" }}>
+              🛵 BOOTY BUTT SCOOTER
+            </div>
+            <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"10px 0 0", color:"#ff88ff", letterSpacing:"0.03em", textShadow:"0 0 8px #ff88ff", textAlign:"center" }}>
+              {kidsMode ? "HOLD LEFT/RIGHT TO HOP LANES" : "HOLD LEFT/RIGHT TO STEER, KART-STYLE"}
+            </p>
+          </div>
+
+          {/* Primary CTA — the one dominant action, routes through character
+              select so new players actually meet the roster before playing. */}
+          <button onClick={openCharacterSelect} className="retro-btn retro-btn-chrome"
+            style={{ marginTop:26, padding:"18px 54px", fontSize:"0.95rem", fontFamily:retroFont,
+              background:"rgba(255,68,68,0.08)", color:"#ff4444",
+              border:"3px solid #ff4444",
+              boxShadow:"0 0 22px #ff4444, inset 0 0 18px rgba(255,68,68,0.1)",
+              cursor:"pointer", letterSpacing:"0.06em", lineHeight:1.8 }}>
+            ▶ PLAY
+          </button>
+
+          {/* Secondary row */}
+          <div style={{ display:"flex", gap:10, marginTop:16, flexWrap:"wrap", justifyContent:"center" }}>
             <button onClick={() => startLevel(1)} className="retro-btn"
-              style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
-                background:"transparent", color:"#3dff5e",
-                border:"3px solid #3dff5e",
-                boxShadow:"0 0 14px #3dff5e, inset 0 0 14px rgba(61,255,94,0.08)",
-                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
+              style={{ padding:"10px 16px", fontSize:"0.58rem", fontFamily:retroFont,
+                background:"transparent", color:"#3dff5e", border:"2px solid #3dff5e",
+                boxShadow:"0 0 8px rgba(61,255,94,0.3)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
               QUICK PLAY
             </button>
             <button onClick={openWardrobe} className="retro-btn"
-              style={{ padding:"14px 22px", fontSize:"0.78rem", fontFamily:retroFont,
-                background:"transparent", color:"#aa44ff",
-                border:"3px solid #aa44ff",
-                boxShadow:"0 0 14px #aa44ff, inset 0 0 14px rgba(170,68,255,0.08)",
-                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
-              WARDROBE
+              style={{ padding:"10px 16px", fontSize:"0.58rem", fontFamily:retroFont,
+                background:"transparent", color:"#aa44ff", border:"2px solid #aa44ff",
+                boxShadow:"0 0 8px rgba(170,68,255,0.3)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+              GARAGE
             </button>
+            <button onClick={() => setShowLevels(v => !v)} className="retro-btn"
+              style={{ padding:"10px 16px", fontSize:"0.58rem", fontFamily:retroFont,
+                background: showLevels ? "rgba(0,170,255,0.12)" : "transparent", color:"#00aaff", border:"2px solid #00aaff",
+                boxShadow:"0 0 8px rgba(0,170,255,0.3)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+              LEVELS {showLevels ? "▲" : "▼"}
+            </button>
+            {isEndlessUnlocked() && (
+              <button onClick={() => startLevel(9)} className="retro-btn"
+                style={{ padding:"10px 16px", fontSize:"0.58rem", fontFamily:retroFont,
+                  background:"rgba(255,68,68,0.08)", color:"#ff4444", border:"2px solid #ff4444",
+                  boxShadow:"0 0 8px rgba(255,68,68,0.3)", cursor:"pointer", letterSpacing:"0.04em", lineHeight:1.8 }}>
+                ∞ ENDLESS
+              </button>
+            )}
           </div>
-          {/* Endless mode */}
-          {isEndlessUnlocked() && (
-            <button onClick={() => startLevel(9)} className="retro-btn"
-              style={{ marginTop:12, padding:"10px 20px", fontSize:"0.62rem", fontFamily:retroFont,
-                background:"rgba(255,68,68,0.10)", color:"#ff4444",
-                border:"3px solid #ff4444",
-                boxShadow:"0 0 14px rgba(255,68,68,0.35)",
-                cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
-              ∞ ENDLESS MODE
+
+          {/* Level select — collapsed by default so the home screen reads as
+              a menu, not a spreadsheet of every level at once. */}
+          {showLevels && (
+            <div style={{ marginTop:16, display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center", maxWidth:600 }}>
+              {LEVELS.map((lv, idx) => {
+                const unlocked = lv.num <= getMaxLevel();
+                const best = levelBests[idx];
+                const medal = getMedal(lv.num);
+                const neonBorder = medal === "gold" ? "#ffd700" : medal === "silver" ? "#c0c0c0" : medal === "bronze" ? "#cd7f32" : unlocked ? "#00aaff" : "#333";
+                return (
+                  <button key={lv.num}
+                    onClick={() => unlocked && startLevel(lv.num)}
+                    className={unlocked ? "retro-btn" : undefined}
+                    style={{ padding:"7px 11px", fontSize:"0.52rem", fontFamily:retroFont,
+                      background:"rgba(0,0,0,0.65)",
+                      color: unlocked ? "#fff" : "#444",
+                      border: `2px solid ${neonBorder}`,
+                      boxShadow: unlocked ? `0 0 7px ${neonBorder}` : "none",
+                      cursor: unlocked ? "pointer" : "default",
+                      display:"flex", flexDirection:"column", alignItems:"center", gap:2, minWidth:96, lineHeight:2 }}>
+                    <span>{unlocked ? `${lv.num}. ${lv.name}` : `🔒 LV${lv.num}`}</span>
+                    {unlocked && (
+                      <span style={{ fontSize:"0.48rem", color: medal ? MEDAL_COLOR[medal] : "#00ffcc" }}>
+                        {medal ? MEDAL_EMOJI[medal] : "–"} {best > 0 ? `${best}/${lv.target}` : "no run"}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <p style={{ fontSize:"0.48rem", fontFamily:retroFont, margin:"18px 0 0", color:"#444", lineHeight:2, textAlign:"center" }}>
+            {VEHICLES.filter(v=>isVehicleUnlocked(v, ownedVehicles, maxLevel)).map(v=>v.emoji).join(" ")||"🛵"} rides unlocked · collect ★ coins
+          </p>
+        </div>
+      )}
+
+      {/* ── How-to-play info modal ── */}
+      {showInfo && (
+        <div style={{ position:"absolute", inset:0, zIndex:20, background:"rgba(0,0,0,0.88)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
+          onClick={() => setShowInfo(false)}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth:480, width:"100%", background:"rgba(0,10,10,0.95)", border:"2px solid #00ffcc55",
+              borderRadius:8, padding:"22px 20px", boxShadow:"0 0 30px rgba(0,255,204,0.15)" }}>
+            <p style={{ fontSize:"0.58rem", fontFamily:retroFont, margin:"0 0 14px", lineHeight:2.4, color:"#00ffcc", textShadow:"0 0 8px #00ffcc", textAlign:"center" }}>
+              {STORY_INTRO}
+            </p>
+            <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff88ff", lineHeight:2.4, letterSpacing:"0.03em", textShadow:"0 0 8px #ff88ff", textAlign:"center" }}>
+              SWIPE ↑ JUMP · ↓ SLIDE · ← → STEER/LANES · TAP = JUMP
+            </p>
+            <p style={{ fontSize:"0.54rem", fontFamily:retroFont, margin:"2px 0 0", color:"#ff5555", lineHeight:2.4, letterSpacing:"0.03em", textShadow:"0 0 8px #ff5555", textAlign:"center" }}>
+              ⚔ SLASH BUTTON / F TO SWING THE LIGHTSABER
+            </p>
+            <button onClick={() => setShowInfo(false)} className="retro-btn"
+              style={{ marginTop:16, width:"100%", padding:"10px", fontSize:"0.6rem", fontFamily:retroFont,
+                background:"transparent", color:"#00ffcc", border:"2px solid #00ffcc",
+                cursor:"pointer", letterSpacing:"0.05em" }}>
+              GOT IT
             </button>
-          )}
-          {/* Easy / kids mode toggle */}
-          <button onClick={handleToggleKids} className="retro-btn"
-            style={{ marginTop:14, padding:"10px 20px", fontSize:"0.62rem", fontFamily:retroFont,
-              background: kidsMode ? "rgba(0,255,136,0.12)" : "transparent",
-              color: kidsMode ? "#00ff88" : "#00aa66",
-              border:`3px solid ${kidsMode ? "#00ff88" : "#00aa66"}`,
-              boxShadow: kidsMode ? "0 0 14px rgba(0,255,136,0.4)" : "0 0 8px rgba(0,170,102,0.25)",
-              cursor:"pointer", letterSpacing:"0.05em", lineHeight:1.8 }}>
-            🧒 KIDS EASY MODE: {kidsMode ? "ON" : "OFF"}
-          </button>
-          {kidsMode ? (
-            <p style={{ fontSize:"0.5rem", fontFamily:retroFont, margin:"8px 0 0", color:"#00ff88aa", lineHeight:2.2, textAlign:"center" }}>
-              SLOWER · MORE SPACE · FLOATIER JUMPS · FASTER SABER<br />
-              TAP LEFT/RIGHT TO HOP LANES
-            </p>
-          ) : (
-            <p style={{ fontSize:"0.5rem", fontFamily:retroFont, margin:"8px 0 0", color:"#00aaff99", lineHeight:2.2, textAlign:"center" }}>
-              HOLD LEFT/RIGHT TO STEER — KART-STYLE FREE POSITIONING
-            </p>
-          )}
-          {/* Level select */}
-          <div style={{ marginTop:18, display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center", maxWidth:600 }}>
-            {LEVELS.map((lv, idx) => {
-              const unlocked = lv.num <= getMaxLevel();
-              const best = levelBests[idx];
-              const medal = getMedal(lv.num);
-              const neonBorder = medal === "gold" ? "#ffd700" : medal === "silver" ? "#c0c0c0" : medal === "bronze" ? "#cd7f32" : unlocked ? "#00aaff" : "#333";
-              return (
-                <button key={lv.num}
-                  onClick={() => unlocked && startLevel(lv.num)}
-                  className={unlocked ? "retro-btn" : undefined}
-                  style={{ padding:"7px 11px", fontSize:"0.52rem", fontFamily:retroFont,
-                    background:"rgba(0,0,0,0.65)",
-                    color: unlocked ? "#fff" : "#444",
-                    border: `2px solid ${neonBorder}`,
-                    boxShadow: unlocked ? `0 0 7px ${neonBorder}` : "none",
-                    cursor: unlocked ? "pointer" : "default",
-                    display:"flex", flexDirection:"column", alignItems:"center", gap:2, minWidth:96, lineHeight:2 }}>
-                  <span>{unlocked ? `${lv.num}. ${lv.name}` : `🔒 LV${lv.num}`}</span>
-                  {unlocked && (
-                    <span style={{ fontSize:"0.48rem", color: medal ? MEDAL_COLOR[medal] : "#00ffcc" }}>
-                      {medal ? MEDAL_EMOJI[medal] : "–"} {best > 0 ? `${best}/${lv.target}` : "no run"}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
           </div>
         </div>
       )}
