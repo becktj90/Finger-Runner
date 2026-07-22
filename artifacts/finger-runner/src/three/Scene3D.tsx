@@ -15,7 +15,7 @@ import {
   ROAD_SURFACE_OFFSET, FINGER_TIP_OFFSET, HIDE_Z, BARRIER_GAP,
   POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
-  getCharacterDef,
+  getCharacterDef, NPC_Z_SCALE,
   type GameSceneState, type Theme3D,
 } from "./coords";
 
@@ -2286,19 +2286,20 @@ function hillGradeAt(scroll: number, base: number): number {
 }
 
 // ── AI racer pack ─────────────────────────────────────────────────────────
-// Cosmetic-only rivals riding alongside the player on fixed lanes, reusing
-// the exact same VehicleBody/AnimalBody the player's own ride uses instead
-// of a second rendering system. Positioned purely off the delta between the
-// NPC's `progress` accumulator and the player's `levelScore` — both are the
-// same time-based units (see stepSim's NPC pace loop in Game.tsx), so
-// "ahead" and "behind" fall straight out of a subtraction with nothing to
-// keep in sync separately.
-const NPC_Z_SCALE = 0.05;    // world depth units per point of lead/lag
+// Cosmetic-only rendering of rivals whose actual behavior (rubber-banding,
+// obstacle dodge/crash, npc-vs-npc bumping) lives in Game.tsx's stepSim —
+// this just reads the result each frame. Reuses the exact same
+// VehicleBody/AnimalBody the player's own ride uses instead of a second
+// rendering system. Positioned purely off the delta between the NPC's
+// `progress` accumulator and the player's `levelScore` — both are the same
+// time-based units, so "ahead" and "behind" fall straight out of a
+// subtraction with nothing to keep in sync separately.
 const NPC_VISIBLE_RANGE = 8; // beyond this the rival has scrolled off-screen
 const NPC_BASE_SCALE = 0.72; // a touch smaller than the player so they read as rivals, not clones
 
 function NpcRacer({ stateRef, npcIndex }: { stateRef: Scene3DProps["stateRef"]; npcIndex: number }) {
   const group = useRef<THREE.Group>(null);
+  const bodyGroup = useRef<THREE.Group>(null);
   const [ids, setIds] = useState<{ charId: string; vehicle: string } | null>(null);
   const idsRef = useRef("");
 
@@ -2312,7 +2313,26 @@ function NpcRacer({ stateRef, npcIndex }: { stateRef: Scene3DProps["stateRef"]; 
     if (!st.gameRunning || st.raceCountdown > 0) { g.position.set(0, 0, HIDE_Z); return; }
     const delta = npc.progress - st.levelScore; // + = ahead of the player, - = behind
     if (Math.abs(delta) * NPC_Z_SCALE > NPC_VISIBLE_RANGE) { g.position.set(0, 0, HIDE_Z); return; }
-    g.position.set(LANE_X + npc.lane * LANE_OFFSET, 0, -delta * NPC_Z_SCALE);
+    g.position.set(LANE_X + npc.laneVisual * LANE_OFFSET, 0, -delta * NPC_Z_SCALE);
+    const bg = bodyGroup.current;
+    if (bg) {
+      if (npc.crashed) {
+        // Tumbling wipeout: fast spin that winds down as crashTimer runs out,
+        // plus a wobbling dip like the rider actually hit the deck. crashSeed
+        // (fixed per-crash) picks the spin axis/direction so every wipeout
+        // doesn't look identical.
+        const spin = npc.crashTimer * 0.22;
+        bg.rotation.z = Math.sin(npc.crashSeed * 6.28) >= 0 ? spin : -spin;
+        bg.rotation.x = 0.3 + Math.sin(npc.crashTimer * 0.5 + npc.crashSeed * 10) * 0.25;
+        bg.position.y = Math.max(0, Math.sin(Math.min(1, npc.crashTimer / 12) * Math.PI)) * -0.12;
+      } else {
+        // Banking lean into an active lane change — reads as a real swerve
+        // rather than a flat lateral slide.
+        bg.rotation.z = (npc.lane - npc.laneVisual) * -0.5;
+        bg.rotation.x = 0;
+        bg.position.y = 0;
+      }
+    }
   });
 
   if (!ids) return <group ref={group} position={[0, 0, HIDE_Z]} />;
@@ -2322,7 +2342,7 @@ function NpcRacer({ stateRef, npcIndex }: { stateRef: Scene3DProps["stateRef"]; 
   const pose = vm ? { ...basePose, riderY: vm.riderY, lift: vm.lift ?? basePose.lift } : basePose;
   return (
     <group ref={group} position={[0, 0, HIDE_Z]} scale={NPC_BASE_SCALE}>
-      <group position={[0, pose.lift ?? 0.02, 0]} rotation={[0, Math.PI, 0]}>
+      <group ref={bodyGroup} position={[0, pose.lift ?? 0.02, 0]} rotation={[0, Math.PI, 0]}>
         {vm && (
           <Suspense fallback={null}>
             <VehicleBody file={vm.file} len={vm.len} rotY={vm.rotY} />

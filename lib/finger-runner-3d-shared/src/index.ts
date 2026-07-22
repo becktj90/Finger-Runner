@@ -16,6 +16,17 @@ export const ROAD_SURFACE_OFFSET = 108;
 export const FINGER_TIP_OFFSET = 90;
 export const HIDE_Z = -9999;
 
+// ── AI racer pack ─────────────────────────────────────────────────────────
+// Shared between Game.tsx (physics: rubber-banding, obstacle dodge/crash,
+// npc-vs-npc bumping) and Scene3D.tsx (rendering the NPCs' 3D depth) so both
+// sides agree on exactly where an NPC sits in the world. See NPC_Z_SCALE's
+// use in Game.tsx for how it doubles as the physics-side collision lookup.
+// Deliberately the SAME three lanes real obstacles spawn in (-1/0/1) —
+// racers need to actually be in a hazard's lane to dodge or crash into it,
+// so this can't drift from OBSTACLE_DIMS' lane assignment in Game.tsx.
+export const RACE_NPC_LANES = [-1, 1, 0];
+export const NPC_Z_SCALE = 0.05; // world depth units (Scene3D) per point of NPC lead/lag
+
 export const SLIDE_FRAMES = 34;
 export const SLIDE_DUCK = 58;
 export const BARRIER_GAP = 52;

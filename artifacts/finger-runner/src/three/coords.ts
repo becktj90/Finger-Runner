@@ -24,6 +24,7 @@ export {
   BLOOM_CONFIG, BLOOM_LAYER,
   CHARACTERS, DEFAULT_CHARACTER, getCharacterDef,
   BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
+  RACE_NPC_LANES, NPC_Z_SCALE,
   type Theme3D, type ThemePalette, type ObstacleRenderKind, type HatId, type BloomThemeConfig,
   type CharacterId, type CharacterDef, type CharacterTraits,
 } from "@workspace/finger-runner-3d-shared";
@@ -39,7 +40,11 @@ export interface PowerUp3D { x: number; y: number; type: string; phase: number; 
 export interface Platform3D { x: number; y: number; w: number; }
 export interface RopeScroll3D { x: number; anchorY: number; length: number; }
 export interface ActiveSwing3D { anchorX: number; anchorY: number; length: number; angle: number; angVel: number; swingFrames: number; }
-export interface RaceNpc3D { charId: string; vehicle: string; lane: number; pace: number; progress: number; }
+export interface RaceNpc3D {
+  charId: string; vehicle: string; lane: number; laneVisual: number;
+  pace: number; basePace: number; progress: number;
+  crashed: boolean; crashTimer: number; crashSeed: number;
+}
 
 export interface GameSceneState {
   gameRunning: boolean;

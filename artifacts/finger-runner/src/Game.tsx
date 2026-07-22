@@ -20,6 +20,7 @@ import {
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
   getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
   LANE_HIT_RADIUS, STEER_CLAMP, CHARACTERS,
+  DEPTH_SCALE, NPC_Z_SCALE, RACE_NPC_LANES, FINGER_CENTER_X,
   type CharacterTraits,
 } from "./three/coords";
 
@@ -45,12 +46,26 @@ interface PowerUp { x: number; y: number; type: PowerUpType; phase: number; }
 interface Platform { x: number; y: number; w: number; }
 interface RopeScroll { x: number; anchorY: number; length: number; }
 interface ActiveSwing { anchorX: number; anchorY: number; length: number; angle: number; angVel: number; swingFrames: number; }
-// A cute background racer — purely cosmetic (no collision, no obstacle
-// avoidance): its own progress accumulates at a fixed pace and its 3D
-// position is derived from how far ahead/behind that puts it vs the
-// player's levelScore. Comparing final `progress` to the player's final
-// levelScore is also what produces the post-race leaderboard placement.
-interface RaceNpc { charId: string; vehicle: string; lane: number; pace: number; progress: number; }
+// A cute AI rival racer. Its `progress` accumulates each frame at `pace`
+// (rubber-banded toward the player's levelScore, Mario-Kart catch-up style)
+// and its 3D position is derived from how far ahead/behind that puts it —
+// comparing final `progress` to the player's final levelScore is also what
+// produces the post-race leaderboard placement. Unlike a pure background
+// prop, it actually shares the road: it projects its own position into the
+// real obstacle-x coordinate space (see npcVirtualX in stepSim) so it can
+// dodge or crash into the same hazards the player does, and it can bump —
+// or get bumped by — another NPC riding shoulder-to-shoulder in the same lane.
+interface RaceNpc {
+  charId: string; vehicle: string;
+  lane: number;        // target lane — dodge/overtake logic steers this
+  laneVisual: number;  // eased current lane position (rendering + proximity checks)
+  pace: number;        // this frame's effective speed (after rubber-banding)
+  basePace: number;     // original randomized personality pace rubber-banding scales from
+  progress: number;
+  crashed: boolean;
+  crashTimer: number;  // frames left before recovering from a crash
+  crashSeed: number;   // fixed per-crash random value driving the tumble visual
+}
 
 // Pushes into a pooled entity array only while under its 3D render pool
 // cap (see three/coords.ts POOL_* constants). Without this, a level or
@@ -108,6 +123,23 @@ const RACE_COUNTDOWN_FRAMES = 180; // 3s hold at the start line before "GO!"
 // spawn point) and the levelScore lead time so it visually reaches the
 // rider right as the target distance is actually hit.
 const FINISH_SPAWN_LEAD = 120;
+// Rubber-banding: the further an NPC's lead/lag drifts from the player, the
+// harder its pace gets pulled back toward basePace*1 — keeps the pack close
+// (Mario-Kart catch-up) without ever fully erasing a well-earned lead.
+const NPC_RUBBERBAND_RANGE = 220;   // progress-unit spread over which the pull ramps to max
+const NPC_RUBBERBAND_MAX = 0.35;    // +/-35% pace adjustment at the extreme
+// Obstacle reaction: an NPC "sees" a same-lane hazard once it's within this
+// many old-pixel-space units of its own (virtual) position, and either
+// swerves to an open lane or, if it fails to react in time, crashes.
+const NPC_HAZARD_LOOKAHEAD = 50;
+const NPC_DODGE_CHANCE = 0.6;
+const NPC_CRASH_FRAMES = 55;        // ~0.9s wipeout hold before recovering
+const NPC_CRASH_PROGRESS_PENALTY = 22;
+// NPC-vs-NPC bumping: riding shoulder-to-shoulder in the same lane for a
+// stretch has a small per-frame chance of a bump-crash, like jostling for
+// position in real kart racers.
+const NPC_BUMP_PROGRESS_GAP = 9;
+const NPC_BUMP_CHANCE = 0.012;
 
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
@@ -1434,13 +1466,18 @@ export default function Game() {
     {
       const npcRoster = ["bmx", "gokart", "monstertruck"];
       const npcChars = CHARACTERS.filter(c => c.id !== getSelectedCharacter());
-      st.npcs = npcRoster.map((veh, i) => ({
-        charId: (npcChars[i % npcChars.length] ?? CHARACTERS[i % CHARACTERS.length]).id,
-        vehicle: veh,
-        lane: [-1.45, 1.45, -0.55][i] ?? 0,
-        pace: 0.6 * (0.86 + Math.random() * 0.30),
-        progress: 0,
-      }));
+      st.npcs = npcRoster.map((veh, i) => {
+        const lane = RACE_NPC_LANES[i] ?? 0;
+        const basePace = 0.6 * (0.86 + Math.random() * 0.30);
+        return {
+          charId: (npcChars[i % npcChars.length] ?? CHARACTERS[i % CHARACTERS.length]).id,
+          vehicle: veh,
+          lane, laneVisual: lane,
+          pace: basePace, basePace,
+          progress: 0,
+          crashed: false, crashTimer: 0, crashSeed: 0,
+        };
+      });
     }
     st.finishSpawned = false;
     st.raceCountdown = RACE_COUNTDOWN_FRAMES;
@@ -1566,7 +1603,6 @@ export default function Game() {
         const scoreGain = st.boostTimer > 0 ? 0.9 : 0.6;
         st.levelScore += scoreGain;
         st.totalScore += scoreGain;
-        for (const npc of st.npcs) npc.progress += npc.pace;
 
         // Finish arch: spawn once the rider is close enough to the target
         // that it scrolls into place right as the line is actually hit.
@@ -1842,6 +1878,82 @@ export default function Game() {
           }
           if (o.x < -150) st.obstacles.splice(i, 1);
         }
+
+        // ── AI racer pack: rubber-band pace, obstacle dodge/crash, npc bumping ──
+        // Runs after the obstacle pool's own scroll/collision pass above, so
+        // st.obstacles already reflects this frame's positions — the NPCs
+        // react to the exact same world the player just did.
+        const npcCrash = (npc: RaceNpc) => {
+          npc.crashed = true;
+          npc.crashTimer = NPC_CRASH_FRAMES;
+          npc.crashSeed = Math.random();
+          npc.progress = Math.max(0, npc.progress - NPC_CRASH_PROGRESS_PENALTY);
+          const npcX = FINGER_CENTER_X + (npc.progress - st.levelScore) * (NPC_Z_SCALE / DEPTH_SCALE);
+          for (let s = 0; s < 10; s++) {
+            const a = Math.random() * Math.PI * 2; const sp = 1.5 + Math.random() * 3.5;
+            pushCapped(st.particles, POOL_PARTICLES, {
+              x: npcX, y: roadY - 20,
+              vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5,
+              life: 18 + Math.random() * 12, size: 3 + Math.random() * 4,
+              color: "#cbb79a", shape: "circle",
+            });
+          }
+        };
+        const nearHazard = (lane: number, npcX: number) => {
+          let hazard: Obstacle | null = null; let hazardDist = Infinity;
+          for (const o of st.obstacles) {
+            if (o.type === "ramp" || o.type === "start" || o.type === "finish") continue;
+            if (Math.abs(o.lane - lane) >= LANE_HIT_RADIUS) continue;
+            const dist = (o.x + o.obsWidth / 2) - npcX;
+            if (dist < -10 || dist > NPC_HAZARD_LOOKAHEAD) continue;
+            if (dist < hazardDist) { hazardDist = dist; hazard = o; }
+          }
+          return hazard;
+        };
+        for (const npc of st.npcs) {
+          if (npc.crashed) {
+            npc.crashTimer--;
+            if (npc.crashTimer <= 0) npc.crashed = false;
+          } else {
+            // Rubber-band: pull pace back toward basePace the further the
+            // NPC's lead/lag drifts from the player, Mario-Kart catch-up
+            // style — keeps the pack close without erasing a real lead.
+            const delta = npc.progress - st.levelScore; // + ahead, - behind
+            const pull = Math.max(-1, Math.min(1, -delta / NPC_RUBBERBAND_RANGE)) * NPC_RUBBERBAND_MAX;
+            npc.pace = npc.basePace * (1 + pull);
+
+            // Project into the same old-pixel-space x the obstacle pool
+            // scrolls in — the identical ratio Scene3D uses to place this
+            // NPC's 3D depth — so "is a hazard right where this NPC is
+            // about to be" matches what's actually on screen.
+            const npcX = FINGER_CENTER_X + delta * (NPC_Z_SCALE / DEPTH_SCALE);
+            const hazard = nearHazard(npc.lane, npcX);
+            if (hazard) {
+              const otherLanes = RACE_NPC_LANES.filter(l => Math.abs(l - npc.lane) > 0.01);
+              const openLanes = otherLanes.filter(l => !nearHazard(l, npcX));
+              const dodgeTargets = openLanes.length > 0 ? openLanes : otherLanes;
+              if (Math.random() < NPC_DODGE_CHANCE && dodgeTargets.length > 0) {
+                npc.lane = dodgeTargets[Math.floor(Math.random() * dodgeTargets.length)];
+              } else {
+                npcCrash(npc);
+              }
+            }
+          }
+          npc.laneVisual += (npc.lane - npc.laneVisual) * 0.08;
+        }
+        // Neck-and-neck bumping: riding shoulder-to-shoulder in the same lane
+        // for a stretch carries a small per-frame chance one of the pair
+        // spins out, like jostling for position in a real kart race.
+        for (let a = 0; a < st.npcs.length; a++) {
+          for (let b = a + 1; b < st.npcs.length; b++) {
+            const n1 = st.npcs[a], n2 = st.npcs[b];
+            if (n1.crashed || n2.crashed) continue;
+            if (Math.abs(n1.laneVisual - n2.laneVisual) >= LANE_HIT_RADIUS) continue;
+            if (Math.abs(n1.progress - n2.progress) >= NPC_BUMP_PROGRESS_GAP) continue;
+            if (Math.random() < NPC_BUMP_CHANCE) npcCrash(Math.random() < 0.5 ? n1 : n2);
+          }
+        }
+        for (const npc of st.npcs) { if (!npc.crashed) npc.progress += npc.pace; }
 
         // ── Timing telegraph ──────────────────────────────────────────────────
         // Find the nearest same-lane hazard still ahead and, based on how many
