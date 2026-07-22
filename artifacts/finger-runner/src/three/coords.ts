@@ -39,6 +39,7 @@ export interface PowerUp3D { x: number; y: number; type: string; phase: number; 
 export interface Platform3D { x: number; y: number; w: number; }
 export interface RopeScroll3D { x: number; anchorY: number; length: number; }
 export interface ActiveSwing3D { anchorX: number; anchorY: number; length: number; angle: number; angVel: number; swingFrames: number; }
+export interface RaceNpc3D { charId: string; vehicle: string; lane: number; pace: number; progress: number; }
 
 export interface GameSceneState {
   gameRunning: boolean;
@@ -72,4 +73,7 @@ export interface GameSceneState {
   platforms: Platform3D[];
   ropes: RopeScroll3D[];
   activeSwing: ActiveSwing3D | null;
+  npcs: RaceNpc3D[];
+  raceCountdown: number;
+  levelScore: number;
 }

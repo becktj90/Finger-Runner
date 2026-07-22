@@ -19,7 +19,7 @@ import {
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
   SLIDE_FRAMES, SLIDE_DUCK, BARRIER_GAP,
   getCharacterDef, BOOST_FRAMES, BOOST_MULT, BOOST_COOLDOWN, BOOST_GAS_COLORS,
-  LANE_HIT_RADIUS, STEER_CLAMP,
+  LANE_HIT_RADIUS, STEER_CLAMP, CHARACTERS,
   type CharacterTraits,
 } from "./three/coords";
 
@@ -33,7 +33,7 @@ const CharacterSelectScreen = lazy(() => import("./components/CharacterSelectScr
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ObstacleType = "ramp"|"mailbox"|"hydrant"|"stopsign"|"trashcan"|"dog"|"cat"|"bicycle"|"gnome"|"cone"|"newsbox"|"barrier"|"pumpkin"|"cactus"|"flamingo"|"cart"
-  |"poop"|"toilet"|"duck"|"dino"|"pinata"|"undies";
+  |"poop"|"toilet"|"duck"|"dino"|"pinata"|"undies"|"start"|"finish";
 type Theme = "italy"|"suburb"|"city"|"highway"|"mountain"|"night"|"moon";
 
 interface Obstacle { x: number; obsWidth: number; obsHeight: number; type: ObstacleType; passed: boolean; lane: number; }
@@ -45,6 +45,12 @@ interface PowerUp { x: number; y: number; type: PowerUpType; phase: number; }
 interface Platform { x: number; y: number; w: number; }
 interface RopeScroll { x: number; anchorY: number; length: number; }
 interface ActiveSwing { anchorX: number; anchorY: number; length: number; angle: number; angVel: number; swingFrames: number; }
+// A cute background racer — purely cosmetic (no collision, no obstacle
+// avoidance): its own progress accumulates at a fixed pace and its 3D
+// position is derived from how far ahead/behind that puts it vs the
+// player's levelScore. Comparing final `progress` to the player's final
+// levelScore is also what produces the post-race leaderboard placement.
+interface RaceNpc { charId: string; vehicle: string; lane: number; pace: number; progress: number; }
 
 // Pushes into a pooled entity array only while under its 3D render pool
 // cap (see three/coords.ts POOL_* constants). Without this, a level or
@@ -96,6 +102,13 @@ const STEER_ACCEL = 0.007;      // lateral accel per frame while held
 const STEER_FRICTION = 0.90;    // per-frame velocity decay (both held and released)
 const STEER_MAX_VEL = 0.07;     // hard velocity cap
 
+// ── Race: start/finish banners + AI pack ────────────────────────────────
+const RACE_COUNTDOWN_FRAMES = 180; // 3s hold at the start line before "GO!"
+// Old-pixel-space x a finish banner is spawned at (matches the obstacle
+// spawn point) and the levelScore lead time so it visually reaches the
+// rider right as the target distance is actually hit.
+const FINISH_SPAWN_LEAD = 120;
+
 function getGroundY(h: number) { return h - ROAD_SURFACE_OFFSET - FINGER_TIP_OFFSET - 8; }
 
 // ── Level definitions ─────────────────────────────────────────────────────────
@@ -127,6 +140,8 @@ const OBSTACLE_DIMS: Record<ObstacleType, { w: number; h: number }> = {
   cactus:   { w:22, h:74 },   // tall skinny desert cactus
   stopsign: { w:22, h:88 },
   barrier:  { w:44, h:170 },  // overhead gantry — collision uses BARRIER_GAP, not this height
+  start:    { w:90, h:140 },  // race-start arch — friendly, like ramp: never crashes
+  finish:   { w:90, h:140 },  // race-finish arch — friendly, like ramp: never crashes
 };
 
 // Per-level obstacle pools. Repeated entries bias the random pick, so the mix
@@ -367,6 +382,10 @@ export default function Game() {
     saberCooldown: 0,
     kidsMode: getKidsMode(),
     traits: null as CharacterTraits | null,
+    // ── Race: start/finish banners + AI pack + leaderboard ──
+    raceCountdown: 0,       // frames left in the pre-race "3-2-1-GO" hold
+    npcs: [] as RaceNpc[],
+    finishSpawned: false,   // has the finish banner been dropped into the world yet
     worldScroll: 0,
     boostTimer: 0,
     boostCooldown: 0,
@@ -413,6 +432,7 @@ export default function Game() {
   const [levelBests, setLevelBests] = useState<number[]>(() => LEVELS.map(lv => getLevelBest(lv.num)));
   const [completedLevelPrevBest, setCompletedLevelPrevBest] = useState(0);
   const [completedLevelMedal, setCompletedLevelMedal] = useState<Medal | null>(null);
+  const [raceResults, setRaceResults] = useState<{ name: string; emoji: string; place: number; isPlayer: boolean }[]>([]);
   const [saberLevel, setSaberLevelState] = useState(getSaberLevel());
   const [kidsMode, setKidsModeState] = useState(getKidsMode());
 
@@ -1156,6 +1176,20 @@ export default function Game() {
     saveLevelBest(lvl, st.levelScore);
     setLevelBests(LEVELS.map(lv => getLevelBest(lv.num)));
     setCompletedLevelMedal(getMedal(lvl));
+    // ── Race leaderboard: rank the player against the AI pack by final
+    // progress (same units on both sides — levelScore vs npc.progress). ──
+    {
+      const playerChar = getCharacterDef(getSelectedCharacter());
+      const entries = [
+        { name: playerChar.name, emoji: playerChar.emoji, progress: st.levelScore, isPlayer: true },
+        ...st.npcs.map(n => {
+          const c = getCharacterDef(n.charId);
+          return { name: c.name, emoji: c.emoji, progress: n.progress, isPlayer: false };
+        }),
+      ];
+      entries.sort((a, b) => b.progress - a.progress);
+      setRaceResults(entries.map((e, i) => ({ name: e.name, emoji: e.emoji, place: i + 1, isPlayer: e.isPlayer })));
+    }
     // Check for vehicle unlock at next level
     const nextUnlock = VEHICLES.find(v => v.cost == null && v.unlockLevel === lvl + 1);
     setUnlockedVehicle(nextUnlock || null);
@@ -1394,6 +1428,25 @@ export default function Game() {
     st.steerLeftHeld = false;
     st.steerRightHeld = false;
     st.lastObstacleLane = 0;
+    // ── Race: seed 3 AI pack racers, each on a different cute ride, with a
+    // randomized pace centred on the player's own nominal scoreGain so the
+    // pack stays close — standings genuinely shuffle from run to run.
+    {
+      const npcRoster = ["bmx", "gokart", "monstertruck"];
+      const npcChars = CHARACTERS.filter(c => c.id !== getSelectedCharacter());
+      st.npcs = npcRoster.map((veh, i) => ({
+        charId: (npcChars[i % npcChars.length] ?? CHARACTERS[i % CHARACTERS.length]).id,
+        vehicle: veh,
+        lane: [-1.45, 1.45, -0.55][i] ?? 0,
+        pace: 0.6 * (0.86 + Math.random() * 0.30),
+        progress: 0,
+      }));
+    }
+    st.finishSpawned = false;
+    st.raceCountdown = RACE_COUNTDOWN_FRAMES;
+    // Start arch sits just ahead of the rider so crossing it is the very
+    // first thing that happens when the countdown hits GO.
+    st.obstacles.push({ x: 220, obsWidth: 90, obsHeight: 140, type: "start", passed: false, lane: 0 });
     st.dialog = { text: LEVEL_STORY[levelNum] || pick(charLineFor("start")), life: 200, maxLife: 200 };
     st.dialogCooldown = 320;
     setCurrentLevel(levelNum);
@@ -1498,11 +1551,29 @@ export default function Game() {
       if (st.gameRunning && !st.paused) {
         st.time++;
         if (st.time % 60 === 0) incrementStat("playTimeSeconds");
+
+        // Pre-race hold: "3-2-1-GO" at the start line. Freeze scoring,
+        // obstacles, the scroll, and the AI pack until it elapses, so
+        // everyone genuinely starts together.
+        if (st.raceCountdown > 0) {
+          st.raceCountdown--;
+          if (st.raceCountdown === 0) showDialog("GO!!!", 45);
+          return;
+        }
+
         // Turbo pays: +50% score rate while boosting, so the speed burst
         // finishes the level faster instead of just raising crash risk.
         const scoreGain = st.boostTimer > 0 ? 0.9 : 0.6;
         st.levelScore += scoreGain;
         st.totalScore += scoreGain;
+        for (const npc of st.npcs) npc.progress += npc.pace;
+
+        // Finish arch: spawn once the rider is close enough to the target
+        // that it scrolls into place right as the line is actually hit.
+        if (!st.finishSpawned && lvlDef.target - st.levelScore <= FINISH_SPAWN_LEAD) {
+          st.finishSpawned = true;
+          st.obstacles.push({ x: width + 80, obsWidth: 90, obsHeight: 140, type: "finish", passed: false, lane: 0 });
+        }
 
         // Check level completion
         if (st.levelScore >= lvlDef.target) {
@@ -1676,6 +1747,13 @@ export default function Game() {
           const obsTopSlice = roadY - o.obsHeight;
           const vReach = saberReach * 0.6;
           const fingerHigh = fingerTipY - vReach;
+          // Race start/finish arches — pure decoration: never crash, never
+          // slice, just scroll through and get pruned like everything else.
+          if (o.type === "start" || o.type === "finish") {
+            if (!o.passed && o.x + o.obsWidth < fingerLeft) o.passed = true;
+            if (o.x < -o.obsWidth - 40) st.obstacles.splice(i, 1);
+            continue;
+          }
           // Jump ramp — a friendly obstacle: roll into it on the ground and it
           // kicks you into a monster launch (higher than a max hold-jump).
           if (o.type === "ramp") {
@@ -2019,6 +2097,30 @@ export default function Game() {
         } else {
           dialogElRef.current.style.opacity = "0";
         }
+      }
+
+      // Pre-race countdown — big center-screen "3‑2‑1‑GO!", counting down
+      // from RACE_COUNTDOWN_FRAMES (3s @ 60fps) at the start line.
+      if (st.raceCountdown > 0) {
+        const secsLeft = Math.ceil(st.raceCountdown / 60);
+        const framesIntoSec = st.raceCountdown % 60;
+        // Punch-in scale + fade at the top of each second, settle for the rest.
+        const t = 1 - framesIntoSec / 60;
+        const scale = 1 + Math.max(0, 0.5 - t) * 1.4;
+        const alpha = Math.min(1, t * 6);
+        ctx.save();
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.translate(width / 2, height * 0.38);
+        ctx.scale(scale, scale);
+        ctx.font = `bold 120px 'Press Start 2P', 'Courier New', monospace`;
+        ctx.globalAlpha = alpha;
+        ctx.lineWidth = 10; ctx.strokeStyle = "rgba(0,0,20,0.9)";
+        ctx.strokeText(String(secsLeft), 0, 0);
+        ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 26;
+        ctx.fillStyle = "#ffee00";
+        ctx.fillText(String(secsLeft), 0, 0);
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.restore();
       }
 
       // HUD — retro arcade style
@@ -2687,6 +2789,35 @@ export default function Game() {
               <div style={{ fontSize:"0.52rem", color:"#00ffcc77", fontFamily:retroFont, lineHeight:2.2 }}>DISTANCE</div>
               <div style={{ fontSize:"1.3rem", fontWeight:"bold", color:"#fff", fontFamily:retroFont }}>{Math.floor(stateRef.current.levelScore)} m</div>
             </div>
+            {raceResults.length > 0 && (() => {
+              const playerRow = raceResults.find(r => r.isPlayer);
+              const place = playerRow?.place ?? 0;
+              const suffix = place === 1 ? "ST" : place === 2 ? "ND" : place === 3 ? "RD" : "TH";
+              const placeColor = place === 1 ? "#ffee00" : place === 2 ? "#c0c0c0" : place === 3 ? "#cd7f32" : "#00ffcc";
+              return (
+                <div style={{ background:"rgba(255,136,255,0.05)", border:"1px solid #ff88ff33", borderRadius:3, padding:"10px 16px", marginBottom:12 }}>
+                  <div style={{ fontSize:"0.72rem", color:placeColor, fontFamily:retroFont, textShadow:`0 0 8px ${placeColor}`, marginBottom:8, lineHeight:1.8 }}>
+                    YOU FINISHED {place}{suffix}!
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                    {raceResults.map(r => (
+                      <div key={r.place} style={{ display:"flex", alignItems:"center", gap:8,
+                        background: r.isPlayer ? "rgba(0,255,204,0.12)" : "transparent",
+                        border: r.isPlayer ? "1px solid #00ffcc55" : "1px solid transparent",
+                        borderRadius:2, padding:"3px 8px" }}>
+                        <span style={{ fontSize:"0.6rem", color: r.isPlayer ? "#00ffcc" : "#888", fontFamily:retroFont, width:22, textAlign:"left" }}>
+                          #{r.place}
+                        </span>
+                        <span style={{ fontSize:"0.9rem" }}>{r.emoji}</span>
+                        <span style={{ fontSize:"0.6rem", color: r.isPlayer ? "#fff" : "#999", fontFamily:font, flex:1, textAlign:"left" }}>
+                          {r.name}{r.isPlayer ? " (you)" : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             {completedLevelMedal && (
               <div style={{ background:`rgba(${completedLevelMedal==="gold"?"255,238,0":completedLevelMedal==="silver"?"192,192,192":"205,127,50"},0.08)`,
                 border:`2px solid ${MEDAL_COLOR[completedLevelMedal]}`,

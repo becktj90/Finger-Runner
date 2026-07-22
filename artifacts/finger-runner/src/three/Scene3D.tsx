@@ -15,6 +15,7 @@ import {
   ROAD_SURFACE_OFFSET, FINGER_TIP_OFFSET, HIDE_Z, BARRIER_GAP,
   POOL_OBSTACLES, POOL_COINS, POOL_PARTICLES, POOL_POWERUPS,
   POOL_PLATFORMS, POOL_ROPES, POOL_PUDDLES,
+  getCharacterDef,
   type GameSceneState, type Theme3D,
 } from "./coords";
 
@@ -35,7 +36,7 @@ function findWarned(st: GameSceneState): WarnInfo | null {
   let idx = -1; let bestDist = Infinity; let bestType: WarnType = "JUMP";
   for (let i = 0; i < st.obstacles.length; i++) {
     const o = st.obstacles[i];
-    if (!o || Math.abs(o.lane - st.steerX) >= LANE_HIT_RADIUS || o.type === "ramp") continue; // ramps are friendly
+    if (!o || Math.abs(o.lane - st.steerX) >= LANE_HIT_RADIUS || o.type === "ramp" || o.type === "start" || o.type === "finish") continue; // friendly, never a hazard
     const dist = o.x + o.obsWidth * 0.5 - FINGER_CENTER_X;
     if (dist < -12) continue;
     if (dist < bestDist) {
@@ -75,6 +76,9 @@ const MODEL_ROT_Y: Record<string, number> = {
 };
 const MODEL_TYPE_KEYS = Object.keys(MODEL_FILES);
 export const MODELED_OBSTACLES = new Set(MODEL_TYPE_KEYS);
+// Race start/finish arches — rendered by the dedicated <RaceBanners>
+// component, not the procedural obstacle pool or ModelObstaclePool.
+const BANNER_TYPES = new Set(["start", "finish"]);
 const modelUrl = (f: string) => `${import.meta.env.BASE_URL}models/${f}`;
 // Start streaming every model the moment the 3D chunk loads.
 MODEL_TYPE_KEYS.forEach((t) => useGLTF.preload(modelUrl(MODEL_FILES[t])));
@@ -261,6 +265,91 @@ const N_ROPES = POOL_ROPES;
 const N_PUDDLES = POOL_PUDDLES;
 const SABER_SWING_FRAMES = 16;
 
+// ── Start/finish race banners ───────────────────────────────────────────
+// Two poles + crossbar + a canvas-texture sign. These ride the "friendly
+// obstacle" pattern the ramp uses: real entries in st.obstacles (type
+// "start"/"finish") that scroll through like scenery but never collide or
+// trigger a hazard warning. Positions come straight off the matching
+// st.obstacles entry so the banner stays perfectly synced with the x the
+// physics loop scrolls every frame.
+const bannerTexCache: Record<string, THREE.Texture> = {};
+function getBannerTexture(label: string, bg: string, fg: string, checker: boolean): THREE.Texture {
+  const key = `${label}|${bg}|${fg}|${checker}`;
+  if (bannerTexCache[key]) return bannerTexCache[key];
+  const W = 512, H = 160;
+  const cvs = document.createElement("canvas"); cvs.width = W; cvs.height = H;
+  const g = cvs.getContext("2d")!;
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  if (checker) {
+    const cell = 32;
+    g.fillStyle = "rgba(0,0,0,0.85)";
+    for (let y = 0; y < H; y += cell) {
+      for (let x = 0; x < W; x += cell) {
+        if (((x / cell + y / cell) | 0) % 2 === 0) g.fillRect(x, y, cell, cell);
+      }
+    }
+  }
+  g.fillStyle = fg;
+  g.font = "bold 84px 'Press Start 2P', 'Courier New', monospace";
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.shadowColor = "rgba(0,0,0,0.6)"; g.shadowBlur = 8;
+  g.fillText(label, W / 2, H / 2);
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.anisotropy = 4;
+  bannerTexCache[key] = tex;
+  return tex;
+}
+
+function BannerArch({ label, poleColor, bg, fg, checker }: { label: string; poleColor: string; bg: string; fg: string; checker?: boolean }) {
+  const tex = useMemo(() => getBannerTexture(label, bg, fg, !!checker), [label, bg, fg, checker]);
+  const poleH = 2.4, poleR = 0.06, halfSpan = 1.95, signW = 3.6, signH = 1.0;
+  return (
+    <group>
+      {[-halfSpan, halfSpan].map((x) => (
+        <mesh key={x} castShadow position={[x, poleH / 2, 0]}>
+          <cylinderGeometry args={[poleR, poleR, poleH, 10]} />
+          <meshStandardMaterial color={poleColor} metalness={0.5} roughness={0.4} />
+        </mesh>
+      ))}
+      <mesh castShadow position={[0, poleH - 0.05, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[poleR * 0.8, poleR * 0.8, halfSpan * 2 + 0.2, 10]} />
+        <meshStandardMaterial color={poleColor} metalness={0.5} roughness={0.4} />
+      </mesh>
+      <mesh position={[0, poleH - 0.05, 0.02]}>
+        <planeGeometry args={[signW, signH]} />
+        <meshStandardMaterial map={tex} emissive={fg} emissiveIntensity={0.15} side={THREE.DoubleSide} transparent />
+      </mesh>
+    </group>
+  );
+}
+
+// Reads the two banner slots straight off st.obstacles (there's only ever
+// one "start" and one "finish" alive at a time) rather than iterating the
+// full N_OBSTACLES pool like ModelObstaclePool — much simpler for exactly
+// two fixed, non-recycled entities per level.
+function RaceBanners({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
+  const startRef = useRef<THREE.Group>(null);
+  const finishRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const st = stateRef.current;
+    const startO = st.obstacles.find((o) => o.type === "start");
+    const finishO = st.obstacles.find((o) => o.type === "finish");
+    const sg = startRef.current, fg = finishRef.current;
+    if (sg) sg.position.set(LANE_X, 0, startO ? worldZ(startO.x + startO.obsWidth / 2) : HIDE_Z);
+    if (fg) fg.position.set(LANE_X, 0, finishO ? worldZ(finishO.x + finishO.obsWidth / 2) : HIDE_Z);
+  });
+  return (
+    <>
+      <group ref={startRef} position={[0, 0, HIDE_Z]}>
+        <BannerArch label="START" poleColor="#22cc66" bg="#0a2e1a" fg="#5dff8f" />
+      </group>
+      <group ref={finishRef} position={[0, 0, HIDE_Z]}>
+        <BannerArch label="FINISH" poleColor="#ffee00" bg="#111111" fg="#ffee00" checker />
+      </group>
+    </>
+  );
+}
+
 function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"]; sizeRef: Scene3DProps["sizeRef"] }) {
   const groups = useRef<THREE.Group[]>([]);
   const boxRefs = useRef<THREE.Mesh[]>([]);
@@ -362,7 +451,7 @@ function ObstaclePool({ stateRef, sizeRef }: { stateRef: Scene3DProps["stateRef"
       // Types with a real artist-made model get their body from
       // ModelObstaclePool — this pool still runs the slot's ground shadow,
       // warning halo, and wobble, but hides all its primitive shapes.
-      if (MODELED_OBSTACLES.has(o.type)) {
+      if (MODELED_OBSTACLES.has(o.type) || BANNER_TYPES.has(o.type)) {
         box.visible = cyl.visible = cone.visible = head.visible = accent.visible = false;
         wl.visible = wr.visible = xbox.visible = xcyl.visible = false;
         continue;
@@ -2196,6 +2285,69 @@ function hillGradeAt(scroll: number, base: number): number {
   return base * Math.max(0.2, 1 + shaped * 1.15);
 }
 
+// ── AI racer pack ─────────────────────────────────────────────────────────
+// Cosmetic-only rivals riding alongside the player on fixed lanes, reusing
+// the exact same VehicleBody/AnimalBody the player's own ride uses instead
+// of a second rendering system. Positioned purely off the delta between the
+// NPC's `progress` accumulator and the player's `levelScore` — both are the
+// same time-based units (see stepSim's NPC pace loop in Game.tsx), so
+// "ahead" and "behind" fall straight out of a subtraction with nothing to
+// keep in sync separately.
+const NPC_Z_SCALE = 0.05;    // world depth units per point of lead/lag
+const NPC_VISIBLE_RANGE = 8; // beyond this the rival has scrolled off-screen
+const NPC_BASE_SCALE = 0.72; // a touch smaller than the player so they read as rivals, not clones
+
+function NpcRacer({ stateRef, npcIndex }: { stateRef: Scene3DProps["stateRef"]; npcIndex: number }) {
+  const group = useRef<THREE.Group>(null);
+  const [ids, setIds] = useState<{ charId: string; vehicle: string } | null>(null);
+  const idsRef = useRef("");
+
+  useFrame(() => {
+    const st = stateRef.current;
+    const g = group.current; if (!g) return;
+    const npc = st.npcs[npcIndex];
+    if (!npc) { g.position.set(0, 0, HIDE_Z); return; }
+    const key = `${npc.charId}|${npc.vehicle}`;
+    if (key !== idsRef.current) { idsRef.current = key; setIds({ charId: npc.charId, vehicle: npc.vehicle }); }
+    if (!st.gameRunning || st.raceCountdown > 0) { g.position.set(0, 0, HIDE_Z); return; }
+    const delta = npc.progress - st.levelScore; // + = ahead of the player, - = behind
+    if (Math.abs(delta) * NPC_Z_SCALE > NPC_VISIBLE_RANGE) { g.position.set(0, 0, HIDE_Z); return; }
+    g.position.set(LANE_X + npc.lane * LANE_OFFSET, 0, -delta * NPC_Z_SCALE);
+  });
+
+  if (!ids) return <group ref={group} position={[0, 0, HIDE_Z]} />;
+  const charDef = getCharacterDef(ids.charId);
+  const vm = VEHICLE_MODEL[ids.vehicle];
+  const basePose = VEHICLE_POSE[ids.vehicle] ?? VEHICLE_POSE.vespa;
+  const pose = vm ? { ...basePose, riderY: vm.riderY, lift: vm.lift ?? basePose.lift } : basePose;
+  return (
+    <group ref={group} position={[0, 0, HIDE_Z]} scale={NPC_BASE_SCALE}>
+      <group position={[0, pose.lift ?? 0.02, 0]} rotation={[0, Math.PI, 0]}>
+        {vm && (
+          <Suspense fallback={null}>
+            <VehicleBody file={vm.file} len={vm.len} rotY={vm.rotY} />
+          </Suspense>
+        )}
+        {charDef.model && (
+          <group position={[0, pose.riderY, pose.riderZ]} rotation={[0, pose.rotY, 0]}>
+            <Suspense fallback={null}>
+              <AnimalBody file={charDef.model} pose={pose} />
+            </Suspense>
+          </group>
+        )}
+      </group>
+    </group>
+  );
+}
+
+function NpcRacerPack({ stateRef }: { stateRef: Scene3DProps["stateRef"] }) {
+  return (
+    <>
+      {[0, 1, 2].map((i) => <NpcRacer key={i} stateRef={stateRef} npcIndex={i} />)}
+    </>
+  );
+}
+
 // Pitches the whole world group around the player (who rides the crest at
 // z=0) each frame, driven by hillGradeAt — the camera stays locked
 // dead-centre (see CameraRig), only the world tilts, so there's none of the
@@ -2239,6 +2391,10 @@ export default function Scene3D({ stateRef, sizeRef, theme, saber, skin, accent,
           <ModelObstaclePool stateRef={stateRef} />
         </Suspense>
         <PlayerVehicle stateRef={stateRef} sizeRef={sizeRef} saber={saber} skin={skin} vehicle={vehicle} charModel={charModel} vehicleColor={vehicleColor} />
+        <Suspense fallback={null}>
+          <NpcRacerPack stateRef={stateRef} />
+        </Suspense>
+        <RaceBanners stateRef={stateRef} />
         <ObstaclePool stateRef={stateRef} sizeRef={sizeRef} />
         <CoinPool stateRef={stateRef} sizeRef={sizeRef} />
         <PowerUpPool stateRef={stateRef} sizeRef={sizeRef} />
