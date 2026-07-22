@@ -935,8 +935,11 @@ interface VehiclePose {
 // the nose onto +z, which the avatar's 180° flip then points down the road.
 const VEHICLE_MODEL: Record<string, { file: string; len: number; riderY: number; lift?: number; rotY: number }> = {
   vespa:        { file: "veh_vespa.glb",        len: 1.60, riderY: 1.06, lift: 0.02, rotY: Math.PI / 2 },
-  skateboard:   { file: "veh_skateboard.glb",   len: 0.95, riderY: 0.16, rotY: Math.PI / 2 },
-  hoverboard:   { file: "veh_hoverboard.glb",   len: 0.95, riderY: 0.24, rotY: Math.PI / 2 },
+  // Board riderY must clear the deck: the standing rider body extends 0.42
+  // BELOW its riderY anchor (AnimalBody baseY), so anything under ~0.6 sinks
+  // the character's legs through the deck into the road.
+  skateboard:   { file: "veh_skateboard.glb",   len: 0.95, riderY: 0.64, rotY: Math.PI / 2 },
+  hoverboard:   { file: "veh_hoverboard.glb",   len: 0.95, riderY: 0.66, rotY: Math.PI / 2 },
   bmx:          { file: "veh_bmx.glb",          len: 1.45, riderY: 0.95, rotY: Math.PI / 2 },
   gokart:       { file: "veh_gokart.glb",       len: 1.40, riderY: 0.50, rotY: Math.PI / 2 },
   // Closed-cab vehicles: the rider stands ON the roof (there's no way to seat
@@ -1148,6 +1151,9 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
   const exhaustRef = useRef<THREE.Mesh>(null);
   const wheels = useRef<Set<THREE.Group>>(new Set());
   const regWheel = (g: THREE.Group | null) => { if (g) wheels.current.add(g); };
+  // Saber swing choreography: alternate arc direction per swing
+  const swingDir = useRef(1);
+  const prevSaberSwing = useRef(0);
 
   const bladeLen = useMemo(() => 0.62 + ((saber.reach - 120) / (185 - 120)) * 0.43, [saber.reach]);
   const bladeHalfLen = bladeLen / 2 + 0.16;
@@ -1208,13 +1214,33 @@ function PlayerVehicle({ stateRef, sizeRef, saber, skin, vehicle, charModel, veh
     if (saberGroup.current) {
       const active = st.saberSwing > 0;
       saberGroup.current.visible = st.gameRunning;
-      const progress = active ? 1 - st.saberSwing / SABER_SWING_FRAMES : 0;
-      saberGroup.current.rotation.z = active ? -1.4 + progress * 2.6 : -1.1;
+      // Alternate the arc's direction on every fresh swing (detected as the
+      // countdown jumping back up) — right-to-left, then left-to-right, like
+      // actual saber combat instead of the same one-sided fan every time.
+      if (st.saberSwing > prevSaberSwing.current) swingDir.current = -swingDir.current;
+      prevSaberSwing.current = st.saberSwing;
+      const g = saberGroup.current;
+      if (active) {
+        const p = 1 - st.saberSwing / SABER_SWING_FRAMES;
+        const e = p * p * (3 - 2 * p); // smoothstep: wind-up, fast strike, follow-through
+        const d = swingDir.current;
+        // Diagonal 3D arc: sweeps across the body (z), reaches forward over
+        // the front of the vehicle mid-swing (x), and twists through the cut
+        // (y) — reads as a real slice, not a flat windshield-wiper fan.
+        g.rotation.z = d * (1.5 - e * 3.0);
+        g.rotation.x = 0.25 + Math.sin(e * Math.PI) * 0.8;
+        g.rotation.y = d * (e - 0.5) * 1.1;
+      } else {
+        // Ready stance: blade angled up and slightly back at the side
+        g.rotation.z = -0.95;
+        g.rotation.x = -0.35;
+        g.rotation.y = 0;
+      }
       if (saberBlade.current) {
         const mat = saberBlade.current.material as THREE.MeshStandardMaterial;
         mat.color.set(saber.color);
         mat.emissive.set(saber.glow);
-        mat.emissiveIntensity = active ? 1.8 : 0.8;
+        mat.emissiveIntensity = active ? 2.2 : 0.8;
       }
     }
     if (exhaustRef.current) exhaustRef.current.scale.setScalar(0.9 + Math.sin(st.time * 0.4) * 0.15);
@@ -2164,7 +2190,10 @@ function EnvLighting({ theme, accent }: { theme: Theme3D; accent: string }) {
 function hillGradeAt(scroll: number, base: number): number {
   const w = Math.sin(scroll * 0.0032) * 0.55 + Math.sin(scroll * 0.0009 + 1.7) * 0.35;
   const shaped = Math.sign(w) * Math.abs(w) ** 0.7;
-  return base * Math.max(0.15, 1 + shaped * 0.85);
+  // Amplitude 1.15 swings a level between 20% and 215% of its base grade —
+  // wide enough that the steep sections are unmistakably plunges and the
+  // flat stretches read as genuine breathers.
+  return base * Math.max(0.2, 1 + shaped * 1.15);
 }
 
 // Pitches the whole world group around the player (who rides the crest at
